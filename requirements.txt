@@ -1,0 +1,29 @@
+# Core dependencies
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+pydantic>=2.5.0
+numpy>=1.26.0
+pandas>=2.1.0
+httpx>=0.26.0
+
+# AI/LLM
+anthropic>=0.18.0
+
+# Sandbox
+RestrictedPython>=7.0
+
+# Technical Analysis
+ta>=0.11.0
+
+# Configuration
+python-dotenv>=1.0.0
+
+# Data storage
+pyarrow>=14.0.0
+
+# Development
+pytest>=7.4.0
+pytest-asyncio>=0.23.0
+pytest-cov>=4.1.0
+ruff>=0.1.0
+mypy>=1.8.0
