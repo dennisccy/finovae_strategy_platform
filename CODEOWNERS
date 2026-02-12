@@ -1,0 +1,41 @@
+# CODEOWNERS — Finovae Strategy Platform Agent Team
+# See AGENTS.md for full role descriptions and workflow rules.
+#
+# Each line maps a directory/file pattern to the responsible agent.
+# Cross-folder edits require explicit A0 (Lead) approval.
+
+# Frozen contracts — changes require A0 approval + downstream review
+/shared/                    @A0-lead @A1-architect
+
+# Architecture and documentation
+/docs/                      @A1-architect
+/AGENTS.md                  @A0-lead
+/CLAUDE.md                  @A0-lead
+/CODEOWNERS                 @A0-lead
+
+# Data layer: CSV/API loader, normalization, validation
+/data/                      @A2-data-backtest
+
+# Backtest engine: core loop, fills, metrics
+/backtest/                  @A2-data-backtest
+
+# Strategy compilation: NL->Spec->Code
+/strategy/                  @A3-strategy-compiler
+
+# Backend: API, sandbox, pipeline, run storage
+/backend/                   @A4-backend-sandbox
+
+# Frontend: React + TypeScript + Vite
+/frontend/                  @A5-frontend
+
+# Tests: QA owns all test files
+/tests/                     @A6-quant-qa
+
+# Skills: owned by relevant agent, created by A0
+/skills/                    @A0-lead
+
+# Config files: A0 owns root config
+/pyproject.toml             @A0-lead
+/requirements.txt           @A0-lead
+/.env.example               @A0-lead
+/.gitignore                 @A0-lead

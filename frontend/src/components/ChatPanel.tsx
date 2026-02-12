@@ -1,5 +1,5 @@
 import { useState, FormEvent } from 'react'
-import { Send, Loader2, Clock, TrendingUp } from 'lucide-react'
+import { Loader2, Clock, TrendingUp } from 'lucide-react'
 import { BacktestRequest, RunHistoryItem } from '../hooks/useBacktest'
 
 interface ChatPanelProps {
