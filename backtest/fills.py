@@ -74,8 +74,8 @@ class FillModel:
         Returns:
             BuyFillResult with fill details
         """
-        commission_rate = commission_rate or self.default_commission
-        slippage_rate = slippage_rate or self.default_slippage
+        commission_rate = self.default_commission if commission_rate is None else commission_rate
+        slippage_rate = self.default_slippage if slippage_rate is None else slippage_rate
 
         # Apply slippage (buy at higher price)
         fill_price = price * (1 + slippage_rate)
@@ -128,8 +128,8 @@ class FillModel:
         Returns:
             SellFillResult with fill details
         """
-        commission_rate = commission_rate or self.default_commission
-        slippage_rate = slippage_rate or self.default_slippage
+        commission_rate = self.default_commission if commission_rate is None else commission_rate
+        slippage_rate = self.default_slippage if slippage_rate is None else slippage_rate
 
         # Apply slippage (sell at lower price)
         fill_price = price * (1 - slippage_rate)
@@ -170,8 +170,8 @@ class FillModel:
         Returns:
             Total cost in quote currency (USDT)
         """
-        commission_rate = commission_rate or self.default_commission
-        slippage_rate = slippage_rate or self.default_slippage
+        commission_rate = self.default_commission if commission_rate is None else commission_rate
+        slippage_rate = self.default_slippage if slippage_rate is None else slippage_rate
 
         # Entry slippage + commission
         entry_fill = entry_price * (1 + slippage_rate)
@@ -198,8 +198,8 @@ class FillModel:
         Returns:
             Break-even return as decimal (e.g., 0.003 = 0.3%)
         """
-        commission_rate = commission_rate or self.default_commission
-        slippage_rate = slippage_rate or self.default_slippage
+        commission_rate = self.default_commission if commission_rate is None else commission_rate
+        slippage_rate = self.default_slippage if slippage_rate is None else slippage_rate
 
         # Buy at higher price, sell at lower price, pay commission both ways
         total_drag = 2 * commission_rate + 2 * slippage_rate

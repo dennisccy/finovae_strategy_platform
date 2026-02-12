@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import { ChatPanel } from './components/ChatPanel'
 import { ResultsPanel } from './components/ResultsPanel'
 import { useBacktest } from './hooks/useBacktest'

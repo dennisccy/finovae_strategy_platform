@@ -109,6 +109,16 @@ class SandboxExecutor:
             if blocked in safe_builtins:
                 del safe_builtins[blocked]
 
+        # Add restricted __import__ that only allows whitelisted modules
+        allowed = self.ALLOWED_MODULES
+
+        def _safe_import(name, *args, **kwargs):
+            if name in allowed:
+                return allowed[name]
+            raise ImportError(f"Import of '{name}' is not allowed in sandbox")
+
+        safe_builtins["__import__"] = _safe_import
+
         return safe_builtins
 
     def _create_safe_globals(self) -> dict:
@@ -162,12 +172,15 @@ class SandboxExecutor:
                 mode="exec",
             )
 
-            if compiled.errors:
+            # RestrictedPython 8.x returns a code object directly;
+            # older versions return a CompileResult with .code and .errors.
+            if hasattr(compiled, 'errors') and compiled.errors:
                 raise SandboxError(
                     f"Compilation errors: {'; '.join(compiled.errors)}"
                 )
 
-            return compiled.code
+            # Return the code object (or .code from CompileResult)
+            return compiled if isinstance(compiled, type(compile('', '', 'exec'))) else compiled.code
 
         except SyntaxError as e:
             raise SandboxError(f"Syntax error in strategy code: {e}")
@@ -312,15 +325,15 @@ class SandboxExecutor:
 
         # Check for dangerous patterns
         dangerous_patterns = [
-            ("__import__", "Dynamic imports not allowed"),
+            ("__import__", "__import__: Dynamic imports not allowed"),
             ("exec(", "exec() not allowed"),
             ("eval(", "eval() not allowed"),
             ("compile(", "compile() not allowed"),
-            ("open(", "File operations not allowed"),
-            ("socket", "Network operations not allowed"),
-            ("subprocess", "Process spawning not allowed"),
+            ("open(", "open: File operations not allowed"),
+            ("socket", "socket: Network operations not allowed"),
+            ("subprocess", "subprocess: Process spawning not allowed"),
             ("os.", "os module not allowed"),
-            ("sys.modules", "Module manipulation not allowed"),
+            ("sys.modules", "sys.modules: Module manipulation not allowed"),
         ]
 
         for pattern, message in dangerous_patterns:
