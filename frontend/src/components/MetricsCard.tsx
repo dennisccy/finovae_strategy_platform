@@ -12,11 +12,11 @@ export function MetricsCard({ label, value, variant }: MetricsCardProps) {
   }
 
   return (
-    <div className="bg-white rounded-xl border border-slate-200 p-4 metric-card">
-      <p className="text-xs text-slate-500 uppercase tracking-wide mb-1">
+    <div className="bg-white rounded-xl border border-slate-200 p-3 lg:p-4 metric-card">
+      <p className="text-xs text-slate-500 uppercase tracking-wide mb-0.5 lg:mb-1 truncate">
         {label}
       </p>
-      <p className={`text-2xl font-bold ${valueColors[variant]}`}>{value}</p>
+      <p className={`text-lg lg:text-2xl font-bold ${valueColors[variant]} truncate`}>{value}</p>
     </div>
   )
 }

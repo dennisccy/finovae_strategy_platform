@@ -16,7 +16,7 @@ interface EquityChartProps {
 export function EquityChart({ data }: EquityChartProps) {
   if (!data || data.length === 0) {
     return (
-      <div className="h-64 flex items-center justify-center text-slate-500">
+      <div className="h-48 lg:h-64 flex items-center justify-center text-sm text-slate-500">
         No equity data available
       </div>
     )
@@ -48,7 +48,7 @@ export function EquityChart({ data }: EquityChartProps) {
   }
 
   return (
-    <div className="h-64">
+    <div className="h-48 sm:h-56 lg:h-64">
       <ResponsiveContainer width="100%" height="100%">
         <AreaChart data={chartData}>
           <defs>
@@ -60,17 +60,17 @@ export function EquityChart({ data }: EquityChartProps) {
           <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
           <XAxis
             dataKey="timestamp"
-            tick={{ fontSize: 12, fill: '#64748b' }}
+            tick={{ fontSize: 11, fill: '#64748b' }}
             tickLine={false}
             axisLine={{ stroke: '#e2e8f0' }}
             interval="preserveStartEnd"
           />
           <YAxis
-            tick={{ fontSize: 12, fill: '#64748b' }}
+            tick={{ fontSize: 11, fill: '#64748b' }}
             tickLine={false}
             axisLine={{ stroke: '#e2e8f0' }}
             tickFormatter={formatValue}
-            width={60}
+            width={52}
           />
           <Tooltip
             contentStyle={{
@@ -78,12 +78,13 @@ export function EquityChart({ data }: EquityChartProps) {
               border: '1px solid #e2e8f0',
               borderRadius: '8px',
               boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
+              fontSize: '12px',
             }}
             formatter={(value: number, name: string) => [
               name === 'equity' ? formatValue(value) : `${value.toFixed(2)}%`,
               name === 'equity' ? 'Equity' : 'Drawdown',
             ]}
-            labelStyle={{ color: '#64748b' }}
+            labelStyle={{ color: '#64748b', fontSize: '12px' }}
           />
           <Area
             type="monotone"
