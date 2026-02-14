@@ -4,35 +4,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Finovae Strategy Platform is a crypto backtesting platform that compiles natural language trading strategy descriptions into executable Python code using Claude API, then backtests them against historical Binance data.
+Finovae Strategy Platform Frontend — a React + TypeScript application for the Finovae crypto backtesting platform. Provides a chat-based interface for entering natural language trading strategies and displays backtest results including equity curves, metrics, and trade lists.
+
+The backend API lives in a separate repository (`finovae_strategy_platform_api`).
 
 **Tech Stack:**
-- Backend: Python 3.11+, FastAPI, RestrictedPython, Anthropic SDK
-- Frontend: React 18, TypeScript, Vite, Tailwind CSS, Recharts
-- Data: Binance REST API, pandas, numpy
+- React 18, TypeScript, Vite, Tailwind CSS, Recharts
 
 ## Development Commands
-
-### Backend (Python)
-```bash
-# Install dependencies
-pip install -e .
-pip install -e ".[dev]"  # Include dev dependencies
-
-# Run API server (from root)
-uvicorn backend.api:app --reload --host 0.0.0.0 --port 8000
-
-# Run tests
-pytest                           # All tests
-pytest tests/test_lookahead.py   # Specific test file
-pytest -v                        # Verbose output
-pytest --cov=. --cov-report=html # Coverage report
-
-# Linting and type checking
-ruff check .                     # Lint
-ruff format .                    # Format
-mypy .                           # Type check
-```
 
 ### Frontend (React + Vite)
 ```bash
@@ -55,130 +34,35 @@ npm run lint       # ESLint
 ### Environment Setup
 Copy `.env.example` to `.env` and set:
 ```
-ANTHROPIC_API_KEY=your_api_key_here
+VITE_API_URL=http://localhost:8000
 ```
 
-## Architecture Overview
+Leave `VITE_API_URL` empty when using Vite's dev proxy to a local backend.
 
-### Core Pipeline Flow (backend/pipeline.py)
+## Architecture
 
-The `BacktestPipeline` orchestrates the complete workflow:
-
-1. **NL Compilation** (`strategy/compiler.py`): Claude API converts natural language to `StrategySpec` JSON
-2. **Code Generation** (`strategy/codegen.py`): StrategySpec → executable Python code with signal function
-3. **Sandbox Validation** (`backend/sandbox.py`): RestrictedPython validates code safety
-4. **Data Fetching** (`data/loader.py`): Binance API downloads OHLCV data (with file-based caching)
-5. **Data Validation** (`data/validation.py`): Checks for gaps, duplicates, monotonicity
-6. **Backtest Execution** (`backtest/engine.py`): Runs strategy with next-bar execution model
-7. **Metrics Calculation** (`backtest/metrics.py`): Sharpe, Sortino, max drawdown, etc.
-
-### Module Structure
+### Frontend Structure
 
 ```
-shared/
-  contracts.py      # FROZEN data contracts (see below) - DO NOT MODIFY
-  schemas.py        # Pydantic schemas for API responses
-
-data/
-  binance_client.py # Binance REST API client
-  loader.py         # OHLCV data fetching with caching
-  validation.py     # Data quality checks
-
-strategy/
-  compiler.py       # NL → StrategySpec using Claude API
-  codegen.py        # StrategySpec → Python code
-  indicators.py     # Technical indicator registry
-
-backtest/
-  engine.py         # Core backtest loop with position tracking
-  fills.py          # Slippage and commission models
-  metrics.py        # Performance metric calculations
-
-backend/
-  api.py            # FastAPI endpoints (/api/run-backtest, /api/runs, etc.)
-  pipeline.py       # Orchestrates full workflow
-  sandbox.py        # RestrictedPython executor for strategy code
-
 frontend/src/
   components/       # React components (ChatPanel, ResultsPanel, EquityChart, etc.)
   hooks/            # Custom hooks (useBacktest.ts)
   App.tsx           # Main application component
 ```
 
-### FROZEN CONTRACTS (shared/contracts.py)
+### Key Components
 
-**CRITICAL:** The `shared/contracts.py` file is a frozen interface contract. Changes require architectural review. It contains:
-- Data classes: `OHLCV`, `Trade`, `EquityPoint`, `BacktestResult`, `StrategySpec`
-- Enums: `ConditionOperator`, `PositionSizingType`, `TradeType`
-- Request/Response types for compilation and backtesting
-
-When modifying the system, work within these contracts rather than changing them.
-
-### Sandbox Execution (backend/sandbox.py)
-
-Strategy code runs in a **RestrictedPython sandbox** with strict security:
-- **Allowed**: numpy, pandas, basic math operations
-- **Blocked**: file I/O, network access, `exec/eval`, `__import__`, `open()`, os module
-- **Timeout**: 30 seconds per signal call (Unix only)
-- Generated code must define a `signal(df: pd.DataFrame, i: int) -> int` function
-  - Returns: 1 (buy), -1 (sell), 0 (hold)
-  - Receives DataFrame sliced to current bar to prevent lookahead
-
-### Backtest Engine (backtest/engine.py)
-
-**Next-bar execution model**: Signal generated at bar[i] executes at bar[i+1] open to prevent lookahead bias.
-
-Key features:
-- Long-only positions
-- Deterministic execution (controlled random seed for slippage)
-- Equity curve tracking at each bar
-- Commission and slippage modeling
-
-### Data Caching (data/loader.py)
-
-OHLCV data is cached in `.cache/ohlcv/` as Parquet files to avoid redundant Binance API calls. Cache key format: `{symbol}_{timeframe}_{start}_{end}.parquet`
-
-## Testing Philosophy
-
-The test suite focuses on **critical invariants**:
-
-1. **Lookahead Prevention** (`test_lookahead.py`): Ensures signal function never sees future data
-2. **Determinism** (`test_determinism.py`): Same inputs → same outputs (for reproducibility)
-3. **Sandbox Security** (`test_sandbox.py`): Validates RestrictedPython blocks dangerous operations
-
-When adding features, maintain these guarantees.
-
-## API Endpoints
-
-**Base URL**: `http://localhost:8000`
-
-- `POST /api/run-backtest`: Main endpoint - accepts NL strategy + params, returns backtest results
-- `GET /api/runs`: List all backtest run history
-- `GET /api/runs/{run_id}`: Get specific run details
-- `GET /api/symbols`: Available trading pairs
-- `GET /api/timeframes`: Supported candle intervals
-
-## Common Patterns
-
-### Adding a New Technical Indicator
-
-1. Add indicator function to `strategy/indicators.py` in `INDICATOR_REGISTRY`
-2. Update `CompileConstraints.allowed_indicators` in `shared/contracts.py` (requires freeze approval)
-3. The code generator will automatically support it in signal functions
-
-### Modifying Strategy Compilation
-
-The compiler uses a **system prompt** (`strategy/compiler.py:SYSTEM_PROMPT`) to guide Claude's JSON output. The prompt defines:
-- Output JSON schema (name, description, indicators, conditions, position_size)
-- Available indicators from `CompileConstraints.allowed_indicators`
-- Entry vs exit condition logic (AND vs OR)
-- Operator types (>, <, cross_above, cross_below, etc.)
+- **ChatPanel**: Chat interface for entering natural-language strategy descriptions with parameter controls (symbol, timeframe, date range, initial capital)
+- **ResultsPanel**: Displays equity chart (Recharts), metrics summary, and trade list
+- **EquityChart**: Recharts-based equity curve visualization with drawdown overlay
+- **useBacktest hook**: Manages API communication, loading state, error handling, and run history
 
 ### Frontend-Backend Communication
 
-Frontend (`useBacktest.ts` hook) sends backtest request:
+The `useBacktest.ts` hook sends requests to the backend API:
+
 ```typescript
-POST /api/run-backtest
+POST ${VITE_API_URL}/api/run-backtest
 {
   natural_language: string,
   symbol: string,
@@ -189,7 +73,7 @@ POST /api/run-backtest
 }
 ```
 
-Backend responds with:
+Response:
 ```typescript
 {
   success: boolean,
@@ -200,8 +84,11 @@ Backend responds with:
 }
 ```
 
-## Cross-Platform Notes
+The `VITE_API_URL` environment variable controls the API base URL. When empty, requests use relative paths (suitable for same-origin deployment or Vite proxy).
 
-- **Windows**: Timeout mechanism in sandbox uses polling instead of SIGALRM (Unix signals unavailable)
-- **Line endings**: Use LF (Unix) for Python files, handled by Git autocrlf
-- **Paths**: Use forward slashes in code; os.path handles platform conversion
+### UI Layout
+
+- **Left panel**: Chat interface for entering natural-language strategy descriptions
+- **Right panel**: Results display — equity chart, metrics summary, trade list
+- Each backtest run receives a unique `run_id`
+- Run history is accessible and browsable

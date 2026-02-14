@@ -4,7 +4,13 @@
       "Bash(npx skills:*)",
       "Bash(tree:*)",
       "Bash(dir:*)",
-      "Bash(test:*)"
+      "Bash(test:*)",
+      "Bash(wc:*)",
+      "Bash(du:*)",
+      "Bash(pip install:*)",
+      "Bash(pytest:*)",
+      "Bash(python -m pytest:*)",
+      "Bash(npm run build:*)"
     ]
   }
 }

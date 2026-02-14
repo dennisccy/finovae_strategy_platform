@@ -1,33 +1,21 @@
 import { useState, FormEvent } from 'react'
-import { Loader2, Clock, TrendingUp } from 'lucide-react'
-import { BacktestRequest, RunHistoryItem } from '../hooks/useBacktest'
+import { Loader2, Clock, Sparkles } from 'lucide-react'
+import { RunHistoryItem } from '../hooks/useBacktest'
 
 interface ChatPanelProps {
-  onSubmit: (request: BacktestRequest) => Promise<void>
+  onGenerate: (naturalLanguage: string, model: string) => Promise<void>
   isLoading: boolean
   runHistory: RunHistoryItem[]
 }
 
-export function ChatPanel({ onSubmit, isLoading, runHistory }: ChatPanelProps) {
+export function ChatPanel({ onGenerate, isLoading, runHistory }: ChatPanelProps) {
   const [strategy, setStrategy] = useState('')
-  const [symbol, setSymbol] = useState('BTCUSDT')
-  const [timeframe, setTimeframe] = useState('4h')
-  const [startDate, setStartDate] = useState('2024-01-01')
-  const [endDate, setEndDate] = useState('2024-06-01')
-  const [capital, setCapital] = useState(10000)
+  const [model, setModel] = useState('claude-haiku-4-5-20251001')
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
     if (!strategy.trim() || isLoading) return
-
-    await onSubmit({
-      natural_language: strategy,
-      symbol,
-      timeframe,
-      start_date: startDate,
-      end_date: endDate,
-      initial_capital: capital,
-    })
+    await onGenerate(strategy, model)
   }
 
   const formatReturn = (value: number) => {
@@ -45,79 +33,19 @@ export function ChatPanel({ onSubmit, isLoading, runHistory }: ChatPanelProps) {
         </p>
       </div>
 
-      {/* Configuration Section */}
+      {/* AI Model Selection */}
       <div className="px-4 py-3 lg:px-6 lg:py-4 border-b border-slate-100 bg-slate-50">
-        <div className="grid grid-cols-2 gap-3 lg:gap-4">
-          <div>
-            <label className="block text-xs font-medium text-slate-600 mb-1">
-              Symbol
-            </label>
-            <select
-              value={symbol}
-              onChange={(e) => setSymbol(e.target.value)}
-              className="w-full px-2.5 py-1.5 lg:px-3 lg:py-2 text-sm border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white"
-            >
-              <option value="BTCUSDT">BTC/USDT</option>
-              <option value="ETHUSDT">ETH/USDT</option>
-              <option value="BNBUSDT">BNB/USDT</option>
-              <option value="SOLUSDT">SOL/USDT</option>
-              <option value="XRPUSDT">XRP/USDT</option>
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-xs font-medium text-slate-600 mb-1">
-              Timeframe
-            </label>
-            <select
-              value={timeframe}
-              onChange={(e) => setTimeframe(e.target.value)}
-              className="w-full px-2.5 py-1.5 lg:px-3 lg:py-2 text-sm border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white"
-            >
-              <option value="1h">1 Hour</option>
-              <option value="4h">4 Hours</option>
-              <option value="1d">1 Day</option>
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-xs font-medium text-slate-600 mb-1">
-              Start Date
-            </label>
-            <input
-              type="date"
-              value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
-              className="w-full px-2.5 py-1.5 lg:px-3 lg:py-2 text-sm border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white"
-            />
-          </div>
-
-          <div>
-            <label className="block text-xs font-medium text-slate-600 mb-1">
-              End Date
-            </label>
-            <input
-              type="date"
-              value={endDate}
-              onChange={(e) => setEndDate(e.target.value)}
-              className="w-full px-2.5 py-1.5 lg:px-3 lg:py-2 text-sm border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white"
-            />
-          </div>
-
-          <div className="col-span-2">
-            <label className="block text-xs font-medium text-slate-600 mb-1">
-              Initial Capital (USDT)
-            </label>
-            <input
-              type="number"
-              value={capital}
-              onChange={(e) => setCapital(Number(e.target.value))}
-              min={100}
-              step={100}
-              className="w-full px-2.5 py-1.5 lg:px-3 lg:py-2 text-sm border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white"
-            />
-          </div>
-        </div>
+        <label className="block text-xs font-medium text-slate-600 mb-1">
+          AI Model
+        </label>
+        <select
+          value={model}
+          onChange={(e) => setModel(e.target.value)}
+          className="w-full px-2.5 py-1.5 lg:px-3 lg:py-2 text-sm border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white"
+        >
+          <option value="claude-haiku-4-5-20251001">Claude Haiku 4.5 (Fast & Economical)</option>
+          <option value="claude-sonnet-4-5-20250929">Claude Sonnet 4.5 (More Capable)</option>
+        </select>
       </div>
 
       {/* Run History */}
@@ -162,7 +90,7 @@ export function ChatPanel({ onSubmit, isLoading, runHistory }: ChatPanelProps) {
           <textarea
             value={strategy}
             onChange={(e) => setStrategy(e.target.value)}
-            placeholder="Example: Buy when RSI crosses below 30 and the price is above the 200-day moving average. Sell when RSI crosses above 70."
+            placeholder="Example: Buy when RSI crosses below 30 and the price is above the 200-day moving average. Sell when RSI crosses above 70. Use a trailing stop of 2x ATR."
             className="w-full h-24 sm:h-32 lg:h-48 px-3 py-2.5 lg:px-4 lg:py-3 text-sm border border-slate-200 rounded-lg resize-none focus:ring-2 focus:ring-primary-500 focus:border-transparent chat-input"
             disabled={isLoading}
           />
@@ -177,12 +105,12 @@ export function ChatPanel({ onSubmit, isLoading, runHistory }: ChatPanelProps) {
             {isLoading ? (
               <>
                 <Loader2 className="w-4 h-4 lg:w-5 lg:h-5 animate-spin" />
-                Running Backtest...
+                Generating Strategy...
               </>
             ) : (
               <>
-                <TrendingUp className="w-4 h-4 lg:w-5 lg:h-5" />
-                Run Backtest
+                <Sparkles className="w-4 h-4 lg:w-5 lg:h-5" />
+                Generate Strategy
               </>
             )}
           </button>
@@ -196,6 +124,7 @@ export function ChatPanel({ onSubmit, isLoading, runHistory }: ChatPanelProps) {
               'Buy when RSI < 30, sell when RSI > 70',
               'Buy when price crosses above SMA(50)',
               'Buy when MACD crosses above signal line',
+              'Buy when Bollinger Band lower is touched, sell at upper band with trailing stop',
             ].map((example) => (
               <button
                 key={example}

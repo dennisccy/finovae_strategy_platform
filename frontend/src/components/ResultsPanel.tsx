@@ -1,22 +1,31 @@
-import { BacktestResult, StrategySpec } from '../hooks/useBacktest'
+import { BacktestResult, StrategySpec, GeneratedScript, StrategyRating } from '../hooks/useBacktest'
 import { MetricsCard } from './MetricsCard'
 import { EquityChart } from './EquityChart'
 import { TradesTable } from './TradesTable'
 import { StrategyDisplay } from './StrategyDisplay'
-import { AlertCircle, Loader2, BarChart3 } from 'lucide-react'
+import { RatingPanel } from './RatingPanel'
+import { AlertCircle, Loader2, BarChart3, ArrowLeft, Code } from 'lucide-react'
 
 interface ResultsPanelProps {
   result: BacktestResult | null
+  rating: StrategyRating | null
   strategySpec: StrategySpec | null
+  generatedScript: GeneratedScript | null
+  scriptCode: string | null
   isLoading: boolean
   error: string | null
+  onBackToReview?: () => void
 }
 
 export function ResultsPanel({
   result,
+  rating,
   strategySpec,
+  generatedScript,
+  scriptCode,
   isLoading,
   error,
+  onBackToReview,
 }: ResultsPanelProps) {
   if (isLoading) {
     return (
@@ -71,13 +80,24 @@ export function ResultsPanel({
       {/* Header */}
       <div className="px-4 py-3 lg:px-6 lg:py-4 bg-white border-b border-slate-200 sticky top-0 z-10">
         <div className="flex items-center justify-between gap-3">
-          <div className="min-w-0">
-            <h2 className="text-base lg:text-lg font-semibold text-slate-800">
-              Backtest Results
-            </h2>
-            <p className="text-xs lg:text-sm text-slate-500 truncate">
-              Run ID: {result.run_id}
-            </p>
+          <div className="flex items-center gap-2 min-w-0">
+            {onBackToReview && (
+              <button
+                onClick={onBackToReview}
+                className="p-1 text-slate-400 hover:text-slate-600 transition-colors flex-shrink-0"
+                title="Back to script review"
+              >
+                <ArrowLeft className="w-4 h-4" />
+              </button>
+            )}
+            <div className="min-w-0">
+              <h2 className="text-base lg:text-lg font-semibold text-slate-800">
+                Backtest Results
+              </h2>
+              <p className="text-xs lg:text-sm text-slate-500 truncate">
+                Run ID: {result.run_id}
+              </p>
+            </div>
           </div>
           <div
             className={`px-2.5 py-1 lg:px-3 rounded-full text-xs lg:text-sm font-medium flex-shrink-0 ${
@@ -96,45 +116,67 @@ export function ResultsPanel({
         {/* Strategy Info */}
         {strategySpec && <StrategyDisplay spec={strategySpec} />}
 
-        {/* Metrics Grid */}
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-3 gap-3 lg:gap-4">
-          <MetricsCard
-            label="Total Return"
-            value={`${result.total_return >= 0 ? '+' : ''}${(
-              result.total_return * 100
-            ).toFixed(2)}%`}
-            variant={result.total_return >= 0 ? 'positive' : 'negative'}
-          />
-          <MetricsCard
-            label="Max Drawdown"
-            value={`-${(result.max_drawdown * 100).toFixed(2)}%`}
-            variant="negative"
-          />
-          <MetricsCard
-            label="Win Rate"
-            value={`${(result.win_rate * 100).toFixed(1)}%`}
-            variant={result.win_rate >= 0.5 ? 'positive' : 'neutral'}
-          />
-          <MetricsCard
-            label="Total Trades"
-            value={result.num_trades.toString()}
-            variant="neutral"
-          />
-          <MetricsCard
-            label="Sharpe Ratio"
-            value={result.sharpe_ratio.toFixed(2)}
-            variant={result.sharpe_ratio >= 1 ? 'positive' : 'neutral'}
-          />
-          <MetricsCard
-            label="Profit Factor"
-            value={
-              result.profit_factor === Infinity
-                ? 'N/A'
-                : result.profit_factor.toFixed(2)
-            }
-            variant={result.profit_factor >= 1.5 ? 'positive' : 'neutral'}
-          />
-        </div>
+        {/* Script Code (for AI script proxy runs) */}
+        {!strategySpec && generatedScript && scriptCode && (
+          <div className="bg-white rounded-xl border border-slate-200 p-3 lg:p-4">
+            <div className="flex items-center gap-2 mb-2">
+              <Code className="w-4 h-4 text-slate-500" />
+              <h3 className="text-sm font-semibold text-slate-700">
+                {generatedScript.strategy_name}
+              </h3>
+            </div>
+            {generatedScript.strategy_description && (
+              <p className="text-xs text-slate-500 mb-3">{generatedScript.strategy_description}</p>
+            )}
+            <pre className="text-xs bg-slate-50 rounded-lg p-3 overflow-x-auto max-h-48 overflow-y-auto">
+              <code>{scriptCode}</code>
+            </pre>
+          </div>
+        )}
+
+        {/* Rating Panel (replaces flat metrics when available) */}
+        {rating ? (
+          <RatingPanel rating={rating} />
+        ) : (
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-3 gap-3 lg:gap-4">
+            <MetricsCard
+              label="Total Return"
+              value={`${result.total_return >= 0 ? '+' : ''}${(
+                result.total_return * 100
+              ).toFixed(2)}%`}
+              variant={result.total_return >= 0 ? 'positive' : 'negative'}
+            />
+            <MetricsCard
+              label="Max Drawdown"
+              value={`-${(result.max_drawdown * 100).toFixed(2)}%`}
+              variant="negative"
+            />
+            <MetricsCard
+              label="Win Rate"
+              value={`${(result.win_rate * 100).toFixed(1)}%`}
+              variant={result.win_rate >= 0.5 ? 'positive' : 'neutral'}
+            />
+            <MetricsCard
+              label="Total Trades"
+              value={result.num_trades.toString()}
+              variant="neutral"
+            />
+            <MetricsCard
+              label="Sharpe Ratio"
+              value={result.sharpe_ratio.toFixed(2)}
+              variant={result.sharpe_ratio >= 1 ? 'positive' : 'neutral'}
+            />
+            <MetricsCard
+              label="Profit Factor"
+              value={
+                result.profit_factor === Infinity
+                  ? 'N/A'
+                  : result.profit_factor.toFixed(2)
+              }
+              variant={result.profit_factor >= 1.5 ? 'positive' : 'neutral'}
+            />
+          </div>
+        )}
 
         {/* Equity Curve */}
         <div className="bg-white rounded-xl border border-slate-200 p-3 lg:p-4">

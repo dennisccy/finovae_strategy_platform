@@ -1,20 +1,85 @@
 import { useState } from 'react'
 import { ChatPanel } from './components/ChatPanel'
+import { ScriptReviewPanel } from './components/ScriptReviewPanel'
 import { ResultsPanel } from './components/ResultsPanel'
 import { useBacktest } from './hooks/useBacktest'
-import { BarChart3, MessageSquare } from 'lucide-react'
+import { BarChart3, MessageSquare, Code } from 'lucide-react'
 
 function App() {
   const {
+    phase,
     isLoading,
     error,
     result,
+    rating,
     strategySpec,
     runHistory,
-    runBacktest,
+    generatedScript,
+    scriptCode,
+    setScriptCode,
+    generateStrategy,
+    executeBacktest,
+    resetToIdle,
+    backToReview,
   } = useBacktest()
 
   const [mobileTab, setMobileTab] = useState<'strategy' | 'results'>('strategy')
+
+  const showChat = phase === 'idle' || phase === 'generating'
+  const showReview = phase === 'review' || phase === 'executing'
+  const showResults = phase === 'results'
+
+  // Left panel content based on phase
+  const renderLeftPanel = () => {
+    if (showChat) {
+      return (
+        <ChatPanel
+          onGenerate={async (nl, model) => {
+            await generateStrategy(nl, model)
+            setMobileTab('results')
+          }}
+          isLoading={isLoading}
+          runHistory={runHistory}
+        />
+      )
+    }
+
+    if (showReview && generatedScript && scriptCode !== null) {
+      return (
+        <ScriptReviewPanel
+          script={generatedScript}
+          scriptCode={scriptCode}
+          onScriptCodeChange={setScriptCode}
+          onExecute={async (params) => {
+            await executeBacktest(params)
+            setMobileTab('results')
+          }}
+          onRegenerate={resetToIdle}
+          isLoading={isLoading}
+          error={error}
+        />
+      )
+    }
+
+    if (showResults) {
+      return (
+        <ChatPanel
+          onGenerate={async (nl, model) => {
+            await generateStrategy(nl, model)
+            setMobileTab('results')
+          }}
+          isLoading={isLoading}
+          runHistory={runHistory}
+        />
+      )
+    }
+
+    return null
+  }
+
+  // Mobile tab label for left panel
+  const leftTabLabel = showReview ? 'Script' : 'Strategy'
+  const LeftTabIcon = showReview ? Code : MessageSquare
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -29,7 +94,7 @@ function App() {
               Finovae Strategy Platform
             </h1>
           </div>
-          <span className="text-xs lg:text-sm text-slate-500 flex-shrink-0 ml-2">v0.1.0</span>
+          <span className="text-xs lg:text-sm text-slate-500 flex-shrink-0 ml-2">v0.2.0</span>
         </div>
       </header>
 
@@ -43,8 +108,8 @@ function App() {
               : 'text-slate-500'
           }`}
         >
-          <MessageSquare className="w-4 h-4" />
-          Strategy
+          <LeftTabIcon className="w-4 h-4" />
+          {leftTabLabel}
         </button>
         <button
           onClick={() => setMobileTab('results')}
@@ -64,22 +129,22 @@ function App() {
 
       {/* Main Content */}
       <main className="flex flex-col lg:flex-row lg:h-[calc(100vh-73px)]">
-        {/* Left Panel - Chat */}
+        {/* Left Panel */}
         <div className={`${mobileTab === 'strategy' ? 'flex' : 'hidden'} lg:flex w-full lg:w-1/2 lg:border-r border-slate-200 flex-col min-h-[calc(100vh-113px)] lg:min-h-0`}>
-          <ChatPanel
-            onSubmit={async (req) => { await runBacktest(req); setMobileTab('results') }}
-            isLoading={isLoading}
-            runHistory={runHistory}
-          />
+          {renderLeftPanel()}
         </div>
 
         {/* Right Panel - Results */}
         <div className={`${mobileTab === 'results' ? 'flex' : 'hidden'} lg:flex w-full lg:w-1/2 flex-col overflow-hidden min-h-[calc(100vh-113px)] lg:min-h-0`}>
           <ResultsPanel
             result={result}
+            rating={rating}
             strategySpec={strategySpec}
-            isLoading={isLoading}
-            error={error}
+            generatedScript={generatedScript}
+            scriptCode={scriptCode}
+            isLoading={isLoading && (phase === 'executing' || phase === 'generating')}
+            error={showChat ? error : null}
+            onBackToReview={showResults && generatedScript ? backToReview : undefined}
           />
         </div>
       </main>
