@@ -161,6 +161,17 @@ export interface StrategyRating {
   benchmark_annual_returns: Record<number, number>
 }
 
+export interface InsightsSuggestion {
+  title: string
+  description: string
+  prompt: string
+}
+
+export interface StrategyInsights {
+  summary: string
+  suggestions: InsightsSuggestion[]
+}
+
 export type Phase = 'idle' | 'generating' | 'review' | 'executing' | 'results'
 
 export function useBacktest() {
@@ -173,17 +184,24 @@ export function useBacktest() {
   const [rating, setRating] = useState<StrategyRating | null>(null)
   const [generatedScript, setGeneratedScript] = useState<GeneratedScript | null>(null)
   const [scriptCode, setScriptCode] = useState<string | null>(null)
+  const [insights, setInsights] = useState<StrategyInsights | null>(null)
+  const [insightsLoading, setInsightsLoading] = useState(false)
 
-  const generateStrategy = useCallback(async (naturalLanguage: string, model: string) => {
+  const generateStrategy = useCallback(async (naturalLanguage: string, model: string, previousScriptCode?: string) => {
     setPhase('generating')
     setIsLoading(true)
     setError(null)
 
     try {
+      const body: Record<string, string> = { natural_language: naturalLanguage, model }
+      if (previousScriptCode) {
+        body.previous_script_code = previousScriptCode
+      }
+
       const response = await fetch(`${API_BASE_URL}/api/generate-strategy`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ natural_language: naturalLanguage, model }),
+        body: JSON.stringify(body),
       })
 
       const data = await response.json()
@@ -313,11 +331,45 @@ export function useBacktest() {
     }
   }, [])
 
+  const generateInsights = useCallback(async (model: string = 'claude-haiku-4-5-20251001') => {
+    if (!result || !scriptCode) return
+
+    setInsightsLoading(true)
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/generate-insights`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          backtest_result: result,
+          strategy_name: generatedScript?.strategy_name || '',
+          strategy_description: generatedScript?.strategy_description || '',
+          script_code: scriptCode,
+          model,
+        }),
+      })
+
+      const data = await response.json()
+
+      if (data.success) {
+        setInsights({
+          summary: data.summary || '',
+          suggestions: data.suggestions || [],
+        })
+      }
+    } catch {
+      // Insights are non-critical; silently fail
+    } finally {
+      setInsightsLoading(false)
+    }
+  }, [result, scriptCode, generatedScript])
+
   const resetToIdle = useCallback(() => {
     setPhase('idle')
     setError(null)
     setGeneratedScript(null)
     setScriptCode(null)
+    setInsights(null)
   }, [])
 
   const backToReview = useCallback(() => {
@@ -336,7 +388,10 @@ export function useBacktest() {
     generatedScript,
     scriptCode,
     setScriptCode,
+    insights,
+    insightsLoading,
     generateStrategy,
+    generateInsights,
     executeBacktest,
     runBacktest,
     resetToIdle,

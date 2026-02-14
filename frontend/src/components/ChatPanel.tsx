@@ -2,6 +2,40 @@ import { useState, FormEvent } from 'react'
 import { Loader2, Clock, Sparkles } from 'lucide-react'
 import { RunHistoryItem } from '../hooks/useBacktest'
 
+interface RecommendCard {
+  id: string
+  title: string
+  description: string
+  prompt: string
+}
+
+const recommendCards: RecommendCard[] = [
+  {
+    id: 'multi-factor',
+    title: 'Multi-Factor Quantitative',
+    description: 'Build a multi-factor trading strategy combining momentum, trend, and volatility signals. Each factor must confirm before entering a trade.',
+    prompt: 'Build a quantitative multi-factor trading strategy that combines momentum, trend, and volatility technical dimensions to generate buy/sell signals. Each factor should confirm the others before entering, making the strategy more robust than any single indicator.',
+  },
+  {
+    id: 'momentum-trend',
+    title: 'Momentum Trend Following',
+    description: 'Build a trend-following strategy that identifies and rides sustained price movements, entering on confirmed breakouts and exiting when the trend weakens.',
+    prompt: 'Build a trend-following trading strategy that identifies and rides sustained price movements. Enter on confirmed trend breakouts and exit when the trend weakens or reverses.',
+  },
+  {
+    id: 'volatility-breakout',
+    title: 'Volatility Breakout',
+    description: 'Build a volatility breakout strategy that detects low-volatility consolidation periods and enters when price breaks out of the range to capture the ensuing explosive move.',
+    prompt: 'Build a volatility breakout trading strategy that detects low-volatility consolidation phases and enters when price breaks out of the consolidation range to capture the ensuing explosive move.',
+  },
+  {
+    id: 'volume-momentum',
+    title: 'Volume Momentum',
+    description: 'Build a volume-confirmed momentum strategy that enters when price and volume expand together, and exits when volume contracts.',
+    prompt: 'Build a volume momentum trading strategy that uses volume expansion to confirm price momentum direction. Enter when price and volume expand together, and exit when volume contracts or diverges.',
+  },
+]
+
 interface ChatPanelProps {
   onGenerate: (naturalLanguage: string, model: string) => Promise<void>
   isLoading: boolean
@@ -116,23 +150,20 @@ export function ChatPanel({ onGenerate, isLoading, runHistory }: ChatPanelProps)
           </button>
         </div>
 
-        {/* Example Strategies */}
+        {/* AI Recommendation Cards */}
         <div className="mt-3 lg:mt-4 pt-3 lg:pt-4 border-t border-slate-100">
-          <p className="text-xs text-slate-500 mb-1.5 lg:mb-2">Try an example:</p>
-          <div className="flex flex-wrap gap-1.5 lg:gap-2">
-            {[
-              'Buy when RSI < 30, sell when RSI > 70',
-              'Buy when price crosses above SMA(50)',
-              'Buy when MACD crosses above signal line',
-              'Buy when Bollinger Band lower is touched, sell at upper band with trailing stop',
-            ].map((example) => (
+          <p className="text-xs text-slate-500 mb-1.5 lg:mb-2">AI Recommended Strategies:</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 lg:gap-3">
+            {recommendCards.map((card) => (
               <button
-                key={example}
+                key={card.id}
                 type="button"
-                onClick={() => setStrategy(example)}
-                className="px-2.5 py-1 text-xs bg-slate-100 text-slate-600 rounded-full hover:bg-slate-200 transition-colors leading-tight"
+                disabled={isLoading}
+                onClick={() => onGenerate(card.prompt, model)}
+                className="text-left p-3 border border-slate-200 rounded-lg hover:border-primary-300 hover:bg-primary-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
-                {example}
+                <span className="block text-sm font-semibold text-slate-800">{card.title}</span>
+                <span className="block mt-1 text-xs text-slate-500 leading-relaxed">{card.description}</span>
               </button>
             ))}
           </div>

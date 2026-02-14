@@ -1,9 +1,10 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { ChatPanel } from './components/ChatPanel'
 import { ScriptReviewPanel } from './components/ScriptReviewPanel'
 import { ResultsPanel } from './components/ResultsPanel'
+import { InsightsPanel } from './components/InsightsPanel'
 import { useBacktest } from './hooks/useBacktest'
-import { BarChart3, MessageSquare, Code } from 'lucide-react'
+import { BarChart3, MessageSquare, Code, Lightbulb } from 'lucide-react'
 
 function App() {
   const {
@@ -17,7 +18,10 @@ function App() {
     generatedScript,
     scriptCode,
     setScriptCode,
+    insights,
+    insightsLoading,
     generateStrategy,
+    generateInsights,
     executeBacktest,
     resetToIdle,
     backToReview,
@@ -28,6 +32,19 @@ function App() {
   const showChat = phase === 'idle' || phase === 'generating'
   const showReview = phase === 'review' || phase === 'executing'
   const showResults = phase === 'results'
+
+  // Auto-generate insights when results appear
+  useEffect(() => {
+    if (phase === 'results' && result && !insights && !insightsLoading) {
+      generateInsights()
+    }
+  }, [phase, result, insights, insightsLoading, generateInsights])
+
+  // Handle iteration: generate a new strategy with previous script context
+  const handleIterate = async (prompt: string, model: string, previousScriptCode: string) => {
+    await generateStrategy(prompt, model, previousScriptCode)
+    setMobileTab('results')
+  }
 
   // Left panel content based on phase
   const renderLeftPanel = () => {
@@ -63,12 +80,13 @@ function App() {
 
     if (showResults) {
       return (
-        <ChatPanel
-          onGenerate={async (nl, model) => {
-            await generateStrategy(nl, model)
-            setMobileTab('results')
-          }}
+        <InsightsPanel
+          insights={insights}
+          insightsLoading={insightsLoading}
+          onIterate={handleIterate}
+          onGenerateInsights={generateInsights}
           isLoading={isLoading}
+          scriptCode={scriptCode}
           runHistory={runHistory}
         />
       )
@@ -78,8 +96,8 @@ function App() {
   }
 
   // Mobile tab label for left panel
-  const leftTabLabel = showReview ? 'Script' : 'Strategy'
-  const LeftTabIcon = showReview ? Code : MessageSquare
+  const leftTabLabel = showResults ? 'Insights' : showReview ? 'Script' : 'Strategy'
+  const LeftTabIcon = showResults ? Lightbulb : showReview ? Code : MessageSquare
 
   return (
     <div className="min-h-screen bg-slate-50">
