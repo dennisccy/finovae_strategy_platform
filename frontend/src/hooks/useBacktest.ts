@@ -1,6 +1,10 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef } from 'react'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '';
+
+// =============================================================================
+// Core Types
+// =============================================================================
 
 export interface Trade {
   trade_id: string
@@ -172,208 +176,532 @@ export interface StrategyInsights {
   suggestions: InsightsSuggestion[]
 }
 
-export type Phase = 'idle' | 'generating' | 'review' | 'executing' | 'results'
+// =============================================================================
+// New Studio Layout Types
+// =============================================================================
+
+export type ActivityEntryType = 'user-prompt' | 'ai-step' | 'code-preview' | 'error' | 'complete' | 'insights'
+
+export interface ActivityEntry {
+  id: string
+  type: ActivityEntryType
+  timestamp: string
+  content: string
+  detail?: string
+  status?: 'pending' | 'active' | 'done' | 'error'
+  iterationId?: string
+}
+
+export interface BacktestParams {
+  symbol: string
+  timeframe: string
+  start_date: string
+  end_date: string
+  initial_capital: number
+}
+
+export type IterationStatus = 'generating' | 'executing' | 'complete' | 'error'
+
+export interface IterationNode {
+  id: string
+  prompt: string
+  scriptCode: string
+  scriptId: string
+  strategyName: string
+  result: BacktestResult | null
+  rating: StrategyRating | null
+  insights: StrategyInsights | null
+  totalReturn: number
+  winRate: number
+  numTrades: number
+  sharpe: number
+  timestamp: string
+  status: IterationStatus
+  error?: string
+}
+
+export type Phase = 'idle' | 'generating' | 'executing' | 'results'
+export type ActivityStep = 'ai-writing' | 'validating' | 'fetching-data' | 'simulating' | 'calculating' | null
+
+// =============================================================================
+// Hook
+// =============================================================================
 
 export function useBacktest() {
   const [phase, setPhase] = useState<Phase>('idle')
   const [isLoading, setIsLoading] = useState(false)
+  const stepTimersRef = useRef<ReturnType<typeof setTimeout>[]>([])
   const [error, setError] = useState<string | null>(null)
-  const [result, setResult] = useState<BacktestResult | null>(null)
-  const [strategySpec, setStrategySpec] = useState<StrategySpec | null>(null)
-  const [runHistory, setRunHistory] = useState<RunHistoryItem[]>([])
-  const [rating, setRating] = useState<StrategyRating | null>(null)
-  const [generatedScript, setGeneratedScript] = useState<GeneratedScript | null>(null)
-  const [scriptCode, setScriptCode] = useState<string | null>(null)
-  const [insights, setInsights] = useState<StrategyInsights | null>(null)
-  const [insightsLoading, setInsightsLoading] = useState(false)
 
-  const generateStrategy = useCallback(async (naturalLanguage: string, model: string, previousScriptCode?: string) => {
+  // Activity log state
+  const [activityLog, setActivityLog] = useState<ActivityEntry[]>([])
+  const [selectedIterationId, setSelectedIterationId] = useState<string | null>(null)
+  const [iterationHistory, setIterationHistory] = useState<IterationNode[]>([])
+
+  // Backtest params with defaults
+  const [backtestParams, setBacktestParams] = useState<BacktestParams>({
+    symbol: 'BTCUSDT',
+    timeframe: '4h',
+    start_date: '2024-01-01',
+    end_date: new Date().toISOString().split('T')[0],
+    initial_capital: 10000,
+  })
+
+  const clearStepTimers = useCallback(() => {
+    stepTimersRef.current.forEach(clearTimeout)
+    stepTimersRef.current = []
+  }, [])
+
+  const addLogEntry = useCallback((entry: Omit<ActivityEntry, 'id' | 'timestamp'>) => {
+    const newEntry: ActivityEntry = {
+      ...entry,
+      id: crypto.randomUUID(),
+      timestamp: new Date().toISOString(),
+    }
+    setActivityLog(prev => [...prev, newEntry])
+    return newEntry.id
+  }, [])
+
+  const updateLogEntry = useCallback((id: string, updates: Partial<ActivityEntry>) => {
+    setActivityLog(prev => prev.map(e => e.id === id ? { ...e, ...updates } : e))
+  }, [])
+
+  // ==========================================================================
+  // generateAndExecute — replaces separate generate + manual execute
+  // ==========================================================================
+
+  const generateAndExecute = useCallback(async (
+    prompt: string,
+    model: string,
+    previousScriptCode?: string
+  ) => {
     setPhase('generating')
     setIsLoading(true)
     setError(null)
 
+    // 1. User prompt entry
+    const iterationId = crypto.randomUUID()
+    addLogEntry({
+      type: 'user-prompt',
+      content: prompt,
+      iterationId,
+    })
+
+    // 2. Create iteration node (generating)
+    const newIteration: IterationNode = {
+      id: iterationId,
+      prompt,
+      scriptCode: '',
+      scriptId: '',
+      strategyName: '',
+      result: null,
+      rating: null,
+      insights: null,
+      totalReturn: 0,
+      winRate: 0,
+      numTrades: 0,
+      sharpe: 0,
+      timestamp: new Date().toISOString(),
+      status: 'generating',
+    }
+    setIterationHistory(prev => [...prev, newIteration])
+
+    // 3. AI generating step
+    const genStepId = addLogEntry({
+      type: 'ai-step',
+      content: 'Generating strategy code...',
+      status: 'active',
+      iterationId,
+    })
+
     try {
-      const body: Record<string, string> = { natural_language: naturalLanguage, model }
+      // 4. POST /api/generate-strategy
+      const body: Record<string, string> = { natural_language: prompt, model }
       if (previousScriptCode) {
         body.previous_script_code = previousScriptCode
       }
 
-      const response = await fetch(`${API_BASE_URL}/api/generate-strategy`, {
+      const genResponse = await fetch(`${API_BASE_URL}/api/generate-strategy`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       })
 
-      const data = await response.json()
+      const genData = await genResponse.json()
 
-      if (!data.success) {
-        setError(data.errors?.join(', ') || 'Strategy generation failed')
+      if (!genData.success) {
+        const errMsg = genData.errors?.join(', ') || 'Strategy generation failed'
+        updateLogEntry(genStepId, { status: 'error' })
+        addLogEntry({ type: 'error', content: errMsg, iterationId })
+        setIterationHistory(prev => prev.map(n =>
+          n.id === iterationId ? { ...n, status: 'error', error: errMsg } : n
+        ))
+        setError(errMsg)
         setPhase('idle')
+        setIsLoading(false)
         return
       }
 
-      const script: GeneratedScript = {
-        script_id: data.script_id,
-        script_code: data.script_code,
-        strategy_name: data.strategy_name,
-        strategy_description: data.strategy_description,
-        validation_errors: data.validation_errors || [],
+      // 5. Generation success
+      updateLogEntry(genStepId, { status: 'done' })
+
+      const scriptCode = genData.script_code
+      const scriptId = genData.script_id
+      const strategyName = genData.strategy_name || 'Strategy'
+
+      // Add code preview entry
+      addLogEntry({
+        type: 'code-preview',
+        content: strategyName,
+        detail: scriptCode,
+        iterationId,
+      })
+
+      // Update iteration with script info
+      setIterationHistory(prev => prev.map(n =>
+        n.id === iterationId
+          ? { ...n, scriptCode, scriptId, strategyName, status: 'executing' }
+          : n
+      ))
+
+      // 6. Auto-execute
+      setPhase('executing')
+
+      // Simulated step entries
+      const validateStepId = addLogEntry({
+        type: 'ai-step', content: 'Validating code...', status: 'active', iterationId,
+      })
+      const fetchStepId = addLogEntry({
+        type: 'ai-step', content: 'Fetching market data...', status: 'pending', iterationId,
+      })
+      const simStepId = addLogEntry({
+        type: 'ai-step', content: 'Running simulation...', status: 'pending', iterationId,
+      })
+      const calcStepId = addLogEntry({
+        type: 'ai-step', content: 'Calculating metrics...', status: 'pending', iterationId,
+      })
+
+      // Simulated step timers
+      clearStepTimers()
+      const t1 = setTimeout(() => {
+        updateLogEntry(validateStepId, { status: 'done' })
+        updateLogEntry(fetchStepId, { status: 'active' })
+      }, 1500)
+      const t2 = setTimeout(() => {
+        updateLogEntry(fetchStepId, { status: 'done' })
+        updateLogEntry(simStepId, { status: 'active' })
+      }, 4000)
+      const t3 = setTimeout(() => {
+        updateLogEntry(simStepId, { status: 'done' })
+        updateLogEntry(calcStepId, { status: 'active' })
+      }, 8000)
+      stepTimersRef.current = [t1, t2, t3]
+
+      // 7. POST /api/execute-backtest
+      const execResponse = await fetch(`${API_BASE_URL}/api/execute-backtest`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          script_id: scriptId,
+          script_code: scriptCode,
+          symbol: backtestParams.symbol,
+          timeframe: backtestParams.timeframe,
+          start_date: backtestParams.start_date,
+          end_date: backtestParams.end_date,
+          initial_capital: backtestParams.initial_capital,
+        }),
+      })
+
+      const execData = await execResponse.json()
+
+      clearStepTimers()
+
+      if (!execData.success) {
+        const errMsg = execData.errors?.join(', ') || 'Backtest execution failed'
+        updateLogEntry(validateStepId, { status: 'done' })
+        updateLogEntry(fetchStepId, { status: 'done' })
+        updateLogEntry(simStepId, { status: 'done' })
+        updateLogEntry(calcStepId, { status: 'error' })
+        addLogEntry({ type: 'error', content: errMsg, iterationId })
+        setIterationHistory(prev => prev.map(n =>
+          n.id === iterationId ? { ...n, status: 'error', error: errMsg } : n
+        ))
+        setError(errMsg)
+        setPhase('idle')
+        setIsLoading(false)
+        return
       }
 
-      setGeneratedScript(script)
-      setScriptCode(data.script_code)
-      setPhase('review')
+      // 8. Execution success
+      updateLogEntry(validateStepId, { status: 'done' })
+      updateLogEntry(fetchStepId, { status: 'done' })
+      updateLogEntry(simStepId, { status: 'done' })
+      updateLogEntry(calcStepId, { status: 'done' })
+
+      const backtestResult: BacktestResult = execData.result
+      const resultRating: StrategyRating | null = execData.rating || null
+
+      // Complete entry
+      const returnPct = (backtestResult.total_return * 100).toFixed(2)
+      const returnSign = backtestResult.total_return >= 0 ? '+' : ''
+      addLogEntry({
+        type: 'complete',
+        content: `${returnSign}${returnPct}% return, ${backtestResult.num_trades} trades, ${(backtestResult.win_rate * 100).toFixed(0)}% win rate, ${backtestResult.sharpe_ratio.toFixed(2)} sharpe`,
+        iterationId,
+      })
+
+      // Update iteration
+      setIterationHistory(prev => prev.map(n =>
+        n.id === iterationId
+          ? {
+              ...n,
+              result: backtestResult,
+              rating: resultRating,
+              totalReturn: backtestResult.total_return,
+              winRate: backtestResult.win_rate,
+              numTrades: backtestResult.num_trades,
+              sharpe: backtestResult.sharpe_ratio,
+              status: 'complete',
+            }
+          : n
+      ))
+
+      setPhase('results')
+      setIsLoading(false)
+
+      // 9. Auto-generate insights
+      try {
+        const insResponse = await fetch(`${API_BASE_URL}/api/generate-insights`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            backtest_result: backtestResult,
+            strategy_name: strategyName,
+            strategy_description: genData.strategy_description || '',
+            script_code: scriptCode,
+            model: 'claude-haiku-4-5-20251001',
+          }),
+        })
+
+        const insData = await insResponse.json()
+
+        if (insData.success) {
+          const newInsights: StrategyInsights = {
+            summary: insData.summary || '',
+            suggestions: insData.suggestions || [],
+          }
+
+          // Add insights log entry with clickable suggestions
+          const suggestionsText = newInsights.suggestions.map(s => s.title).join(', ')
+          addLogEntry({
+            type: 'insights',
+            content: newInsights.summary,
+            detail: suggestionsText,
+            iterationId,
+          })
+
+          setIterationHistory(prev => prev.map(n =>
+            n.id === iterationId ? { ...n, insights: newInsights } : n
+          ))
+        }
+      } catch {
+        // Insights are non-critical
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to generate strategy')
+      clearStepTimers()
+      const errMsg = err instanceof Error ? err.message : 'Failed to run strategy'
+      addLogEntry({ type: 'error', content: errMsg, iterationId })
+      setIterationHistory(prev => prev.map(n =>
+        n.id === iterationId ? { ...n, status: 'error', error: errMsg } : n
+      ))
+      setError(errMsg)
       setPhase('idle')
-    } finally {
       setIsLoading(false)
     }
-  }, [])
+  }, [backtestParams, addLogEntry, updateLogEntry, clearStepTimers])
 
-  const executeBacktest = useCallback(async (params: {
-    script_id: string
-    script_code?: string
-    symbol: string
-    timeframe: string
-    start_date: string
-    end_date: string
-    initial_capital: number
-  }) => {
+  // ==========================================================================
+  // editAndRerun — execute with edited script code (skip generation)
+  // ==========================================================================
+
+  const editAndRerun = useCallback(async (originalIterationId: string, editedCode: string) => {
+    // Find the original iteration to get context
+    const original = iterationHistory.find(n => n.id === originalIterationId)
+    if (!original) return
+
     setPhase('executing')
     setIsLoading(true)
     setError(null)
+
+    const iterationId = crypto.randomUUID()
+
+    addLogEntry({
+      type: 'user-prompt',
+      content: `Re-running "${original.strategyName}" with edited code`,
+      iterationId,
+    })
+
+    addLogEntry({
+      type: 'code-preview',
+      content: original.strategyName + ' (edited)',
+      detail: editedCode,
+      iterationId,
+    })
+
+    // Create new iteration
+    const newIteration: IterationNode = {
+      id: iterationId,
+      prompt: original.prompt + ' (edited)',
+      scriptCode: editedCode,
+      scriptId: original.scriptId,
+      strategyName: original.strategyName + ' (edited)',
+      result: null,
+      rating: null,
+      insights: null,
+      totalReturn: 0,
+      winRate: 0,
+      numTrades: 0,
+      sharpe: 0,
+      timestamp: new Date().toISOString(),
+      status: 'executing',
+    }
+    setIterationHistory(prev => [...prev, newIteration])
+
+    // Step entries
+    const validateStepId = addLogEntry({
+      type: 'ai-step', content: 'Validating code...', status: 'active', iterationId,
+    })
+    const fetchStepId = addLogEntry({
+      type: 'ai-step', content: 'Fetching market data...', status: 'pending', iterationId,
+    })
+    const simStepId = addLogEntry({
+      type: 'ai-step', content: 'Running simulation...', status: 'pending', iterationId,
+    })
+    const calcStepId = addLogEntry({
+      type: 'ai-step', content: 'Calculating metrics...', status: 'pending', iterationId,
+    })
+
+    clearStepTimers()
+    const t1 = setTimeout(() => {
+      updateLogEntry(validateStepId, { status: 'done' })
+      updateLogEntry(fetchStepId, { status: 'active' })
+    }, 1500)
+    const t2 = setTimeout(() => {
+      updateLogEntry(fetchStepId, { status: 'done' })
+      updateLogEntry(simStepId, { status: 'active' })
+    }, 4000)
+    const t3 = setTimeout(() => {
+      updateLogEntry(simStepId, { status: 'done' })
+      updateLogEntry(calcStepId, { status: 'active' })
+    }, 8000)
+    stepTimersRef.current = [t1, t2, t3]
 
     try {
       const response = await fetch(`${API_BASE_URL}/api/execute-backtest`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(params),
-      })
-
-      const data = await response.json()
-
-      if (!data.success) {
-        setError(data.errors?.join(', ') || 'Backtest execution failed')
-        setPhase('review')
-        return
-      }
-
-      setResult(data.result)
-      setRating(data.rating || null)
-      setStrategySpec(null) // script-based runs don't have a StrategySpec
-      setPhase('results')
-
-      if (data.result) {
-        setRunHistory(prev => [
-          {
-            run_id: data.result.run_id,
-            timestamp: new Date().toISOString(),
-            natural_language: generatedScript?.strategy_name || 'Script Strategy',
-            total_return: data.result.total_return,
-            num_trades: data.result.num_trades,
-          },
-          ...prev,
-        ])
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to execute backtest')
-      setPhase('review')
-    } finally {
-      setIsLoading(false)
-    }
-  }, [generatedScript])
-
-  // Legacy: old single-step flow (backward compat)
-  const runBacktest = useCallback(async (request: BacktestRequest) => {
-    setIsLoading(true)
-    setError(null)
-
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/run-backtest`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(request),
-      })
-
-      const data = await response.json()
-
-      if (!data.success) {
-        setError(data.errors?.join(', ') || 'Backtest failed')
-        setResult(null)
-        setStrategySpec(null)
-        return
-      }
-
-      setResult(data.result)
-      setRating(data.rating || null)
-      setStrategySpec(data.strategy_spec)
-      setPhase('results')
-
-      if (data.result) {
-        setRunHistory(prev => [
-          {
-            run_id: data.result.run_id,
-            timestamp: new Date().toISOString(),
-            natural_language: request.natural_language,
-            total_return: data.result.total_return,
-            num_trades: data.result.num_trades,
-          },
-          ...prev,
-        ])
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to run backtest')
-      setResult(null)
-      setStrategySpec(null)
-    } finally {
-      setIsLoading(false)
-    }
-  }, [])
-
-  const generateInsights = useCallback(async (model: string = 'claude-haiku-4-5-20251001') => {
-    if (!result || !scriptCode) return
-
-    setInsightsLoading(true)
-
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/generate-insights`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          backtest_result: result,
-          strategy_name: generatedScript?.strategy_name || '',
-          strategy_description: generatedScript?.strategy_description || '',
-          script_code: scriptCode,
-          model,
+          script_id: original.scriptId,
+          script_code: editedCode,
+          symbol: backtestParams.symbol,
+          timeframe: backtestParams.timeframe,
+          start_date: backtestParams.start_date,
+          end_date: backtestParams.end_date,
+          initial_capital: backtestParams.initial_capital,
         }),
       })
 
       const data = await response.json()
+      clearStepTimers()
 
-      if (data.success) {
-        setInsights({
-          summary: data.summary || '',
-          suggestions: data.suggestions || [],
-        })
+      if (!data.success) {
+        const errMsg = data.errors?.join(', ') || 'Backtest execution failed'
+        updateLogEntry(validateStepId, { status: 'done' })
+        updateLogEntry(fetchStepId, { status: 'done' })
+        updateLogEntry(simStepId, { status: 'done' })
+        updateLogEntry(calcStepId, { status: 'error' })
+        addLogEntry({ type: 'error', content: errMsg, iterationId })
+        setIterationHistory(prev => prev.map(n =>
+          n.id === iterationId ? { ...n, status: 'error', error: errMsg } : n
+        ))
+        setError(errMsg)
+        setPhase('idle')
+        setIsLoading(false)
+        return
       }
-    } catch {
-      // Insights are non-critical; silently fail
-    } finally {
-      setInsightsLoading(false)
+
+      updateLogEntry(validateStepId, { status: 'done' })
+      updateLogEntry(fetchStepId, { status: 'done' })
+      updateLogEntry(simStepId, { status: 'done' })
+      updateLogEntry(calcStepId, { status: 'done' })
+
+      const backtestResult: BacktestResult = data.result
+      const resultRating: StrategyRating | null = data.rating || null
+
+      const returnPct = (backtestResult.total_return * 100).toFixed(2)
+      const returnSign = backtestResult.total_return >= 0 ? '+' : ''
+      addLogEntry({
+        type: 'complete',
+        content: `${returnSign}${returnPct}% return, ${backtestResult.num_trades} trades, ${(backtestResult.win_rate * 100).toFixed(0)}% win rate, ${backtestResult.sharpe_ratio.toFixed(2)} sharpe`,
+        iterationId,
+      })
+
+      setIterationHistory(prev => prev.map(n =>
+        n.id === iterationId
+          ? {
+              ...n,
+              result: backtestResult,
+              rating: resultRating,
+              totalReturn: backtestResult.total_return,
+              winRate: backtestResult.win_rate,
+              numTrades: backtestResult.num_trades,
+              sharpe: backtestResult.sharpe_ratio,
+              status: 'complete',
+            }
+          : n
+      ))
+
+      setPhase('results')
+      setIsLoading(false)
+    } catch (err) {
+      clearStepTimers()
+      const errMsg = err instanceof Error ? err.message : 'Failed to execute backtest'
+      addLogEntry({ type: 'error', content: errMsg, iterationId })
+      setIterationHistory(prev => prev.map(n =>
+        n.id === iterationId ? { ...n, status: 'error', error: errMsg } : n
+      ))
+      setError(errMsg)
+      setPhase('idle')
+      setIsLoading(false)
     }
-  }, [result, scriptCode, generatedScript])
+  }, [iterationHistory, backtestParams, addLogEntry, updateLogEntry, clearStepTimers])
+
+  // ==========================================================================
+  // deleteIteration
+  // ==========================================================================
+
+  const deleteIteration = useCallback((id: string) => {
+    setIterationHistory(prev => prev.filter(n => n.id !== id))
+    setActivityLog(prev => prev.filter(e => e.iterationId !== id))
+    if (selectedIterationId === id) {
+      setSelectedIterationId(null)
+    }
+  }, [selectedIterationId])
+
+  // ==========================================================================
+  // selectIteration
+  // ==========================================================================
+
+  const selectIteration = useCallback((id: string | null) => {
+    setSelectedIterationId(id)
+  }, [])
+
+  // ==========================================================================
+  // resetToIdle
+  // ==========================================================================
 
   const resetToIdle = useCallback(() => {
     setPhase('idle')
-    setError(null)
-    setGeneratedScript(null)
-    setScriptCode(null)
-    setInsights(null)
-  }, [])
-
-  const backToReview = useCallback(() => {
-    setPhase('review')
     setError(null)
   }, [])
 
@@ -381,20 +709,15 @@ export function useBacktest() {
     phase,
     isLoading,
     error,
-    result,
-    rating,
-    strategySpec,
-    runHistory,
-    generatedScript,
-    scriptCode,
-    setScriptCode,
-    insights,
-    insightsLoading,
-    generateStrategy,
-    generateInsights,
-    executeBacktest,
-    runBacktest,
+    backtestParams,
+    setBacktestParams,
+    activityLog,
+    selectedIterationId,
+    iterationHistory,
+    generateAndExecute,
+    editAndRerun,
+    deleteIteration,
+    selectIteration,
     resetToIdle,
-    backToReview,
   }
 }

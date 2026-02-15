@@ -1,106 +1,68 @@
-import { useState, useEffect } from 'react'
-import { ChatPanel } from './components/ChatPanel'
-import { ScriptReviewPanel } from './components/ScriptReviewPanel'
-import { ResultsPanel } from './components/ResultsPanel'
-import { InsightsPanel } from './components/InsightsPanel'
+import { useState, useCallback } from 'react'
 import { useBacktest } from './hooks/useBacktest'
-import { BarChart3, MessageSquare, Code, Lightbulb } from 'lucide-react'
+import { BacktestConfigBar } from './components/BacktestConfigBar'
+import { ActivityLog } from './components/ActivityLog'
+import { IterationPanel } from './components/IterationPanel'
+import { ScriptEditorModal } from './components/ScriptEditorModal'
+import { MessageSquare, GitBranch } from 'lucide-react'
 
 function App() {
   const {
     phase,
     isLoading,
-    error,
-    result,
-    rating,
-    strategySpec,
-    runHistory,
-    generatedScript,
-    scriptCode,
-    setScriptCode,
-    insights,
-    insightsLoading,
-    generateStrategy,
-    generateInsights,
-    executeBacktest,
-    resetToIdle,
-    backToReview,
+    backtestParams,
+    setBacktestParams,
+    activityLog,
+    selectedIterationId,
+    iterationHistory,
+    generateAndExecute,
+    editAndRerun,
+    deleteIteration,
+    selectIteration,
   } = useBacktest()
 
-  const [mobileTab, setMobileTab] = useState<'strategy' | 'results'>('strategy')
+  const [mobileTab, setMobileTab] = useState<'activity' | 'iterations'>('activity')
 
-  const showChat = phase === 'idle' || phase === 'generating'
-  const showReview = phase === 'review' || phase === 'executing'
-  const showResults = phase === 'results'
+  // Script editor modal state
+  const [editorModal, setEditorModal] = useState<{
+    iterationId: string
+    code: string
+    name: string
+  } | null>(null)
 
-  // Auto-generate insights when results appear
-  useEffect(() => {
-    if (phase === 'results' && result && !insights && !insightsLoading) {
-      generateInsights()
-    }
-  }, [phase, result, insights, insightsLoading, generateInsights])
+  const handleSubmitPrompt = useCallback((prompt: string, model: string) => {
+    // Find the latest completed iteration for previousScriptCode context
+    const latestComplete = [...iterationHistory].reverse().find(n => n.status === 'complete')
+    generateAndExecute(prompt, model, latestComplete?.scriptCode)
+  }, [generateAndExecute, iterationHistory])
 
-  // Handle iteration: generate a new strategy with previous script context
-  const handleIterate = async (prompt: string, model: string, previousScriptCode: string) => {
-    await generateStrategy(prompt, model, previousScriptCode)
-    setMobileTab('results')
-  }
+  const handleEditAndRerun = useCallback((iterationId: string) => {
+    const iteration = iterationHistory.find(n => n.id === iterationId)
+    if (!iteration || !iteration.scriptCode) return
+    setEditorModal({
+      iterationId: iteration.id,
+      code: iteration.scriptCode,
+      name: iteration.strategyName,
+    })
+  }, [iterationHistory])
 
-  // Left panel content based on phase
-  const renderLeftPanel = () => {
-    if (showChat) {
-      return (
-        <ChatPanel
-          onGenerate={async (nl, model) => {
-            await generateStrategy(nl, model)
-            setMobileTab('results')
-          }}
-          isLoading={isLoading}
-          runHistory={runHistory}
-        />
-      )
-    }
+  const handleSuggestionClick = useCallback((suggestion: string) => {
+    // Find the latest completed iteration for previousScriptCode context
+    const latestComplete = [...iterationHistory].reverse().find(n => n.status === 'complete')
+    generateAndExecute(suggestion, 'claude-haiku-4-5-20251001', latestComplete?.scriptCode)
+  }, [generateAndExecute, iterationHistory])
 
-    if (showReview && generatedScript && scriptCode !== null) {
-      return (
-        <ScriptReviewPanel
-          script={generatedScript}
-          scriptCode={scriptCode}
-          onScriptCodeChange={setScriptCode}
-          onExecute={async (params) => {
-            await executeBacktest(params)
-            setMobileTab('results')
-          }}
-          onRegenerate={resetToIdle}
-          isLoading={isLoading}
-          error={error}
-        />
-      )
-    }
+  const configDisabled = phase === 'generating' || phase === 'executing'
 
-    if (showResults) {
-      return (
-        <InsightsPanel
-          insights={insights}
-          insightsLoading={insightsLoading}
-          onIterate={handleIterate}
-          onGenerateInsights={generateInsights}
-          isLoading={isLoading}
-          scriptCode={scriptCode}
-          runHistory={runHistory}
-        />
-      )
-    }
+  const latestComplete = [...iterationHistory].reverse().find(n => n.status === 'complete')
 
-    return null
-  }
-
-  // Mobile tab label for left panel
-  const leftTabLabel = showResults ? 'Insights' : showReview ? 'Script' : 'Strategy'
-  const LeftTabIcon = showResults ? Lightbulb : showReview ? Code : MessageSquare
+  const handleRerun = useCallback(() => {
+    if (!latestComplete?.scriptCode) return
+    editAndRerun(latestComplete.id, latestComplete.scriptCode)
+  }, [latestComplete, editAndRerun])
 
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div className="min-h-screen bg-slate-50 flex flex-col">
       {/* Header */}
       <header className="bg-white border-b border-slate-200 px-4 py-3 lg:px-6 lg:py-4">
         <div className="flex items-center justify-between max-w-screen-2xl mx-auto">
@@ -112,60 +74,85 @@ function App() {
               Finovae Strategy Platform
             </h1>
           </div>
-          <span className="text-xs lg:text-sm text-slate-500 flex-shrink-0 ml-2">v0.2.0</span>
+          <span className="text-xs lg:text-sm text-slate-500 flex-shrink-0 ml-2">v0.3.0</span>
         </div>
       </header>
+
+      {/* Config Bar */}
+      <BacktestConfigBar
+        params={backtestParams}
+        onChange={setBacktestParams}
+        disabled={configDisabled}
+        onRerun={handleRerun}
+        canRerun={!!latestComplete}
+      />
 
       {/* Mobile Tab Bar */}
       <div className="lg:hidden flex border-b border-slate-200 bg-white">
         <button
-          onClick={() => setMobileTab('strategy')}
+          onClick={() => setMobileTab('activity')}
           className={`flex-1 flex items-center justify-center gap-2 py-2.5 text-sm font-medium transition-colors ${
-            mobileTab === 'strategy'
+            mobileTab === 'activity'
               ? 'text-primary-600 border-b-2 border-primary-600'
               : 'text-slate-500'
           }`}
         >
-          <LeftTabIcon className="w-4 h-4" />
-          {leftTabLabel}
+          <MessageSquare className="w-4 h-4" />
+          Activity
         </button>
         <button
-          onClick={() => setMobileTab('results')}
+          onClick={() => setMobileTab('iterations')}
           className={`flex-1 flex items-center justify-center gap-2 py-2.5 text-sm font-medium transition-colors ${
-            mobileTab === 'results'
+            mobileTab === 'iterations'
               ? 'text-primary-600 border-b-2 border-primary-600'
               : 'text-slate-500'
           }`}
         >
-          <BarChart3 className="w-4 h-4" />
-          Results
-          {result && (
-            <span className={`w-2 h-2 rounded-full ${result.total_return >= 0 ? 'bg-emerald-500' : 'bg-red-500'}`} />
+          <GitBranch className="w-4 h-4" />
+          Iterations
+          {iterationHistory.length > 0 && (
+            <span className="w-5 h-5 rounded-full bg-primary-100 text-primary-600 text-xs flex items-center justify-center font-semibold">
+              {iterationHistory.length}
+            </span>
           )}
         </button>
       </div>
 
       {/* Main Content */}
-      <main className="flex flex-col lg:flex-row lg:h-[calc(100vh-73px)]">
-        {/* Left Panel */}
-        <div className={`${mobileTab === 'strategy' ? 'flex' : 'hidden'} lg:flex w-full lg:w-1/2 lg:border-r border-slate-200 flex-col min-h-[calc(100vh-113px)] lg:min-h-0`}>
-          {renderLeftPanel()}
+      <main className="flex flex-col lg:flex-row flex-1 lg:h-[calc(100vh-105px)] overflow-hidden">
+        {/* Left Panel - Activity Log */}
+        <div className={`${mobileTab === 'activity' ? 'flex' : 'hidden'} lg:flex w-full lg:w-1/2 lg:border-r border-slate-200 flex-col min-h-0`}>
+          <ActivityLog
+            entries={activityLog}
+            onSubmitPrompt={handleSubmitPrompt}
+            isLoading={isLoading}
+            onEditAndRerun={handleEditAndRerun}
+            onSuggestionClick={handleSuggestionClick}
+          />
         </div>
 
-        {/* Right Panel - Results */}
-        <div className={`${mobileTab === 'results' ? 'flex' : 'hidden'} lg:flex w-full lg:w-1/2 flex-col overflow-hidden min-h-[calc(100vh-113px)] lg:min-h-0`}>
-          <ResultsPanel
-            result={result}
-            rating={rating}
-            strategySpec={strategySpec}
-            generatedScript={generatedScript}
-            scriptCode={scriptCode}
-            isLoading={isLoading && (phase === 'executing' || phase === 'generating')}
-            error={showChat ? error : null}
-            onBackToReview={showResults && generatedScript ? backToReview : undefined}
+        {/* Right Panel - Iteration Panel */}
+        <div className={`${mobileTab === 'iterations' ? 'flex' : 'hidden'} lg:flex w-full lg:w-1/2 flex-col overflow-hidden min-h-0`}>
+          <IterationPanel
+            iterations={iterationHistory}
+            selectedId={selectedIterationId}
+            onSelect={selectIteration}
+            onDelete={deleteIteration}
+            isLoading={isLoading}
           />
         </div>
       </main>
+
+      {/* Script Editor Modal */}
+      {editorModal && (
+        <ScriptEditorModal
+          iterationId={editorModal.iterationId}
+          initialCode={editorModal.code}
+          strategyName={editorModal.name}
+          onRerun={editAndRerun}
+          onClose={() => setEditorModal(null)}
+        />
+      )}
     </div>
   )
 }
