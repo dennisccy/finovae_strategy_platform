@@ -5,6 +5,7 @@ interface IterationCardProps {
   iteration: IterationNode
   onSelect: (id: string) => void
   onDelete: (id: string) => void
+  isLatest?: boolean
 }
 
 function timeAgo(timestamp: string): string {
@@ -26,15 +27,61 @@ const statusConfig = {
   error: { label: 'Error', dotClass: 'bg-red-500', bgClass: 'bg-red-50 border-red-200' },
 }
 
-export function IterationCard({ iteration, onSelect, onDelete }: IterationCardProps) {
+export function IterationCard({ iteration, onSelect, onDelete, isLatest = false }: IterationCardProps) {
   const config = statusConfig[iteration.status]
   const isInProgress = iteration.status === 'generating' || iteration.status === 'executing'
+  const isComplete = iteration.status === 'complete'
+  const isPast = !isLatest && isComplete
 
   const formatReturn = (value: number) => {
     const pct = (value * 100).toFixed(2)
     return value >= 0 ? `+${pct}%` : `${pct}%`
   }
 
+  // Compact view for past iterations
+  if (isPast) {
+    return (
+      <div className="border border-slate-200 rounded-lg px-3 py-2 bg-white hover:bg-slate-50 transition-colors group">
+        <div className="flex items-center justify-between">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 mb-0.5">
+              <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+              <h4 className="text-xs font-semibold text-slate-700 truncate">
+                {iteration.strategyName}
+              </h4>
+            </div>
+            <div className="flex items-center gap-2 text-xs text-slate-500">
+              <span className={`font-medium ${iteration.totalReturn >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                {formatReturn(iteration.totalReturn)}
+              </span>
+              <span className="text-slate-300">·</span>
+              <span>{iteration.numTrades} trades</span>
+              <span className="text-slate-300">·</span>
+              <span>{timeAgo(iteration.timestamp)}</span>
+            </div>
+          </div>
+          <div className="flex items-center gap-1 ml-2 opacity-0 group-hover:opacity-100 transition-opacity">
+            <button
+              onClick={() => onSelect(iteration.id)}
+              className="p-1.5 text-primary-600 hover:bg-primary-50 rounded transition-colors"
+              title="View details"
+            >
+              <Eye className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={() => onDelete(iteration.id)}
+              className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
+              title="Delete"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // Full view for latest/active iteration
   return (
     <div className={`border rounded-xl p-4 transition-colors ${config.bgClass}`}>
       {/* Status badge + timestamp */}

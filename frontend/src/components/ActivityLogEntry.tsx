@@ -1,6 +1,18 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Loader2, Check, X, AlertCircle, CheckCircle2, Lightbulb, Code, ChevronDown, ChevronRight, User } from 'lucide-react'
 import type { ActivityEntry } from '../hooks/useBacktest'
+
+function ElapsedTimer({ startedAt }: { startedAt: number }) {
+  const [now, setNow] = useState(Date.now())
+
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 100)
+    return () => clearInterval(id)
+  }, [])
+
+  const elapsed = ((now - startedAt) / 1000).toFixed(1)
+  return <span className="text-xs text-slate-400 tabular-nums ml-1">{elapsed}s</span>
+}
 
 interface ActivityLogEntryProps {
   entry: ActivityEntry
@@ -27,32 +39,45 @@ export function ActivityLogEntry({ entry, onEditAndRerun, onSuggestionClick }: A
   }
 
   if (entry.type === 'ai-step') {
+    const isSub = entry.substep
+    const iconSize = isSub ? 'w-3 h-3' : 'w-4 h-4'
+    const innerIcon = isSub ? 'w-2 h-2' : 'w-2.5 h-2.5'
+    const textSize = isSub ? 'text-xs' : 'text-sm'
+
     return (
-      <div className="flex items-center gap-2.5 mb-2 ml-1">
+      <div className={`flex items-center gap-2.5 mb-1.5 ${isSub ? 'ml-7' : 'ml-1'}`}>
         {entry.status === 'active' && (
-          <Loader2 className="w-4 h-4 text-primary-500 animate-spin flex-shrink-0" />
+          <Loader2 className={`${iconSize} text-primary-500 animate-spin flex-shrink-0`} />
         )}
         {entry.status === 'done' && (
-          <div className="w-4 h-4 rounded-full bg-emerald-100 flex items-center justify-center flex-shrink-0">
-            <Check className="w-2.5 h-2.5 text-emerald-600" />
+          <div className={`${iconSize} rounded-full bg-emerald-100 flex items-center justify-center flex-shrink-0`}>
+            <Check className={`${innerIcon} text-emerald-600`} />
           </div>
         )}
         {entry.status === 'error' && (
-          <div className="w-4 h-4 rounded-full bg-red-100 flex items-center justify-center flex-shrink-0">
-            <X className="w-2.5 h-2.5 text-red-600" />
+          <div className={`${iconSize} rounded-full bg-red-100 flex items-center justify-center flex-shrink-0`}>
+            <X className={`${innerIcon} text-red-600`} />
           </div>
         )}
         {entry.status === 'pending' && (
-          <div className="w-4 h-4 rounded-full border-2 border-slate-200 flex-shrink-0" />
+          <div className={`${iconSize} rounded-full border-2 border-slate-200 flex-shrink-0`} />
         )}
-        <span className={`text-sm ${
-          entry.status === 'active' ? 'text-slate-800 font-medium' :
-          entry.status === 'done' ? 'text-slate-500' :
+        <span className={`${textSize} ${
+          entry.status === 'active' ? (isSub ? 'text-slate-700 font-medium' : 'text-slate-800 font-medium') :
+          entry.status === 'done' ? (isSub ? 'text-slate-400' : 'text-slate-500') :
           entry.status === 'error' ? 'text-red-600' :
           'text-slate-400'
         }`}>
           {entry.content}
         </span>
+        {entry.status === 'active' && entry.startedAt != null && (
+          <ElapsedTimer startedAt={entry.startedAt} />
+        )}
+        {(entry.status === 'done' || entry.status === 'error') && entry.startedAt != null && entry.completedAt != null && (
+          <span className="text-xs text-slate-400 tabular-nums ml-1">
+            {((entry.completedAt - entry.startedAt) / 1000).toFixed(1)}s
+          </span>
+        )}
       </div>
     )
   }

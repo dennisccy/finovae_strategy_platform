@@ -1,7 +1,100 @@
-import { useState, useEffect, useRef, FormEvent } from 'react'
-import { Send, Loader2, Sparkles } from 'lucide-react'
+import { useState, useEffect, useRef, useMemo, FormEvent } from 'react'
+import { Send, Loader2, Sparkles, CheckCircle2, AlertCircle, ChevronDown, ChevronRight } from 'lucide-react'
 import { ActivityLogEntry } from './ActivityLogEntry'
 import type { ActivityEntry } from '../hooks/useBacktest'
+
+interface IterationGroup {
+  iterationId: string
+  entries: ActivityEntry[]
+  isComplete: boolean
+  isError: boolean
+  summary: string | null     // from 'complete' or 'error' entry
+  prompt: string | null       // from 'user-prompt' entry
+  strategyName: string | null // from 'code-preview' entry
+}
+
+function groupByIteration(entries: ActivityEntry[]): { groups: IterationGroup[]; ungrouped: ActivityEntry[] } {
+  const groupMap = new Map<string, ActivityEntry[]>()
+  const ungrouped: ActivityEntry[] = []
+
+  for (const entry of entries) {
+    if (entry.iterationId) {
+      const list = groupMap.get(entry.iterationId)
+      if (list) list.push(entry)
+      else groupMap.set(entry.iterationId, [entry])
+    } else {
+      ungrouped.push(entry)
+    }
+  }
+
+  const groups: IterationGroup[] = []
+  for (const [iterationId, groupEntries] of groupMap) {
+    const completeEntry = groupEntries.find(e => e.type === 'complete')
+    const errorEntry = groupEntries.find(e => e.type === 'error')
+    const promptEntry = groupEntries.find(e => e.type === 'user-prompt')
+    const codeEntry = groupEntries.find(e => e.type === 'code-preview')
+
+    groups.push({
+      iterationId,
+      entries: groupEntries,
+      isComplete: !!completeEntry,
+      isError: !!errorEntry && !completeEntry,
+      summary: completeEntry?.content ?? errorEntry?.content ?? null,
+      prompt: promptEntry?.content ?? null,
+      strategyName: codeEntry?.content ?? null,
+    })
+  }
+
+  return { groups, ungrouped }
+}
+
+function CollapsedIteration({ group, onEditAndRerun }: {
+  group: IterationGroup
+  onEditAndRerun?: (iterationId: string) => void
+}) {
+  const [expanded, setExpanded] = useState(false)
+
+  return (
+    <div className="mb-2">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="w-full flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 transition-colors text-left group"
+      >
+        {group.isComplete && (
+          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />
+        )}
+        {group.isError && (
+          <AlertCircle className="w-3.5 h-3.5 text-red-500 flex-shrink-0" />
+        )}
+        <div className="flex-1 min-w-0">
+          <span className="text-xs font-medium text-slate-700 truncate block">
+            {group.strategyName || group.prompt || 'Iteration'}
+          </span>
+          {group.summary && (
+            <span className="text-xs text-slate-400 truncate block">
+              {group.summary}
+            </span>
+          )}
+        </div>
+        {expanded
+          ? <ChevronDown className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
+          : <ChevronRight className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
+        }
+      </button>
+      {expanded && (
+        <div className="mt-1 pl-2 border-l-2 border-slate-200 ml-3">
+          {group.entries.map(entry => (
+            <ActivityLogEntry
+              key={entry.id}
+              entry={entry}
+              onEditAndRerun={onEditAndRerun}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
 
 interface RecommendCard {
   id: string
@@ -49,13 +142,45 @@ export function ActivityLog({ entries, onSubmitPrompt, isLoading, onEditAndRerun
   const [prompt, setPrompt] = useState('')
   const [model, setModel] = useState('claude-haiku-4-5-20251001')
   const scrollRef = useRef<HTMLDivElement>(null)
+  const isUserScrolledUp = useRef(false)
+  const lastScrollHeight = useRef(0)
 
-  // Auto-scroll to bottom on new entries
+  // Auto-scroll to bottom on new or updated entries (smooth behavior)
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+    if (scrollRef.current && !isUserScrolledUp.current) {
+      const element = scrollRef.current
+      const isAtBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 50
+
+      if (isAtBottom || lastScrollHeight.current !== element.scrollHeight) {
+        element.scrollTo({
+          top: element.scrollHeight,
+          behavior: 'smooth'
+        })
+        lastScrollHeight.current = element.scrollHeight
+      }
     }
-  }, [entries.length])
+  }, [entries])
+
+  // Detect user scroll to prevent auto-scroll interruption
+  useEffect(() => {
+    const element = scrollRef.current
+    if (!element) return
+
+    const handleScroll = () => {
+      const isAtBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 50
+      isUserScrolledUp.current = !isAtBottom
+
+      // Re-enable auto-scroll after 2s if user scrolls to bottom
+      if (isAtBottom) {
+        setTimeout(() => {
+          isUserScrolledUp.current = false
+        }, 2000)
+      }
+    }
+
+    element.addEventListener('scroll', handleScroll)
+    return () => element.removeEventListener('scroll', handleScroll)
+  }, [])
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault()
@@ -70,6 +195,10 @@ export function ActivityLog({ entries, onSubmitPrompt, isLoading, onEditAndRerun
   }
 
   const isEmpty = entries.length === 0
+
+  // Group entries by iteration: past iterations get collapsed, latest stays expanded
+  const { groups, ungrouped } = useMemo(() => groupByIteration(entries), [entries])
+  const latestIterationId = groups.length > 0 ? groups[groups.length - 1].iterationId : null
 
   return (
     <div className="flex flex-col h-full bg-white">
@@ -103,7 +232,8 @@ export function ActivityLog({ entries, onSubmitPrompt, isLoading, onEditAndRerun
           </div>
         ) : (
           <div>
-            {entries.map((entry) => (
+            {/* Ungrouped entries (no iterationId) */}
+            {ungrouped.map((entry) => (
               <ActivityLogEntry
                 key={entry.id}
                 entry={entry}
@@ -111,6 +241,30 @@ export function ActivityLog({ entries, onSubmitPrompt, isLoading, onEditAndRerun
                 onSuggestionClick={onSuggestionClick}
               />
             ))}
+            {/* Iteration groups: past collapsed, latest expanded */}
+            {groups.map((group) => {
+              const isPast = group.iterationId !== latestIterationId && (group.isComplete || group.isError)
+
+              if (isPast) {
+                return (
+                  <CollapsedIteration
+                    key={group.iterationId}
+                    group={group}
+                    onEditAndRerun={onEditAndRerun}
+                  />
+                )
+              }
+
+              // Latest / active iteration: render all entries fully
+              return group.entries.map((entry) => (
+                <ActivityLogEntry
+                  key={entry.id}
+                  entry={entry}
+                  onEditAndRerun={onEditAndRerun}
+                  onSuggestionClick={onSuggestionClick}
+                />
+              ))
+            })}
           </div>
         )}
       </div>

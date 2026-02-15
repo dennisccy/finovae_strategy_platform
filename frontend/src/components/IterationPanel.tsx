@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react'
 import { GitBranch } from 'lucide-react'
 import type { IterationNode } from '../hooks/useBacktest'
 import { IterationCard } from './IterationCard'
@@ -12,6 +13,47 @@ interface IterationPanelProps {
 }
 
 export function IterationPanel({ iterations, selectedId, onSelect, onDelete }: IterationPanelProps) {
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const isUserScrolledUp = useRef(false)
+  const lastScrollHeight = useRef(0)
+
+  // Auto-scroll to bottom when iterations change (smooth behavior)
+  useEffect(() => {
+    if (scrollRef.current && !selectedId && !isUserScrolledUp.current) {
+      const element = scrollRef.current
+      const isAtBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 50
+
+      if (isAtBottom || lastScrollHeight.current !== element.scrollHeight) {
+        element.scrollTo({
+          top: element.scrollHeight,
+          behavior: 'smooth'
+        })
+        lastScrollHeight.current = element.scrollHeight
+      }
+    }
+  }, [iterations, selectedId])
+
+  // Detect user scroll to prevent auto-scroll interruption
+  useEffect(() => {
+    const element = scrollRef.current
+    if (!element) return
+
+    const handleScroll = () => {
+      const isAtBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 50
+      isUserScrolledUp.current = !isAtBottom
+
+      // Re-enable auto-scroll after 2s if user scrolls to bottom
+      if (isAtBottom) {
+        setTimeout(() => {
+          isUserScrolledUp.current = false
+        }, 2000)
+      }
+    }
+
+    element.addEventListener('scroll', handleScroll)
+    return () => element.removeEventListener('scroll', handleScroll)
+  }, [])
+
   // Detail view for selected iteration
   if (selectedId) {
     const selected = iterations.find(n => n.id === selectedId)
@@ -44,21 +86,22 @@ export function IterationPanel({ iterations, selectedId, onSelect, onDelete }: I
     )
   }
 
-  // Iteration list (newest first)
+  // Iteration list (oldest first, latest at bottom)
   return (
-    <div className="flex-1 overflow-y-auto bg-slate-50 p-4 lg:p-6">
+    <div ref={scrollRef} className="flex-1 overflow-y-auto bg-slate-50 p-4 lg:p-6">
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-sm font-semibold text-slate-700">
           Iterations ({iterations.length})
         </h2>
       </div>
-      <div className="space-y-3">
-        {[...iterations].reverse().map((iteration) => (
+      <div className="space-y-2">
+        {iterations.map((iteration, index) => (
           <IterationCard
             key={iteration.id}
             iteration={iteration}
             onSelect={() => onSelect(iteration.id)}
             onDelete={() => onDelete(iteration.id)}
+            isLatest={index === iterations.length - 1}
           />
         ))}
       </div>
