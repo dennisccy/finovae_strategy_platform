@@ -543,6 +543,14 @@ export function useBacktest() {
       setIsLoading(false)
 
       // 9. Auto-generate insights
+      const insightsStepId = addLogEntry({
+        type: 'ai-step',
+        content: 'Generating suggestions...',
+        status: 'active',
+        startedAt: Date.now(),
+        iterationId,
+      })
+
       try {
         const insResponse = await fetch(`${API_BASE_URL}/api/generate-insights`, {
           method: 'POST',
@@ -564,6 +572,8 @@ export function useBacktest() {
             suggestions: insData.suggestions || [],
           }
 
+          updateLogEntry(insightsStepId, { status: 'done', completedAt: Date.now() })
+
           // Add insights log entry with clickable suggestions
           const suggestionsText = newInsights.suggestions.map(s => s.title).join(', ')
           addLogEntry({
@@ -576,9 +586,11 @@ export function useBacktest() {
           setIterationHistory(prev => prev.map(n =>
             n.id === iterationId ? { ...n, insights: newInsights } : n
           ))
+        } else {
+          updateLogEntry(insightsStepId, { status: 'done', completedAt: Date.now() })
         }
       } catch {
-        // Insights are non-critical
+        updateLogEntry(insightsStepId, { status: 'done', completedAt: Date.now() })
       }
     } catch (err) {
       clearProgressTimers()

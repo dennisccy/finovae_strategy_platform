@@ -1,4 +1,4 @@
-import { Trash2, Eye, Loader2 } from 'lucide-react'
+import { Trash2, Loader2 } from 'lucide-react'
 import type { IterationNode } from '../hooks/useBacktest'
 
 interface IterationCardProps {
@@ -41,7 +41,10 @@ export function IterationCard({ iteration, onSelect, onDelete, isLatest = false 
   // Compact view for past iterations
   if (isPast) {
     return (
-      <div className="border border-slate-200 rounded-lg px-3 py-2 bg-white hover:bg-slate-50 transition-colors group">
+      <div
+        className="border border-slate-200 rounded-lg px-3 py-2 bg-white hover:bg-slate-50 transition-colors group cursor-pointer"
+        onClick={() => onSelect(iteration.id)}
+      >
         <div className="flex items-center justify-between">
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-0.5">
@@ -62,14 +65,7 @@ export function IterationCard({ iteration, onSelect, onDelete, isLatest = false 
           </div>
           <div className="flex items-center gap-1 ml-2 opacity-0 group-hover:opacity-100 transition-opacity">
             <button
-              onClick={() => onSelect(iteration.id)}
-              className="p-1.5 text-primary-600 hover:bg-primary-50 rounded transition-colors"
-              title="View details"
-            >
-              <Eye className="w-3.5 h-3.5" />
-            </button>
-            <button
-              onClick={() => onDelete(iteration.id)}
+              onClick={(e) => { e.stopPropagation(); onDelete(iteration.id) }}
               className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
               title="Delete"
             >
@@ -83,7 +79,10 @@ export function IterationCard({ iteration, onSelect, onDelete, isLatest = false 
 
   // Full view for latest/active iteration
   return (
-    <div className={`border rounded-xl p-4 transition-colors ${config.bgClass}`}>
+    <div
+      className={`border rounded-xl p-4 transition-colors ${config.bgClass} ${isComplete ? 'cursor-pointer hover:shadow-md' : ''}`}
+      onClick={isComplete ? () => onSelect(iteration.id) : undefined}
+    >
       {/* Status badge + timestamp */}
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2">
@@ -135,17 +134,8 @@ export function IterationCard({ iteration, onSelect, onDelete, isLatest = false 
 
       {/* Actions */}
       <div className="flex items-center gap-2 mt-3 pt-2.5 border-t border-slate-100">
-        {iteration.status === 'complete' && (
-          <button
-            onClick={() => onSelect(iteration.id)}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-primary-600 bg-primary-50 rounded-lg hover:bg-primary-100 transition-colors"
-          >
-            <Eye className="w-3.5 h-3.5" />
-            View
-          </button>
-        )}
         <button
-          onClick={() => onDelete(iteration.id)}
+          onClick={(e) => { e.stopPropagation(); onDelete(iteration.id) }}
           className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors ml-auto"
         >
           <Trash2 className="w-3.5 h-3.5" />
