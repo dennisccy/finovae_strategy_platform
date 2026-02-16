@@ -242,7 +242,7 @@ export type ActivityStep = 'ai-writing' | 'validating' | 'fetching-data' | 'simu
 export function useBacktest() {
   const [phase, setPhase] = useState<Phase>('idle')
   const [isLoading, setIsLoading] = useState(false)
-  const stepTimersRef = useRef<ReturnType<typeof setTimeout>[]>([])
+  const progressTimersRef = useRef<ReturnType<typeof setTimeout>[]>([])
   const [error, setError] = useState<string | null>(null)
 
   // Activity log state
@@ -259,11 +259,6 @@ export function useBacktest() {
     initial_capital: 10000,
   })
 
-  const clearStepTimers = useCallback(() => {
-    stepTimersRef.current.forEach(clearTimeout)
-    stepTimersRef.current = []
-  }, [])
-
   const addLogEntry = useCallback((entry: Omit<ActivityEntry, 'id' | 'timestamp'>) => {
     const newEntry: ActivityEntry = {
       ...entry,
@@ -277,6 +272,76 @@ export function useBacktest() {
   const updateLogEntry = useCallback((id: string, updates: Partial<ActivityEntry>) => {
     setActivityLog(prev => prev.map(e => e.id === id ? { ...e, ...updates } : e))
   }, [])
+
+  /** Start estimated progress animation for execution steps. Returns cleanup fn. */
+  const startProgressTimers = useCallback((
+    stepIds: { validate: string; fetch: string; sim: string; calc: string; metrics: string[] },
+  ) => {
+    // Clear any previous timers
+    progressTimersRef.current.forEach(clearTimeout)
+    progressTimersRef.current = []
+
+    const t1 = setTimeout(() => {
+      updateLogEntry(stepIds.validate, { status: 'done', completedAt: Date.now() })
+      updateLogEntry(stepIds.fetch, { status: 'active', startedAt: Date.now() })
+    }, 1500)
+    const t2 = setTimeout(() => {
+      updateLogEntry(stepIds.fetch, { status: 'done', completedAt: Date.now() })
+      updateLogEntry(stepIds.sim, { status: 'active', startedAt: Date.now() })
+    }, 4000)
+    const t3 = setTimeout(() => {
+      updateLogEntry(stepIds.sim, { status: 'done', completedAt: Date.now() })
+      updateLogEntry(stepIds.calc, { status: 'active', startedAt: Date.now() })
+      updateLogEntry(stepIds.metrics[0], { status: 'active', startedAt: Date.now() })
+    }, 8000)
+    const metricTimers = stepIds.metrics.slice(1).map((id, i) =>
+      setTimeout(() => {
+        const now = Date.now()
+        updateLogEntry(stepIds.metrics[i], { status: 'done', completedAt: now })
+        updateLogEntry(id, { status: 'active', startedAt: now })
+      }, 8000 + (i + 1) * 1200)
+    )
+    progressTimersRef.current = [t1, t2, t3, ...metricTimers]
+  }, [updateLogEntry])
+
+  const clearProgressTimers = useCallback(() => {
+    progressTimersRef.current.forEach(clearTimeout)
+    progressTimersRef.current = []
+  }, [])
+
+  /** Apply real backend timings to step entries, overwriting any estimated values. */
+  const applyRealTimings = useCallback((
+    timings: { validate_ms: number; fetch_ms: number; simulate_ms: number; calculate_ms: number } | undefined,
+    base: number,
+    stepIds: { validate: string; fetch: string; sim: string; calc: string; metrics: string[] },
+  ) => {
+    if (timings) {
+      const validateEnd = base + timings.validate_ms
+      const fetchEnd = validateEnd + timings.fetch_ms
+      const simEnd = fetchEnd + timings.simulate_ms
+      const calcEnd = simEnd + timings.calculate_ms
+      const metricSlice = timings.calculate_ms / METRIC_SUBSTEPS.length
+
+      updateLogEntry(stepIds.validate, { status: 'done', startedAt: base, completedAt: validateEnd })
+      updateLogEntry(stepIds.fetch, { status: 'done', startedAt: validateEnd, completedAt: fetchEnd })
+      updateLogEntry(stepIds.sim, { status: 'done', startedAt: fetchEnd, completedAt: simEnd })
+      updateLogEntry(stepIds.calc, { status: 'done', startedAt: simEnd, completedAt: calcEnd })
+      stepIds.metrics.forEach((id, i) => {
+        updateLogEntry(id, {
+          status: 'done',
+          startedAt: simEnd + i * metricSlice,
+          completedAt: simEnd + (i + 1) * metricSlice,
+        })
+      })
+    } else {
+      const now = Date.now()
+      updateLogEntry(stepIds.validate, { status: 'done', completedAt: now })
+      updateLogEntry(stepIds.fetch, { status: 'done', completedAt: now })
+      updateLogEntry(stepIds.sim, { status: 'done', completedAt: now })
+      updateLogEntry(stepIds.calc, { status: 'done', completedAt: now })
+      stepIds.metrics.forEach(id => updateLogEntry(id, { status: 'done', completedAt: now }))
+    }
+  }, [updateLogEntry])
 
   // ==========================================================================
   // generateAndExecute — replaces separate generate + manual execute
@@ -380,7 +445,7 @@ export function useBacktest() {
       // 6. Auto-execute
       setPhase('executing')
 
-      // Simulated step entries
+      // Step entries (all pending except first)
       const validateStepId = addLogEntry({
         type: 'ai-step', content: 'Validating code...', status: 'active', startedAt: Date.now(), iterationId,
       })
@@ -393,38 +458,17 @@ export function useBacktest() {
       const calcStepId = addLogEntry({
         type: 'ai-step', content: 'Calculating metrics...', status: 'pending', iterationId,
       })
-      // Pre-create metric sub-step entries (pending)
       const metricSubStepIds = METRIC_SUBSTEPS.map(label =>
         addLogEntry({
           type: 'ai-step', content: label, status: 'pending', substep: true, iterationId,
         })
       )
 
-      // Simulated step timers
-      clearStepTimers()
-      const t1 = setTimeout(() => {
-        updateLogEntry(validateStepId, { status: 'done', completedAt: Date.now() })
-        updateLogEntry(fetchStepId, { status: 'active', startedAt: Date.now() })
-      }, 1500)
-      const t2 = setTimeout(() => {
-        updateLogEntry(fetchStepId, { status: 'done', completedAt: Date.now() })
-        updateLogEntry(simStepId, { status: 'active', startedAt: Date.now() })
-      }, 4000)
-      const t3 = setTimeout(() => {
-        updateLogEntry(simStepId, { status: 'done', completedAt: Date.now() })
-        updateLogEntry(calcStepId, { status: 'active', startedAt: Date.now() })
-        // Start cascading metric sub-steps
-        updateLogEntry(metricSubStepIds[0], { status: 'active', startedAt: Date.now() })
-      }, 8000)
-      // Cascade each metric sub-step after the calc phase begins
-      const metricTimers = metricSubStepIds.slice(1).map((id, i) =>
-        setTimeout(() => {
-          const now = Date.now()
-          updateLogEntry(metricSubStepIds[i], { status: 'done', completedAt: now })
-          updateLogEntry(id, { status: 'active', startedAt: now })
-        }, 8000 + (i + 1) * 1200)
-      )
-      stepTimersRef.current = [t1, t2, t3, ...metricTimers]
+      const stepIds = { validate: validateStepId, fetch: fetchStepId, sim: simStepId, calc: calcStepId, metrics: metricSubStepIds }
+      const executionStartTime = Date.now()
+
+      // Animate estimated progress while API call is in-flight
+      startProgressTimers(stepIds)
 
       // 7. POST /api/execute-backtest
       const execResponse = await fetch(`${API_BASE_URL}/api/execute-backtest`, {
@@ -443,16 +487,17 @@ export function useBacktest() {
 
       const execData = await execResponse.json()
 
-      clearStepTimers()
+      // Stop estimated timers — real timings will overwrite
+      clearProgressTimers()
 
-      const execDoneNow = Date.now()
       if (!execData.success) {
         const errMsg = execData.errors?.join(', ') || 'Backtest execution failed'
-        updateLogEntry(validateStepId, { status: 'done', completedAt: execDoneNow })
-        updateLogEntry(fetchStepId, { status: 'done', completedAt: execDoneNow })
-        updateLogEntry(simStepId, { status: 'done', completedAt: execDoneNow })
-        updateLogEntry(calcStepId, { status: 'error', completedAt: execDoneNow })
-        metricSubStepIds.forEach(id => updateLogEntry(id, { status: 'error', completedAt: execDoneNow }))
+        const errNow = Date.now()
+        updateLogEntry(validateStepId, { status: 'done', completedAt: errNow })
+        updateLogEntry(fetchStepId, { status: 'done', completedAt: errNow })
+        updateLogEntry(simStepId, { status: 'done', completedAt: errNow })
+        updateLogEntry(calcStepId, { status: 'error', completedAt: errNow })
+        metricSubStepIds.forEach(id => updateLogEntry(id, { status: 'error', completedAt: errNow }))
         addLogEntry({ type: 'error', content: errMsg, iterationId })
         setIterationHistory(prev => prev.map(n =>
           n.id === iterationId ? { ...n, status: 'error', error: errMsg } : n
@@ -463,12 +508,8 @@ export function useBacktest() {
         return
       }
 
-      // 8. Execution success
-      updateLogEntry(validateStepId, { status: 'done', completedAt: execDoneNow })
-      updateLogEntry(fetchStepId, { status: 'done', completedAt: execDoneNow })
-      updateLogEntry(simStepId, { status: 'done', completedAt: execDoneNow })
-      updateLogEntry(calcStepId, { status: 'done', completedAt: execDoneNow })
-      metricSubStepIds.forEach(id => updateLogEntry(id, { status: 'done', completedAt: execDoneNow }))
+      // 8. Execution success — overwrite with real backend timings
+      applyRealTimings(execData.timings, executionStartTime, stepIds)
 
       const backtestResult: BacktestResult = execData.result
       const resultRating: StrategyRating | null = execData.rating || null
@@ -540,7 +581,7 @@ export function useBacktest() {
         // Insights are non-critical
       }
     } catch (err) {
-      clearStepTimers()
+      clearProgressTimers()
       const errMsg = err instanceof Error ? err.message : 'Failed to run strategy'
       addLogEntry({ type: 'error', content: errMsg, iterationId })
       setIterationHistory(prev => prev.map(n =>
@@ -550,7 +591,7 @@ export function useBacktest() {
       setPhase('idle')
       setIsLoading(false)
     }
-  }, [backtestParams, addLogEntry, updateLogEntry, clearStepTimers])
+  }, [backtestParams, addLogEntry, updateLogEntry, startProgressTimers, clearProgressTimers, applyRealTimings])
 
   // ==========================================================================
   // editAndRerun — execute with edited script code (skip generation)
@@ -618,28 +659,11 @@ export function useBacktest() {
       })
     )
 
-    clearStepTimers()
-    const t1 = setTimeout(() => {
-      updateLogEntry(validateStepId, { status: 'done', completedAt: Date.now() })
-      updateLogEntry(fetchStepId, { status: 'active', startedAt: Date.now() })
-    }, 1500)
-    const t2 = setTimeout(() => {
-      updateLogEntry(fetchStepId, { status: 'done', completedAt: Date.now() })
-      updateLogEntry(simStepId, { status: 'active', startedAt: Date.now() })
-    }, 4000)
-    const t3 = setTimeout(() => {
-      updateLogEntry(simStepId, { status: 'done', completedAt: Date.now() })
-      updateLogEntry(calcStepId, { status: 'active', startedAt: Date.now() })
-      updateLogEntry(metricSubStepIds[0], { status: 'active', startedAt: Date.now() })
-    }, 8000)
-    const metricTimers = metricSubStepIds.slice(1).map((id, i) =>
-      setTimeout(() => {
-        const now = Date.now()
-        updateLogEntry(metricSubStepIds[i], { status: 'done', completedAt: now })
-        updateLogEntry(id, { status: 'active', startedAt: now })
-      }, 8000 + (i + 1) * 1200)
-    )
-    stepTimersRef.current = [t1, t2, t3, ...metricTimers]
+    const stepIds = { validate: validateStepId, fetch: fetchStepId, sim: simStepId, calc: calcStepId, metrics: metricSubStepIds }
+    const executionStartTime = Date.now()
+
+    // Animate estimated progress while API call is in-flight
+    startProgressTimers(stepIds)
 
     try {
       const response = await fetch(`${API_BASE_URL}/api/execute-backtest`, {
@@ -657,16 +681,18 @@ export function useBacktest() {
       })
 
       const data = await response.json()
-      clearStepTimers()
 
-      const editDoneNow = Date.now()
+      // Stop estimated timers — real timings will overwrite
+      clearProgressTimers()
+
       if (!data.success) {
         const errMsg = data.errors?.join(', ') || 'Backtest execution failed'
-        updateLogEntry(validateStepId, { status: 'done', completedAt: editDoneNow })
-        updateLogEntry(fetchStepId, { status: 'done', completedAt: editDoneNow })
-        updateLogEntry(simStepId, { status: 'done', completedAt: editDoneNow })
-        updateLogEntry(calcStepId, { status: 'error', completedAt: editDoneNow })
-        metricSubStepIds.forEach(id => updateLogEntry(id, { status: 'error', completedAt: editDoneNow }))
+        const errNow = Date.now()
+        updateLogEntry(validateStepId, { status: 'done', completedAt: errNow })
+        updateLogEntry(fetchStepId, { status: 'done', completedAt: errNow })
+        updateLogEntry(simStepId, { status: 'done', completedAt: errNow })
+        updateLogEntry(calcStepId, { status: 'error', completedAt: errNow })
+        metricSubStepIds.forEach(id => updateLogEntry(id, { status: 'error', completedAt: errNow }))
         addLogEntry({ type: 'error', content: errMsg, iterationId })
         setIterationHistory(prev => prev.map(n =>
           n.id === iterationId ? { ...n, status: 'error', error: errMsg } : n
@@ -677,11 +703,8 @@ export function useBacktest() {
         return
       }
 
-      updateLogEntry(validateStepId, { status: 'done', completedAt: editDoneNow })
-      updateLogEntry(fetchStepId, { status: 'done', completedAt: editDoneNow })
-      updateLogEntry(simStepId, { status: 'done', completedAt: editDoneNow })
-      updateLogEntry(calcStepId, { status: 'done', completedAt: editDoneNow })
-      metricSubStepIds.forEach(id => updateLogEntry(id, { status: 'done', completedAt: editDoneNow }))
+      // Overwrite with real backend timings
+      applyRealTimings(data.timings, executionStartTime, stepIds)
 
       const backtestResult: BacktestResult = data.result
       const resultRating: StrategyRating | null = data.rating || null
@@ -712,7 +735,7 @@ export function useBacktest() {
       setPhase('results')
       setIsLoading(false)
     } catch (err) {
-      clearStepTimers()
+      clearProgressTimers()
       const errMsg = err instanceof Error ? err.message : 'Failed to execute backtest'
       addLogEntry({ type: 'error', content: errMsg, iterationId })
       setIterationHistory(prev => prev.map(n =>
@@ -722,7 +745,7 @@ export function useBacktest() {
       setPhase('idle')
       setIsLoading(false)
     }
-  }, [iterationHistory, backtestParams, addLogEntry, updateLogEntry, clearStepTimers])
+  }, [iterationHistory, backtestParams, addLogEntry, updateLogEntry, startProgressTimers, clearProgressTimers, applyRealTimings])
 
   // ==========================================================================
   // deleteIteration
