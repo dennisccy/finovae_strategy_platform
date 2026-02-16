@@ -1,6 +1,76 @@
-import { useState, useCallback, useRef } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '';
+const SESSION_STORAGE_KEY = 'finovae_session';
+const ARCHIVE_STORAGE_KEY = 'finovae_sessions_archive';
+
+// =============================================================================
+// Session Persistence Helpers
+// =============================================================================
+
+interface SessionData {
+  iterationHistory: IterationNode[]
+  activityLog: ActivityEntry[]
+  backtestParams: BacktestParams
+  selectedIterationId: string | null
+}
+
+export interface ArchivedSession {
+  id: string
+  name: string
+  createdAt: string
+  iterationCount: number
+  bestReturn: number | null
+  data: SessionData
+}
+
+function loadSession(): SessionData | null {
+  try {
+    const raw = localStorage.getItem(SESSION_STORAGE_KEY)
+    if (!raw) return null
+    const data = JSON.parse(raw) as SessionData
+    if (!data.iterationHistory || !data.activityLog || !data.backtestParams) return null
+    return data
+  } catch {
+    return null
+  }
+}
+
+function saveSession(data: SessionData): void {
+  try {
+    localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(data))
+  } catch {
+    // quota exceeded — silently ignore
+  }
+}
+
+function loadArchive(): ArchivedSession[] {
+  try {
+    const raw = localStorage.getItem(ARCHIVE_STORAGE_KEY)
+    if (!raw) return []
+    return JSON.parse(raw) as ArchivedSession[]
+  } catch {
+    return []
+  }
+}
+
+function saveArchive(archive: ArchivedSession[]): void {
+  try {
+    localStorage.setItem(ARCHIVE_STORAGE_KEY, JSON.stringify(archive))
+  } catch {
+    // quota exceeded — silently ignore
+  }
+}
+
+function deriveSessionName(data: SessionData): string {
+  const firstComplete = data.iterationHistory.find(n => n.status === 'complete')
+  if (firstComplete?.strategyName) return firstComplete.strategyName
+
+  const firstPrompt = data.iterationHistory[0]?.prompt
+  if (firstPrompt) return firstPrompt.length > 40 ? firstPrompt.slice(0, 40) + '...' : firstPrompt
+
+  return `Session ${new Date().toLocaleDateString()}`
+}
 
 // =============================================================================
 // Core Types
@@ -239,25 +309,156 @@ export type ActivityStep = 'ai-writing' | 'validating' | 'fetching-data' | 'simu
 // Hook
 // =============================================================================
 
+const DEFAULT_PARAMS: BacktestParams = {
+  symbol: 'BTCUSDT',
+  timeframe: '4h',
+  start_date: '2024-01-01',
+  end_date: new Date().toISOString().split('T')[0],
+  initial_capital: 10000,
+}
+
 export function useBacktest() {
-  const [phase, setPhase] = useState<Phase>('idle')
+  const [phase, setPhase] = useState<Phase>(() => {
+    const saved = loadSession()
+    if (saved && saved.iterationHistory.some(n => n.status === 'complete')) return 'results'
+    return 'idle'
+  })
   const [isLoading, setIsLoading] = useState(false)
   const progressTimersRef = useRef<ReturnType<typeof setTimeout>[]>([])
   const [error, setError] = useState<string | null>(null)
 
-  // Activity log state
-  const [activityLog, setActivityLog] = useState<ActivityEntry[]>([])
-  const [selectedIterationId, setSelectedIterationId] = useState<string | null>(null)
-  const [iterationHistory, setIterationHistory] = useState<IterationNode[]>([])
+  // Activity log state — restore from localStorage with cleanup
+  const [activityLog, setActivityLog] = useState<ActivityEntry[]>(() => {
+    const saved = loadSession()
+    if (!saved) return []
+    // Mark any active/pending steps as done (interrupted session)
+    return saved.activityLog.map(e =>
+      (e.status === 'active' || e.status === 'pending')
+        ? { ...e, status: 'done' as const, completedAt: e.completedAt ?? Date.now() }
+        : e
+    )
+  })
+  const [selectedIterationId, setSelectedIterationId] = useState<string | null>(() => {
+    const saved = loadSession()
+    return saved?.selectedIterationId ?? null
+  })
+  const [iterationHistory, setIterationHistory] = useState<IterationNode[]>(() => {
+    const saved = loadSession()
+    if (!saved) return []
+    // Mark any generating/executing iterations as error (interrupted session)
+    return saved.iterationHistory.map(n =>
+      (n.status === 'generating' || n.status === 'executing')
+        ? { ...n, status: 'error' as const, error: 'Session interrupted' }
+        : n
+    )
+  })
 
   // Backtest params with defaults
-  const [backtestParams, setBacktestParams] = useState<BacktestParams>({
-    symbol: 'BTCUSDT',
-    timeframe: '4h',
-    start_date: '2024-01-01',
-    end_date: new Date().toISOString().split('T')[0],
-    initial_capital: 10000,
+  const [backtestParams, setBacktestParams] = useState<BacktestParams>(() => {
+    const saved = loadSession()
+    return saved?.backtestParams ?? DEFAULT_PARAMS
   })
+
+  // Persist session to localStorage on meaningful state changes
+  useEffect(() => {
+    saveSession({
+      iterationHistory,
+      activityLog,
+      backtestParams,
+      selectedIterationId,
+    })
+  }, [iterationHistory, activityLog, backtestParams, selectedIterationId])
+
+  // ==========================================================================
+  // Session Archive
+  // ==========================================================================
+
+  const [archivedSessions, setArchivedSessions] = useState<ArchivedSession[]>(() => loadArchive())
+
+  // Persist archive to localStorage
+  useEffect(() => {
+    saveArchive(archivedSessions)
+  }, [archivedSessions])
+
+  const archiveCurrentSession = useCallback((): void => {
+    if (iterationHistory.length === 0) return
+
+    const snapshot: SessionData = {
+      iterationHistory,
+      activityLog,
+      backtestParams,
+      selectedIterationId,
+    }
+
+    const completedReturns = iterationHistory
+      .filter(n => n.status === 'complete' && n.result)
+      .map(n => n.totalReturn)
+
+    const archived: ArchivedSession = {
+      id: crypto.randomUUID(),
+      name: deriveSessionName(snapshot),
+      createdAt: new Date().toISOString(),
+      iterationCount: iterationHistory.length,
+      bestReturn: completedReturns.length > 0 ? Math.max(...completedReturns) : null,
+      data: snapshot,
+    }
+
+    setArchivedSessions(prev => [archived, ...prev])
+  }, [iterationHistory, activityLog, backtestParams, selectedIterationId])
+
+  const resetToDefaults = useCallback(() => {
+    setIterationHistory([])
+    setActivityLog([])
+    setBacktestParams(DEFAULT_PARAMS)
+    setSelectedIterationId(null)
+    setPhase('idle')
+    setError(null)
+    setIsLoading(false)
+    localStorage.removeItem(SESSION_STORAGE_KEY)
+  }, [])
+
+  const newSession = useCallback(() => {
+    archiveCurrentSession()
+    resetToDefaults()
+  }, [archiveCurrentSession, resetToDefaults])
+
+  const switchSession = useCallback((id: string) => {
+    // Archive current if non-empty
+    archiveCurrentSession()
+
+    // Find target in archive
+    const target = archivedSessions.find(s => s.id === id)
+    if (!target) return
+
+    // Remove target from archive
+    setArchivedSessions(prev => prev.filter(s => s.id !== id))
+
+    // Restore with interrupted-state cleanup (same as initial load)
+    const data = target.data
+    setActivityLog(
+      data.activityLog.map(e =>
+        (e.status === 'active' || e.status === 'pending')
+          ? { ...e, status: 'done' as const, completedAt: e.completedAt ?? Date.now() }
+          : e
+      )
+    )
+    setIterationHistory(
+      data.iterationHistory.map(n =>
+        (n.status === 'generating' || n.status === 'executing')
+          ? { ...n, status: 'error' as const, error: 'Session interrupted' }
+          : n
+      )
+    )
+    setBacktestParams(data.backtestParams)
+    setSelectedIterationId(data.selectedIterationId)
+    setPhase(data.iterationHistory.some(n => n.status === 'complete') ? 'results' : 'idle')
+    setError(null)
+    setIsLoading(false)
+  }, [archiveCurrentSession, archivedSessions])
+
+  const deleteArchivedSession = useCallback((id: string) => {
+    setArchivedSessions(prev => prev.filter(s => s.id !== id))
+  }, [])
 
   const addLogEntry = useCallback((entry: Omit<ActivityEntry, 'id' | 'timestamp'>) => {
     const newEntry: ActivityEntry = {
@@ -350,7 +551,8 @@ export function useBacktest() {
   const generateAndExecute = useCallback(async (
     prompt: string,
     model: string,
-    previousScriptCode?: string
+    previousScriptCode?: string,
+    previousBacktestMetrics?: Record<string, number> | null,
   ) => {
     setPhase('generating')
     setIsLoading(true)
@@ -394,9 +596,19 @@ export function useBacktest() {
 
     try {
       // 4. POST /api/generate-strategy
-      const body: Record<string, string> = { natural_language: prompt, model }
+      const body: Record<string, unknown> = {
+        natural_language: prompt,
+        model,
+        symbol: backtestParams.symbol,
+        timeframe: backtestParams.timeframe,
+        start_date: backtestParams.start_date,
+        end_date: backtestParams.end_date,
+      }
       if (previousScriptCode) {
         body.previous_script_code = previousScriptCode
+      }
+      if (previousBacktestMetrics) {
+        body.previous_backtest_metrics = previousBacktestMetrics
       }
 
       const genResponse = await fetch(`${API_BASE_URL}/api/generate-strategy`, {
@@ -561,6 +773,10 @@ export function useBacktest() {
             strategy_description: genData.strategy_description || '',
             script_code: scriptCode,
             model: 'claude-haiku-4-5-20251001',
+            symbol: backtestParams.symbol,
+            timeframe: backtestParams.timeframe,
+            start_date: backtestParams.start_date,
+            end_date: backtestParams.end_date,
           }),
         })
 
@@ -574,12 +790,11 @@ export function useBacktest() {
 
           updateLogEntry(insightsStepId, { status: 'done', completedAt: Date.now() })
 
-          // Add insights log entry with clickable suggestions
-          const suggestionsText = newInsights.suggestions.map(s => s.title).join(', ')
+          // Add insights log entry with clickable suggestions (store full JSON)
           addLogEntry({
             type: 'insights',
             content: newInsights.summary,
-            detail: suggestionsText,
+            detail: JSON.stringify(newInsights.suggestions),
             iterationId,
           })
 
@@ -764,7 +979,14 @@ export function useBacktest() {
   // ==========================================================================
 
   const deleteIteration = useCallback((id: string) => {
-    setIterationHistory(prev => prev.filter(n => n.id !== id))
+    setIterationHistory(prev => {
+      const next = prev.filter(n => n.id !== id)
+      if (next.length === 0) {
+        localStorage.removeItem(SESSION_STORAGE_KEY)
+        setPhase('idle')
+      }
+      return next
+    })
     setActivityLog(prev => prev.filter(e => e.iterationId !== id))
     if (selectedIterationId === id) {
       setSelectedIterationId(null)
@@ -802,5 +1024,9 @@ export function useBacktest() {
     deleteIteration,
     selectIteration,
     resetToIdle,
+    archivedSessions,
+    newSession,
+    switchSession,
+    deleteArchivedSession,
   }
 }

@@ -4,6 +4,7 @@ import { BacktestConfigBar } from './components/BacktestConfigBar'
 import { ActivityLog } from './components/ActivityLog'
 import { IterationPanel } from './components/IterationPanel'
 import { ScriptEditorModal } from './components/ScriptEditorModal'
+import { SessionPicker } from './components/SessionPicker'
 import { MessageSquare, GitBranch } from 'lucide-react'
 
 function App() {
@@ -19,6 +20,10 @@ function App() {
     editAndRerun,
     deleteIteration,
     selectIteration,
+    archivedSessions,
+    newSession,
+    switchSession,
+    deleteArchivedSession,
   } = useBacktest()
 
   const [mobileTab, setMobileTab] = useState<'activity' | 'iterations'>('activity')
@@ -33,7 +38,15 @@ function App() {
   const handleSubmitPrompt = useCallback((prompt: string, model: string) => {
     // Find the latest completed iteration for previousScriptCode context
     const latestComplete = [...iterationHistory].reverse().find(n => n.status === 'complete')
-    generateAndExecute(prompt, model, latestComplete?.scriptCode)
+    const metrics = latestComplete?.result ? {
+      total_return: latestComplete.result.total_return,
+      max_drawdown: latestComplete.result.max_drawdown,
+      num_trades: latestComplete.result.num_trades,
+      win_rate: latestComplete.result.win_rate,
+      sharpe_ratio: latestComplete.result.sharpe_ratio,
+      profit_factor: latestComplete.result.profit_factor,
+    } : null
+    generateAndExecute(prompt, model, latestComplete?.scriptCode, metrics)
   }, [generateAndExecute, iterationHistory])
 
   const handleEditAndRerun = useCallback((iterationId: string) => {
@@ -46,10 +59,18 @@ function App() {
     })
   }, [iterationHistory])
 
-  const handleSuggestionClick = useCallback((suggestion: string) => {
+  const handleSuggestionClick = useCallback((suggestionPrompt: string) => {
     // Find the latest completed iteration for previousScriptCode context
     const latestComplete = [...iterationHistory].reverse().find(n => n.status === 'complete')
-    generateAndExecute(suggestion, 'claude-haiku-4-5-20251001', latestComplete?.scriptCode)
+    const metrics = latestComplete?.result ? {
+      total_return: latestComplete.result.total_return,
+      max_drawdown: latestComplete.result.max_drawdown,
+      num_trades: latestComplete.result.num_trades,
+      win_rate: latestComplete.result.win_rate,
+      sharpe_ratio: latestComplete.result.sharpe_ratio,
+      profit_factor: latestComplete.result.profit_factor,
+    } : null
+    generateAndExecute(suggestionPrompt, 'claude-haiku-4-5-20251001', latestComplete?.scriptCode, metrics)
   }, [generateAndExecute, iterationHistory])
 
   const configDisabled = phase === 'generating' || phase === 'executing'
@@ -74,7 +95,17 @@ function App() {
               Finovae Strategy Platform
             </h1>
           </div>
-          <span className="text-xs lg:text-sm text-slate-500 flex-shrink-0 ml-2">v0.3.0</span>
+          <div className="flex items-center gap-2 flex-shrink-0 ml-2">
+            <SessionPicker
+              archivedSessions={archivedSessions}
+              hasCurrentIterations={iterationHistory.length > 0}
+              isLoading={isLoading}
+              onNewSession={() => { newSession(); setEditorModal(null) }}
+              onSwitchSession={(id) => { switchSession(id); setEditorModal(null) }}
+              onDeleteSession={deleteArchivedSession}
+            />
+            <span className="text-xs lg:text-sm text-slate-500">v0.3.0</span>
+          </div>
         </div>
       </header>
 

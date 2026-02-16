@@ -143,6 +143,17 @@ export function ActivityLogEntry({ entry, onEditAndRerun, onSuggestionClick }: A
   }
 
   if (entry.type === 'insights') {
+    // Parse suggestions from JSON detail (array of {title, description, prompt})
+    let suggestions: Array<{ title: string; description: string; prompt: string }> = []
+    if (entry.detail) {
+      try {
+        suggestions = JSON.parse(entry.detail)
+      } catch {
+        // Fallback for legacy comma-separated format
+        suggestions = entry.detail.split(', ').map(t => ({ title: t, description: '', prompt: t }))
+      }
+    }
+
     return (
       <div className="mb-3 ml-1">
         <div className="bg-blue-50 border border-blue-200 rounded-xl px-4 py-3">
@@ -150,15 +161,16 @@ export function ActivityLogEntry({ entry, onEditAndRerun, onSuggestionClick }: A
             <Lightbulb className="w-4 h-4 text-blue-500 mt-0.5 flex-shrink-0" />
             <div className="flex-1 min-w-0">
               <p className="text-sm text-blue-800 leading-relaxed">{entry.content}</p>
-              {entry.detail && onSuggestionClick && (
+              {suggestions.length > 0 && onSuggestionClick && (
                 <div className="flex flex-wrap gap-1.5 mt-2">
-                  {entry.detail.split(', ').map((suggestion, i) => (
+                  {suggestions.map((s, i) => (
                     <button
                       key={i}
-                      onClick={() => onSuggestionClick(suggestion)}
+                      onClick={() => onSuggestionClick(s.prompt)}
+                      title={s.description}
                       className="px-2.5 py-1 text-xs font-medium bg-blue-100 text-blue-700 rounded-full hover:bg-blue-200 transition-colors"
                     >
-                      {suggestion}
+                      {s.title}
                     </button>
                   ))}
                 </div>
