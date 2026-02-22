@@ -104,13 +104,13 @@ interface ActivityLogProps {
   currentTimeframe: string
   isLoading: boolean
   onEditAndRerun: (iterationId: string) => void
-  onSuggestionClick?: (prompt: string) => void
+  onSuggestionClick?: (prompt: string, title?: string) => void
   onCancel?: () => void
 }
 
 export function ActivityLog({ entries, onSubmitPrompt, currentSymbol, currentTimeframe, isLoading, onEditAndRerun, onSuggestionClick, onCancel }: ActivityLogProps) {
   const [prompt, setPrompt] = useState('')
-  const [model, setModel] = useState('claude-haiku-4-5-20251001')
+  const [model, setModel] = useState('claude-sonnet-4-6')
   const scrollRef = useRef<HTMLDivElement>(null)
   const isUserScrolledUp = useRef(false)
   const lastScrollHeight = useRef(0)

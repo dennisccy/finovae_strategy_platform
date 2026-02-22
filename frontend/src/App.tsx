@@ -1,87 +1,128 @@
-import { useState, useCallback } from 'react'
-import { useBacktest } from './hooks/useBacktest'
-import { BacktestConfigBar } from './components/BacktestConfigBar'
-import { ActivityLog } from './components/ActivityLog'
-import { IterationPanel } from './components/IterationPanel'
-import { ScriptEditorModal } from './components/ScriptEditorModal'
+import { useState, useCallback, useEffect } from 'react'
+import { SessionContainer } from './components/SessionContainer'
 import { SessionPicker } from './components/SessionPicker'
 import { MessageSquare, GitBranch } from 'lucide-react'
+import { loadArchive, saveArchive, type ArchivedSession, type LiveSessionStatus } from './hooks/useBacktest'
+
+const SESSION_TABS_KEY = 'finovae_session_tabs'
+
+interface SessionTab {
+  id: string
+  name: string
+}
+
+function loadLiveSessionTabs(): SessionTab[] {
+  try {
+    const tabs = localStorage.getItem(SESSION_TABS_KEY)
+    if (tabs) {
+      const parsed = JSON.parse(tabs) as SessionTab[]
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed
+    }
+
+    // Migration: old single-session format
+    const oldSession = localStorage.getItem('finovae_session')
+    if (oldSession) {
+      const newId = crypto.randomUUID()
+      localStorage.setItem(`finovae_session_${newId}`, oldSession)
+      localStorage.removeItem('finovae_session')
+      return [{ id: newId, name: 'Session 1' }]
+    }
+
+    // Fresh start
+    return [{ id: crypto.randomUUID(), name: 'Session 1' }]
+  } catch {
+    return [{ id: crypto.randomUUID(), name: 'Session 1' }]
+  }
+}
+
+function saveLiveSessionTabs(tabs: SessionTab[]): void {
+  try {
+    localStorage.setItem(SESSION_TABS_KEY, JSON.stringify(tabs))
+  } catch {
+    // ignore
+  }
+}
 
 function App() {
-  const {
-    phase,
-    isLoading,
-    backtestParams,
-    setBacktestParams,
-    activityLog,
-    selectedIterationId,
-    iterationHistory,
-    generateAndExecute,
-    editAndRerun,
-    cancelOperation,
-    deleteIteration,
-    selectIteration,
-    archivedSessions,
-    newSession,
-    switchSession,
-    deleteArchivedSession,
-  } = useBacktest()
-
+  const [liveSessions, setLiveSessions] = useState<SessionTab[]>(loadLiveSessionTabs)
+  const [activeSessionId, setActiveSessionId] = useState<string>(liveSessions[0].id)
+  const [liveStatuses, setLiveStatuses] = useState<Record<string, LiveSessionStatus>>({})
   const [mobileTab, setMobileTab] = useState<'activity' | 'iterations'>('activity')
+  const [lastUsedModel, setLastUsedModel] = useState('claude-sonnet-4-6')
 
-  // Script editor modal state
-  const [editorModal, setEditorModal] = useState<{
-    iterationId: string
-    code: string
-    name: string
-  } | null>(null)
+  // Archive state managed at App level (shared across sessions)
+  const [archivedSessions, setArchivedSessions] = useState<ArchivedSession[]>(() => loadArchive())
 
-  const handleSubmitPrompt = useCallback((prompt: string, model: string) => {
-    // Find the latest completed iteration for previousScriptCode context
-    const latestComplete = [...iterationHistory].reverse().find(n => n.status === 'complete')
-    const metrics = latestComplete?.result ? {
-      total_return: latestComplete.result.total_return,
-      max_drawdown: latestComplete.result.max_drawdown,
-      num_trades: latestComplete.result.num_trades,
-      win_rate: latestComplete.result.win_rate,
-      sharpe_ratio: latestComplete.result.sharpe_ratio,
-      profit_factor: latestComplete.result.profit_factor,
-    } : null
-    generateAndExecute(prompt, model, latestComplete?.scriptCode, metrics)
-  }, [generateAndExecute, iterationHistory])
+  // Persist live session tabs whenever they change
+  useEffect(() => {
+    saveLiveSessionTabs(liveSessions)
+  }, [liveSessions])
 
-  const handleEditAndRerun = useCallback((iterationId: string) => {
-    const iteration = iterationHistory.find(n => n.id === iterationId)
-    if (!iteration || !iteration.scriptCode) return
-    setEditorModal({
-      iterationId: iteration.id,
-      code: iteration.scriptCode,
-      name: iteration.strategyName,
-    })
-  }, [iterationHistory])
+  // Persist archive changes
+  useEffect(() => {
+    saveArchive(archivedSessions)
+  }, [archivedSessions])
 
-  const handleSuggestionClick = useCallback((suggestionPrompt: string) => {
-    // Find the latest completed iteration for previousScriptCode context
-    const latestComplete = [...iterationHistory].reverse().find(n => n.status === 'complete')
-    const metrics = latestComplete?.result ? {
-      total_return: latestComplete.result.total_return,
-      max_drawdown: latestComplete.result.max_drawdown,
-      num_trades: latestComplete.result.num_trades,
-      win_rate: latestComplete.result.win_rate,
-      sharpe_ratio: latestComplete.result.sharpe_ratio,
-      profit_factor: latestComplete.result.profit_factor,
-    } : null
-    generateAndExecute(suggestionPrompt, 'claude-haiku-4-5-20251001', latestComplete?.scriptCode, metrics)
-  }, [generateAndExecute, iterationHistory])
+  // Keep session names in sync with strategy names
+  const handleNameChange = useCallback((sessionId: string, name: string) => {
+    setLiveSessions(prev => prev.map(s => s.id === sessionId ? { ...s, name } : s))
+  }, [])
 
-  const configDisabled = phase === 'generating' || phase === 'executing'
+  const handleStatusChange = useCallback((status: LiveSessionStatus) => {
+    setLiveStatuses(prev => ({ ...prev, [status.id]: status }))
+  }, [])
 
-  const latestComplete = [...iterationHistory].reverse().find(n => n.status === 'complete')
+  const handleNewSession = useCallback(() => {
+    const n = liveSessions.length + 1
+    const newId = crypto.randomUUID()
+    const newSession: SessionTab = { id: newId, name: `Session ${n}` }
+    setLiveSessions(prev => [...prev, newSession])
+    setActiveSessionId(newId)
+  }, [liveSessions.length])
 
-  const handleRerun = useCallback(() => {
-    if (!latestComplete?.scriptCode) return
-    editAndRerun(latestComplete.id, latestComplete.scriptCode)
-  }, [latestComplete, editAndRerun])
+  const handleSelectLive = useCallback((id: string) => {
+    setActiveSessionId(id)
+  }, [])
+
+  const handleRestoreArchived = useCallback((archivedId: string) => {
+    const session = archivedSessions.find(s => s.id === archivedId)
+    if (!session) return
+
+    // Write the archived session data to the new session's localStorage key
+    const newId = crypto.randomUUID()
+    try {
+      localStorage.setItem(`finovae_session_${newId}`, JSON.stringify(session.data))
+    } catch {
+      // ignore quota issues
+    }
+
+    // Add as a new live session
+    setLiveSessions(prev => [...prev, { id: newId, name: session.name }])
+    setActiveSessionId(newId)
+
+    // Remove from archive
+    setArchivedSessions(prev => prev.filter(s => s.id !== archivedId))
+  }, [archivedSessions])
+
+  const handleDeleteArchived = useCallback((id: string) => {
+    setArchivedSessions(prev => prev.filter(s => s.id !== id))
+  }, [])
+
+  // Build the list of LiveSessionStatus objects for SessionPicker
+  const liveSessionStatuses: LiveSessionStatus[] = liveSessions.map(s => {
+    const status = liveStatuses[s.id]
+    return status ?? {
+      id: s.id,
+      name: s.name,
+      isLoading: false,
+      isAutoRunning: false,
+      iterationCount: 0,
+      bestReturn: null,
+      hasError: false,
+    }
+  })
+
+  const activeIterationCount = liveStatuses[activeSessionId]?.iterationCount ?? 0
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col">
@@ -98,26 +139,18 @@ function App() {
           </div>
           <div className="flex items-center gap-2 flex-shrink-0 ml-2">
             <SessionPicker
+              liveSessions={liveSessionStatuses}
+              activeSessionId={activeSessionId}
               archivedSessions={archivedSessions}
-              hasCurrentIterations={iterationHistory.length > 0}
-              isLoading={isLoading}
-              onNewSession={() => { newSession(); setEditorModal(null) }}
-              onSwitchSession={(id) => { switchSession(id); setEditorModal(null) }}
-              onDeleteSession={deleteArchivedSession}
+              onSelectLive={handleSelectLive}
+              onNewSession={handleNewSession}
+              onRestoreArchived={handleRestoreArchived}
+              onDeleteArchived={handleDeleteArchived}
             />
             <span className="text-xs lg:text-sm text-slate-500">v0.3.0</span>
           </div>
         </div>
       </header>
-
-      {/* Config Bar */}
-      <BacktestConfigBar
-        params={backtestParams}
-        onChange={setBacktestParams}
-        disabled={configDisabled}
-        onRerun={handleRerun}
-        canRerun={!!latestComplete}
-      />
 
       {/* Mobile Tab Bar */}
       <div className="lg:hidden flex border-b border-slate-200 bg-white">
@@ -142,52 +175,28 @@ function App() {
         >
           <GitBranch className="w-4 h-4" />
           Iterations
-          {iterationHistory.length > 0 && (
+          {activeIterationCount > 0 && (
             <span className="w-5 h-5 rounded-full bg-primary-100 text-primary-600 text-xs flex items-center justify-center font-semibold">
-              {iterationHistory.length}
+              {activeIterationCount}
             </span>
           )}
         </button>
       </div>
 
-      {/* Main Content */}
-      <main className="flex flex-col lg:flex-row flex-1 lg:h-[calc(100vh-105px)] overflow-hidden">
-        {/* Left Panel - Activity Log */}
-        <div className={`${mobileTab === 'activity' ? 'flex' : 'hidden'} lg:flex w-full lg:w-1/2 lg:border-r border-slate-200 flex-col min-h-0`}>
-          <ActivityLog
-            entries={activityLog}
-            onSubmitPrompt={handleSubmitPrompt}
-            currentSymbol={backtestParams.symbol}
-            currentTimeframe={backtestParams.timeframes[0] ?? '4h'}
-            isLoading={isLoading}
-            onEditAndRerun={handleEditAndRerun}
-            onSuggestionClick={handleSuggestionClick}
-            onCancel={cancelOperation}
-          />
-        </div>
-
-        {/* Right Panel - Iteration Panel */}
-        <div className={`${mobileTab === 'iterations' ? 'flex' : 'hidden'} lg:flex w-full lg:w-1/2 flex-col overflow-hidden min-h-0`}>
-          <IterationPanel
-            iterations={iterationHistory}
-            selectedId={selectedIterationId}
-            onSelect={selectIteration}
-            onDelete={deleteIteration}
-            isLoading={isLoading}
-          />
-        </div>
-      </main>
-
-      {/* Script Editor Modal */}
-      {editorModal && (
-        <ScriptEditorModal
-          iterationId={editorModal.iterationId}
-          initialCode={editorModal.code}
-          strategyName={editorModal.name}
-          onRerun={editAndRerun}
-          onClose={() => setEditorModal(null)}
+      {/* Session containers — all mounted, only active one visible */}
+      {liveSessions.map(session => (
+        <SessionContainer
+          key={session.id}
+          sessionId={session.id}
+          sessionName={session.name}
+          isActive={session.id === activeSessionId}
+          mobileTab={mobileTab}
+          lastUsedModel={lastUsedModel}
+          onLastUsedModelChange={setLastUsedModel}
+          onStatusChange={handleStatusChange}
+          onNameChange={(name) => handleNameChange(session.id, name)}
         />
-      )}
+      ))}
     </div>
   )
 }

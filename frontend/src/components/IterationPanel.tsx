@@ -17,7 +17,7 @@ export function IterationPanel({ iterations, selectedId, onSelect, onDelete }: I
   const isUserScrolledUp = useRef(false)
   const lastScrollHeight = useRef(0)
 
-  // Auto-scroll to bottom when iterations change (smooth behavior)
+  // Auto-scroll to bottom when iterations change
   useEffect(() => {
     if (scrollRef.current && !selectedId && !isUserScrolledUp.current) {
       const element = scrollRef.current
@@ -33,7 +33,7 @@ export function IterationPanel({ iterations, selectedId, onSelect, onDelete }: I
     }
   }, [iterations, selectedId])
 
-  // Detect user scroll to prevent auto-scroll interruption
+  // Detect user scroll
   useEffect(() => {
     const element = scrollRef.current
     if (!element) return
@@ -42,7 +42,6 @@ export function IterationPanel({ iterations, selectedId, onSelect, onDelete }: I
       const isAtBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 50
       isUserScrolledUp.current = !isAtBottom
 
-      // Re-enable auto-scroll after 2s if user scrolls to bottom
       if (isAtBottom) {
         setTimeout(() => {
           isUserScrolledUp.current = false
@@ -58,9 +57,15 @@ export function IterationPanel({ iterations, selectedId, onSelect, onDelete }: I
   if (selectedId) {
     const selected = iterations.find(n => n.id === selectedId)
     if (selected && selected.result) {
+      // Find the most recent complete iteration before the selected one
+      const selectedIdx = iterations.findIndex(n => n.id === selectedId)
+      const prevComplete = iterations.slice(0, selectedIdx).filter(n => n.status === 'complete')
+      const previousIteration = prevComplete.length > 0 ? prevComplete[prevComplete.length - 1] : undefined
+
       return (
         <IterationDetailView
           iteration={selected}
+          previousIteration={previousIteration}
           onBack={() => onSelect(null)}
         />
       )

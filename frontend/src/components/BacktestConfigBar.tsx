@@ -1,4 +1,4 @@
-import { RotateCw } from 'lucide-react'
+import { RotateCw, Square, Zap } from 'lucide-react'
 import type { BacktestParams } from '../hooks/useBacktest'
 
 interface BacktestConfigBarProps {
@@ -7,9 +7,16 @@ interface BacktestConfigBarProps {
   disabled: boolean
   onRerun?: () => void
   canRerun?: boolean
+  isAutoRunning?: boolean
+  autoRunProgress?: { current: number; max: number } | null
+  canAutoRun?: boolean
+  onStartAutoRun?: () => void
+  onStopAutoRun?: () => void
+  autoRunCount?: number
+  onAutoRunCountChange?: (n: number) => void
 }
 
-export function BacktestConfigBar({ params, onChange, disabled, onRerun, canRerun }: BacktestConfigBarProps) {
+export function BacktestConfigBar({ params, onChange, disabled, onRerun, canRerun, isAutoRunning, autoRunProgress, canAutoRun, onStartAutoRun, onStopAutoRun, autoRunCount, onAutoRunCountChange }: BacktestConfigBarProps) {
   const update = (key: keyof BacktestParams, value: string | number) => {
     onChange({ ...params, [key]: value })
   }
@@ -126,6 +133,38 @@ export function BacktestConfigBar({ params, onChange, disabled, onRerun, canReru
             <RotateCw className="w-3.5 h-3.5" />
             Rerun
           </button>
+        )}
+        {isAutoRunning ? (
+          <button
+            onClick={onStopAutoRun}
+            className="flex items-center gap-1.5 px-3 py-1 text-sm font-medium text-white bg-amber-500 hover:bg-amber-600 rounded-md transition-colors"
+          >
+            <Square className="w-3.5 h-3.5" />
+            Stop ({autoRunProgress?.current ?? 0}/{autoRunProgress?.max ?? 10})
+          </button>
+        ) : (
+          canAutoRun && (
+            <div className="flex items-center gap-1">
+              <button
+                onClick={onStartAutoRun}
+                disabled={disabled}
+                className="flex items-center gap-1.5 px-3 py-1 text-sm font-medium text-white bg-violet-600 hover:bg-violet-700 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <Zap className="w-3.5 h-3.5" />
+                Auto Run ({autoRunCount ?? 10})
+              </button>
+              <input
+                type="number"
+                min={1}
+                max={100}
+                step={1}
+                value={autoRunCount ?? 10}
+                onChange={e => onAutoRunCountChange?.(Math.max(1, Math.min(100, Number(e.target.value))))}
+                onClick={e => e.stopPropagation()}
+                className="w-12 px-1 py-0.5 text-xs border border-slate-300 rounded text-center"
+              />
+            </div>
+          )
         )}
       </div>
     </div>

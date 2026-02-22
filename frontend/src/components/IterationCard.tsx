@@ -53,12 +53,23 @@ export function IterationCard({ iteration, onSelect, onDelete, isLatest = false 
                 {iteration.strategyName}
               </h4>
             </div>
-            <div className="flex items-center gap-2 text-xs text-slate-500">
+            {iteration.changeSummary && (
+              <p className="text-[10px] italic text-slate-400 truncate mb-0.5 ml-3.5">
+                {iteration.changeSummary}
+              </p>
+            )}
+            <div className="flex items-center gap-2 text-xs text-slate-500 flex-wrap">
               <span className={`font-medium ${iteration.totalReturn >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
                 {formatReturn(iteration.totalReturn)}
               </span>
               <span className="text-slate-300">·</span>
               <span>{iteration.numTrades} trades</span>
+              <span className="text-slate-300">·</span>
+              <span className="text-red-500">DD {(iteration.maxDrawdown * 100).toFixed(1)}%</span>
+              <span className="text-slate-300">·</span>
+              <span>WR {(iteration.winRate * 100).toFixed(0)}%</span>
+              <span className="text-slate-300">·</span>
+              <span>SR {iteration.sharpe.toFixed(2)}</span>
               <span className="text-slate-300">·</span>
               <span>{timeAgo(iteration.timestamp)}</span>
             </div>
@@ -97,19 +108,30 @@ export function IterationCard({ iteration, onSelect, onDelete, isLatest = false 
         {iteration.strategyName || 'Generating...'}
       </h4>
 
+      {/* Change summary */}
+      {iteration.changeSummary && (
+        <p className="text-xs italic text-slate-400 mt-0.5 truncate">
+          {iteration.changeSummary}
+        </p>
+      )}
+
       {/* Prompt (truncated) */}
-      <p className="text-xs text-slate-500 mt-0.5 truncate">
-        {iteration.prompt.length > 60 ? iteration.prompt.slice(0, 60) + '...' : iteration.prompt}
-      </p>
+      {!iteration.changeSummary && (
+        <p className="text-xs text-slate-500 mt-0.5 truncate">
+          {iteration.prompt.length > 60 ? iteration.prompt.slice(0, 60) + '...' : iteration.prompt}
+        </p>
+      )}
 
       {/* Metrics row (when complete) */}
       {iteration.status === 'complete' && iteration.result && (
-        <div className="flex items-center gap-3 mt-2.5 text-xs">
+        <div className="flex items-center gap-2 mt-2.5 text-xs flex-wrap">
           <span className={`font-semibold ${iteration.totalReturn >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
             {formatReturn(iteration.totalReturn)}
           </span>
           <span className="text-slate-400">|</span>
           <span className="text-slate-600">{iteration.numTrades} trades</span>
+          <span className="text-slate-400">|</span>
+          <span className="text-red-500">DD -{(iteration.maxDrawdown * 100).toFixed(1)}%</span>
           <span className="text-slate-400">|</span>
           <span className="text-slate-600">WR {(iteration.winRate * 100).toFixed(0)}%</span>
           <span className="text-slate-400">|</span>

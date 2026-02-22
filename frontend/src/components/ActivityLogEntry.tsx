@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Loader2, Check, X, AlertCircle, CheckCircle2, Lightbulb, Code, ChevronDown, ChevronRight, User } from 'lucide-react'
+import { Loader2, Check, X, AlertCircle, CheckCircle2, Lightbulb, Code, ChevronDown, ChevronRight, User, Zap } from 'lucide-react'
 import type { ActivityEntry } from '../hooks/useBacktest'
 
 function ElapsedTimer({ startedAt }: { startedAt: number }) {
@@ -17,11 +17,20 @@ function ElapsedTimer({ startedAt }: { startedAt: number }) {
 interface ActivityLogEntryProps {
   entry: ActivityEntry
   onEditAndRerun?: (iterationId: string) => void
-  onSuggestionClick?: (prompt: string) => void
+  onSuggestionClick?: (prompt: string, title?: string) => void
 }
 
 export function ActivityLogEntry({ entry, onEditAndRerun, onSuggestionClick }: ActivityLogEntryProps) {
   const [expanded, setExpanded] = useState(false)
+
+  if (entry.type === 'auto-run') {
+    return (
+      <div className="flex items-center gap-2 mb-1.5 ml-1">
+        <Zap className="w-3.5 h-3.5 text-violet-400 flex-shrink-0" />
+        <span className="text-xs text-violet-600 font-medium">{entry.content}</span>
+      </div>
+    )
+  }
 
   if (entry.type === 'user-prompt') {
     return (
@@ -166,7 +175,7 @@ export function ActivityLogEntry({ entry, onEditAndRerun, onSuggestionClick }: A
                   {suggestions.map((s, i) => (
                     <button
                       key={i}
-                      onClick={() => onSuggestionClick(s.prompt)}
+                      onClick={() => onSuggestionClick(s.prompt, s.title)}
                       title={s.description}
                       className="px-2.5 py-1 text-xs font-medium bg-blue-100 text-blue-700 rounded-full hover:bg-blue-200 transition-colors"
                     >
