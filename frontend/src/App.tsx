@@ -18,6 +18,7 @@ function App() {
     iterationHistory,
     generateAndExecute,
     editAndRerun,
+    cancelOperation,
     deleteIteration,
     selectIteration,
     archivedSessions,
@@ -156,9 +157,12 @@ function App() {
           <ActivityLog
             entries={activityLog}
             onSubmitPrompt={handleSubmitPrompt}
+            currentSymbol={backtestParams.symbol}
+            currentTimeframe={backtestParams.timeframes[0] ?? '4h'}
             isLoading={isLoading}
             onEditAndRerun={handleEditAndRerun}
             onSuggestionClick={handleSuggestionClick}
+            onCancel={cancelOperation}
           />
         </div>
 

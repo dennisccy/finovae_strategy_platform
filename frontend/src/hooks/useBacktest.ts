@@ -24,13 +24,40 @@ export interface ArchivedSession {
   data: SessionData
 }
 
+function migrateSession(data: SessionData): SessionData {
+  // Migrate old timeframe: string → timeframes: string[]
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const params = data.backtestParams as any
+  if ('timeframe' in params && !('timeframes' in params)) {
+    params.timeframes = [params.timeframe as string]
+    delete params.timeframe
+  }
+  // Ensure timeframes is always a non-empty string[] (guard against string corruption)
+  if (!Array.isArray(params.timeframes) || params.timeframes.length === 0) {
+    params.timeframes = typeof params.timeframes === 'string' && params.timeframes
+      ? [params.timeframes as string]
+      : ['4h']
+  }
+  // Migrate old iterations: add timeframeResults + activeTimeframe
+  data.iterationHistory = data.iterationHistory.map(n => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const node = n as any
+    if (!('timeframeResults' in node)) {
+      node.timeframeResults = []
+      node.activeTimeframe = null
+    }
+    return n
+  })
+  return data
+}
+
 function loadSession(): SessionData | null {
   try {
     const raw = localStorage.getItem(SESSION_STORAGE_KEY)
     if (!raw) return null
     const data = JSON.parse(raw) as SessionData
     if (!data.iterationHistory || !data.activityLog || !data.backtestParams) return null
-    return data
+    return migrateSession(data)
   } catch {
     return null
   }
@@ -266,20 +293,48 @@ export interface ActivityEntry {
 }
 
 const METRIC_SUBSTEPS = [
-  'Comparing against buy-and-hold benchmark',
-  'Analyzing returns and drawdown periods',
+  'Computing buy-and-hold benchmark',
+  'Calculating monthly and annual returns',
   'Measuring per-trade risk (MAE/MFE)',
-  'Computing Sharpe, Sortino, and risk ratios',
-  'Simulating stop-loss and take-profit scenarios',
+  'Analyzing drawdown periods',
+  'Computing rolling Sharpe ratios',
+  'Building return distribution',
+  'Computing risk-adjusted ratios (alpha, Sortino, VaR)',
+  'Simulating stop-loss scenarios',
+  'Simulating take-profit scenarios',
   'Estimating liquidity and capacity',
+] as const
+
+/** Maps backend calculate_steps keys (in order) to METRIC_SUBSTEPS indices. */
+const CALCULATE_STEP_KEYS = [
+  'benchmark_ms',
+  'returns_ms',
+  'mae_mfe_ms',
+  'drawdowns_ms',
+  'rolling_sharpe_ms',
+  'distribution_ms',
+  'ratios_ms',
+  'sim_stops_ms',
+  'sim_tp_ms',
+  'liquidity_ms',
 ] as const
 
 export interface BacktestParams {
   symbol: string
-  timeframe: string
+  timeframes: string[]
   start_date: string
   end_date: string
   initial_capital: number
+}
+
+export type TimeframeStatus = 'pending' | 'running' | 'complete' | 'error'
+
+export interface TimeframeResult {
+  timeframe: string
+  status: TimeframeStatus
+  result: BacktestResult | null
+  rating: StrategyRating | null
+  error?: string
 }
 
 export type IterationStatus = 'generating' | 'executing' | 'complete' | 'error'
@@ -300,6 +355,8 @@ export interface IterationNode {
   timestamp: string
   status: IterationStatus
   error?: string
+  timeframeResults: TimeframeResult[]
+  activeTimeframe: string | null
 }
 
 export type Phase = 'idle' | 'generating' | 'executing' | 'results'
@@ -310,8 +367,8 @@ export type ActivityStep = 'ai-writing' | 'validating' | 'fetching-data' | 'simu
 // =============================================================================
 
 const DEFAULT_PARAMS: BacktestParams = {
-  symbol: 'BTCUSDT',
-  timeframe: '4h',
+  symbol: 'SOLUSDT',
+  timeframes: ['4h'],
   start_date: '2024-01-01',
   end_date: new Date().toISOString().split('T')[0],
   initial_capital: 10000,
@@ -324,20 +381,13 @@ export function useBacktest() {
     return 'idle'
   })
   const [isLoading, setIsLoading] = useState(false)
-  const progressTimersRef = useRef<ReturnType<typeof setTimeout>[]>([])
+  const abortControllerRef = useRef<AbortController | null>(null)
+  const pollIntervalsRef = useRef<ReturnType<typeof setInterval>[]>([])
   const [error, setError] = useState<string | null>(null)
 
-  // Activity log state — restore from localStorage with cleanup
-  const [activityLog, setActivityLog] = useState<ActivityEntry[]>(() => {
-    const saved = loadSession()
-    if (!saved) return []
-    // Mark any active/pending steps as done (interrupted session)
-    return saved.activityLog.map(e =>
-      (e.status === 'active' || e.status === 'pending')
-        ? { ...e, status: 'done' as const, completedAt: e.completedAt ?? Date.now() }
-        : e
-    )
-  })
+  // Activity log state — always start empty on page load
+  // (Restored only when explicitly switching sessions via switchSession)
+  const [activityLog, setActivityLog] = useState<ActivityEntry[]>([])
   const [selectedIterationId, setSelectedIterationId] = useState<string | null>(() => {
     const saved = loadSession()
     return saved?.selectedIterationId ?? null
@@ -434,7 +484,7 @@ export function useBacktest() {
     setArchivedSessions(prev => prev.filter(s => s.id !== id))
 
     // Restore with interrupted-state cleanup (same as initial load)
-    const data = target.data
+    const data = migrateSession(target.data)
     setActivityLog(
       data.activityLog.map(e =>
         (e.status === 'active' || e.status === 'pending')
@@ -474,45 +524,80 @@ export function useBacktest() {
     setActivityLog(prev => prev.map(e => e.id === id ? { ...e, ...updates } : e))
   }, [])
 
-  /** Start estimated progress animation for execution steps. Returns cleanup fn. */
-  const startProgressTimers = useCallback((
-    stepIds: { validate: string; fetch: string; sim: string; calc: string; metrics: string[] },
-  ) => {
-    // Clear any previous timers
-    progressTimersRef.current.forEach(clearTimeout)
-    progressTimersRef.current = []
-
-    const t1 = setTimeout(() => {
-      updateLogEntry(stepIds.validate, { status: 'done', completedAt: Date.now() })
-      updateLogEntry(stepIds.fetch, { status: 'active', startedAt: Date.now() })
-    }, 1500)
-    const t2 = setTimeout(() => {
-      updateLogEntry(stepIds.fetch, { status: 'done', completedAt: Date.now() })
-      updateLogEntry(stepIds.sim, { status: 'active', startedAt: Date.now() })
-    }, 4000)
-    const t3 = setTimeout(() => {
-      updateLogEntry(stepIds.sim, { status: 'done', completedAt: Date.now() })
-      updateLogEntry(stepIds.calc, { status: 'active', startedAt: Date.now() })
-      updateLogEntry(stepIds.metrics[0], { status: 'active', startedAt: Date.now() })
-    }, 8000)
-    const metricTimers = stepIds.metrics.slice(1).map((id, i) =>
-      setTimeout(() => {
-        const now = Date.now()
-        updateLogEntry(stepIds.metrics[i], { status: 'done', completedAt: now })
-        updateLogEntry(id, { status: 'active', startedAt: now })
-      }, 8000 + (i + 1) * 1200)
-    )
-    progressTimersRef.current = [t1, t2, t3, ...metricTimers]
-  }, [updateLogEntry])
-
-  const clearProgressTimers = useCallback(() => {
-    progressTimersRef.current.forEach(clearTimeout)
-    progressTimersRef.current = []
+  /** Clear all active polling intervals. */
+  const clearAllPolls = useCallback(() => {
+    pollIntervalsRef.current.forEach(clearInterval)
+    pollIntervalsRef.current = []
   }, [])
+
+  /** Fetch job status from backend polling endpoint. Returns null on error/404. */
+  const fetchJobStatus = useCallback(async (jobId: string): Promise<{
+    phase: string
+    calculate_step: string | null
+    calculate_step_index: number
+    sim_bar: number
+    sim_total_bars: number
+  } | null> => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/job-status/${jobId}`)
+      if (!res.ok) return null
+      return await res.json()
+    } catch {
+      return null
+    }
+  }, [])
+
+  /** Cancel the currently running operation (generate, execute, or edit-and-rerun). */
+  const cancelOperation = useCallback(() => {
+    // 1. Abort all in-flight fetch requests
+    abortControllerRef.current?.abort()
+    abortControllerRef.current = null
+
+    // 2. Clear polling intervals
+    clearAllPolls()
+
+    // 3. Reset loading state
+    setPhase('idle')
+    setIsLoading(false)
+
+    // 4. Mark current in-progress iteration as error
+    setIterationHistory(prev => prev.map(n => {
+      if (n.status === 'generating' || n.status === 'executing') {
+        return {
+          ...n,
+          status: 'error' as const,
+          error: 'Cancelled by user',
+          activeTimeframe: null,
+          timeframeResults: n.timeframeResults.map(tf =>
+            tf.status === 'running' || tf.status === 'pending'
+              ? { ...tf, status: 'error' as TimeframeStatus, error: 'Cancelled by user' }
+              : tf
+          ),
+        }
+      }
+      return n
+    }))
+
+    // 5. Mark any active/pending log entries as done and add cancellation entry
+    setActivityLog(prev => {
+      const updated = prev.map(e =>
+        (e.status === 'active' || e.status === 'pending')
+          ? { ...e, status: 'done' as const, completedAt: Date.now() }
+          : e
+      )
+      const cancelEntry: ActivityEntry = {
+        id: crypto.randomUUID(),
+        type: 'error',
+        timestamp: new Date().toISOString(),
+        content: 'Operation cancelled',
+      }
+      return [...updated, cancelEntry]
+    })
+  }, [clearAllPolls])
 
   /** Apply real backend timings to step entries, overwriting any estimated values. */
   const applyRealTimings = useCallback((
-    timings: { validate_ms: number; fetch_ms: number; simulate_ms: number; calculate_ms: number } | undefined,
+    timings: { validate_ms: number; fetch_ms: number; simulate_ms: number; calculate_ms: number; calculate_steps?: Record<string, number> | null } | undefined,
     base: number,
     stepIds: { validate: string; fetch: string; sim: string; calc: string; metrics: string[] },
   ) => {
@@ -521,19 +606,36 @@ export function useBacktest() {
       const fetchEnd = validateEnd + timings.fetch_ms
       const simEnd = fetchEnd + timings.simulate_ms
       const calcEnd = simEnd + timings.calculate_ms
-      const metricSlice = timings.calculate_ms / METRIC_SUBSTEPS.length
 
       updateLogEntry(stepIds.validate, { status: 'done', startedAt: base, completedAt: validateEnd })
       updateLogEntry(stepIds.fetch, { status: 'done', startedAt: validateEnd, completedAt: fetchEnd })
       updateLogEntry(stepIds.sim, { status: 'done', startedAt: fetchEnd, completedAt: simEnd })
       updateLogEntry(stepIds.calc, { status: 'done', startedAt: simEnd, completedAt: calcEnd })
-      stepIds.metrics.forEach((id, i) => {
-        updateLogEntry(id, {
-          status: 'done',
-          startedAt: simEnd + i * metricSlice,
-          completedAt: simEnd + (i + 1) * metricSlice,
+
+      // Use per-step timings from backend if available, otherwise divide evenly
+      const calcSteps = timings.calculate_steps
+      if (calcSteps) {
+        let cursor = simEnd
+        stepIds.metrics.forEach((id, i) => {
+          const key = CALCULATE_STEP_KEYS[i]
+          const ms = key ? (calcSteps[key] ?? 0) : 0
+          updateLogEntry(id, {
+            status: 'done',
+            startedAt: cursor,
+            completedAt: cursor + ms,
+          })
+          cursor += ms
         })
-      })
+      } else {
+        const metricSlice = timings.calculate_ms / METRIC_SUBSTEPS.length
+        stepIds.metrics.forEach((id, i) => {
+          updateLogEntry(id, {
+            status: 'done',
+            startedAt: simEnd + i * metricSlice,
+            completedAt: simEnd + (i + 1) * metricSlice,
+          })
+        })
+      }
     } else {
       const now = Date.now()
       updateLogEntry(stepIds.validate, { status: 'done', completedAt: now })
@@ -548,15 +650,196 @@ export function useBacktest() {
   // generateAndExecute — replaces separate generate + manual execute
   // ==========================================================================
 
+  /** Execute backtest for a single timeframe. Returns the result data or null on failure. */
+  const executeSingleTimeframe = useCallback(async (
+    scriptId: string,
+    scriptCode: string,
+    timeframe: string,
+    iterationId: string,
+    signal?: AbortSignal,
+    symbolOverride?: string,
+  ): Promise<{ result: BacktestResult; rating: StrategyRating | null } | null> => {
+    // Step entries
+    const validateStepId = addLogEntry({
+      type: 'ai-step', content: `[${timeframe}] Validating code...`, status: 'active', startedAt: Date.now(), iterationId,
+    })
+    const fetchStepId = addLogEntry({
+      type: 'ai-step', content: `[${timeframe}] Fetching market data...`, status: 'pending', iterationId,
+    })
+    const simStepId = addLogEntry({
+      type: 'ai-step', content: `[${timeframe}] Running simulation...`, status: 'pending', iterationId,
+    })
+    const calcStepId = addLogEntry({
+      type: 'ai-step', content: `[${timeframe}] Calculating metrics...`, status: 'pending', iterationId,
+    })
+    const metricSubStepIds = METRIC_SUBSTEPS.map(label =>
+      addLogEntry({
+        type: 'ai-step', content: `[${timeframe}] ${label}`, status: 'pending', substep: true, iterationId,
+      })
+    )
+
+    const stepIds = { validate: validateStepId, fetch: fetchStepId, sim: simStepId, calc: calcStepId, metrics: metricSubStepIds }
+    const executionStartTime = Date.now()
+
+    // Generate job ID for polling
+    const jobId = crypto.randomUUID()
+
+    // Track which phases we've already marked done / started (to avoid redundant updates)
+    const donePhases = new Set<string>()
+    const startedPhases = new Set<string>()   // guards startedAt — only set once per phase
+    const startedSubstepIds = new Set<number>() // guards startedAt — only set once per substep index
+
+    // Prevents late in-flight poll callbacks from overriding applyRealTimings results
+    let pollFinished = false
+
+    // Phase-to-log-entry mapping for polling updates
+    const phaseOrder = ['validate', 'fetch', 'simulate', 'calculate'] as const
+    const phaseToStepId: Record<string, string> = {
+      validate: validateStepId,
+      fetch: fetchStepId,
+      simulate: simStepId,
+      calculate: calcStepId,
+    }
+
+    const applyPolledStatus = (status: {
+      phase: string
+      calculate_step_index: number
+      sim_bar: number
+      sim_total_bars: number
+    }) => {
+      const currentPhaseIdx = phaseOrder.indexOf(status.phase as typeof phaseOrder[number])
+
+      // Mark all phases before current as done
+      for (let p = 0; p < currentPhaseIdx; p++) {
+        const phaseName = phaseOrder[p]
+        if (!donePhases.has(phaseName)) {
+          donePhases.add(phaseName)
+          const now = Date.now()
+          updateLogEntry(phaseToStepId[phaseName], { status: 'done', completedAt: now })
+        }
+      }
+
+      // Mark current phase as active — set startedAt ONLY the first time we see this phase
+      if (currentPhaseIdx >= 0) {
+        const currentPhase = phaseOrder[currentPhaseIdx]
+        if (!donePhases.has(currentPhase) && !startedPhases.has(currentPhase)) {
+          startedPhases.add(currentPhase)
+          updateLogEntry(phaseToStepId[currentPhase], { status: 'active', startedAt: Date.now() })
+        }
+      }
+
+      // For simulate phase: update progress % in content (do NOT reset startedAt)
+      if (status.phase === 'simulate' && status.sim_total_bars > 0) {
+        const pct = Math.round((status.sim_bar / status.sim_total_bars) * 100)
+        updateLogEntry(simStepId, {
+          status: 'active',
+          content: `[${timeframe}] Running simulation... ${pct}%`,
+        })
+      }
+
+      // For calculate phase: update substep progress
+      // Note: calcStepId is already handled by the generic phase handler above — no duplicate update
+      if (status.phase === 'calculate') {
+        const doneUpTo = status.calculate_step_index
+        for (let s = 0; s < metricSubStepIds.length; s++) {
+          if (s < doneUpTo) {
+            // Always update done steps (safe to re-set completedAt)
+            updateLogEntry(metricSubStepIds[s], { status: 'done', completedAt: Date.now() })
+          } else if (s === doneUpTo && !startedSubstepIds.has(s)) {
+            // Only set startedAt once for the currently active substep
+            startedSubstepIds.add(s)
+            updateLogEntry(metricSubStepIds[s], { status: 'active', startedAt: Date.now() })
+          }
+        }
+      }
+    }
+
+    // Start polling
+    const pollId = setInterval(async () => {
+      if (pollFinished) return
+      const status = await fetchJobStatus(jobId)
+      if (!status || pollFinished) return
+      applyPolledStatus(status)
+    }, 500)
+    pollIntervalsRef.current.push(pollId)
+
+    try {
+      const execResponse = await fetch(`${API_BASE_URL}/api/execute-backtest`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          script_id: scriptId,
+          script_code: scriptCode,
+          symbol: symbolOverride ?? backtestParams.symbol,
+          timeframe,
+          start_date: backtestParams.start_date,
+          end_date: backtestParams.end_date,
+          initial_capital: backtestParams.initial_capital,
+          job_id: jobId,
+        }),
+        signal,
+      })
+
+      const execData = await execResponse.json()
+      pollFinished = true
+      clearInterval(pollId)
+      pollIntervalsRef.current = pollIntervalsRef.current.filter(id => id !== pollId)
+
+      if (!execData.success) {
+        const errNow = Date.now()
+        updateLogEntry(validateStepId, { status: 'done', completedAt: errNow })
+        updateLogEntry(fetchStepId, { status: 'done', completedAt: errNow })
+        updateLogEntry(simStepId, { status: 'done', completedAt: errNow })
+        updateLogEntry(calcStepId, { status: 'error', completedAt: errNow })
+        metricSubStepIds.forEach(id => updateLogEntry(id, { status: 'error', completedAt: errNow }))
+        const backendErrors: string[] = execData.errors || []
+        const errMsg = backendErrors.length > 0
+          ? backendErrors.join('; ')
+          : `Backtest failed for ${timeframe}`
+        addLogEntry({ type: 'error', content: `[${timeframe}] ${errMsg}`, iterationId })
+        return null
+      }
+
+      applyRealTimings(execData.timings, executionStartTime, stepIds)
+      return {
+        result: execData.result as BacktestResult,
+        rating: (execData.rating as StrategyRating) || null,
+      }
+    } catch (err) {
+      pollFinished = true
+      clearInterval(pollId)
+      pollIntervalsRef.current = pollIntervalsRef.current.filter(id => id !== pollId)
+      // If aborted, don't mark as error — cancelOperation already handles state
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        return null
+      }
+      const errNow = Date.now()
+      updateLogEntry(validateStepId, { status: 'done', completedAt: errNow })
+      updateLogEntry(fetchStepId, { status: 'done', completedAt: errNow })
+      updateLogEntry(simStepId, { status: 'done', completedAt: errNow })
+      updateLogEntry(calcStepId, { status: 'error', completedAt: errNow })
+      metricSubStepIds.forEach(id => updateLogEntry(id, { status: 'error', completedAt: errNow }))
+      return null
+    }
+  }, [backtestParams, addLogEntry, updateLogEntry, fetchJobStatus, applyRealTimings])
+
   const generateAndExecute = useCallback(async (
     prompt: string,
     model: string,
     previousScriptCode?: string,
     previousBacktestMetrics?: Record<string, number> | null,
+    overrideSymbol?: string,
+    overrideTimeframes?: string[],
   ) => {
+    const timeframes = overrideTimeframes ?? backtestParams.timeframes
     setPhase('generating')
     setIsLoading(true)
     setError(null)
+
+    // Create AbortController for this operation
+    const abortController = new AbortController()
+    abortControllerRef.current = abortController
+    const { signal } = abortController
 
     // 1. User prompt entry
     const iterationId = crypto.randomUUID()
@@ -566,7 +849,14 @@ export function useBacktest() {
       iterationId,
     })
 
-    // 2. Create iteration node (generating)
+    // 2. Create iteration node (generating) with pending timeframeResults
+    const initialTfResults: TimeframeResult[] = timeframes.map(tf => ({
+      timeframe: tf,
+      status: 'pending' as TimeframeStatus,
+      result: null,
+      rating: null,
+    }))
+
     const newIteration: IterationNode = {
       id: iterationId,
       prompt,
@@ -582,6 +872,8 @@ export function useBacktest() {
       sharpe: 0,
       timestamp: new Date().toISOString(),
       status: 'generating',
+      timeframeResults: initialTfResults,
+      activeTimeframe: null,
     }
     setIterationHistory(prev => [...prev, newIteration])
 
@@ -595,12 +887,12 @@ export function useBacktest() {
     })
 
     try {
-      // 4. POST /api/generate-strategy
+      // 4. POST /api/generate-strategy (once, using first timeframe)
       const body: Record<string, unknown> = {
         natural_language: prompt,
         model,
-        symbol: backtestParams.symbol,
-        timeframe: backtestParams.timeframe,
+        symbol: overrideSymbol ?? backtestParams.symbol,
+        timeframe: timeframes[0],
         start_date: backtestParams.start_date,
         end_date: backtestParams.end_date,
       }
@@ -615,6 +907,7 @@ export function useBacktest() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
+        signal,
       })
 
       const genData = await genResponse.json()
@@ -639,7 +932,6 @@ export function useBacktest() {
       const scriptId = genData.script_id
       const strategyName = genData.strategy_name || 'Strategy'
 
-      // Add code preview entry
       addLogEntry({
         type: 'code-preview',
         content: strategyName,
@@ -647,168 +939,197 @@ export function useBacktest() {
         iterationId,
       })
 
-      // Update iteration with script info
       setIterationHistory(prev => prev.map(n =>
         n.id === iterationId
           ? { ...n, scriptCode, scriptId, strategyName, status: 'executing' }
           : n
       ))
 
-      // 6. Auto-execute
+      // 6. Execute across all timeframes in parallel
       setPhase('executing')
 
-      // Step entries (all pending except first)
-      const validateStepId = addLogEntry({
-        type: 'ai-step', content: 'Validating code...', status: 'active', startedAt: Date.now(), iterationId,
+      // Mark all TFs as running simultaneously
+      const runningTfResults: TimeframeResult[] = timeframes.map(tf => ({
+        timeframe: tf,
+        status: 'running' as TimeframeStatus,
+        result: null,
+        rating: null,
+      }))
+      setIterationHistory(prev => prev.map(n =>
+        n.id === iterationId
+          ? { ...n, timeframeResults: [...runningTfResults], activeTimeframe: timeframes[0] }
+          : n
+      ))
+
+      const tfRunnerIds: string[] = []
+      timeframes.forEach((tf, i) => {
+        tfRunnerIds.push(addLogEntry({
+          type: 'ai-step',
+          content: `Running ${tf}... (${i + 1}/${timeframes.length})`,
+          status: 'active',
+          startedAt: Date.now(),
+          iterationId,
+        }))
       })
-      const fetchStepId = addLogEntry({
-        type: 'ai-step', content: 'Fetching market data...', status: 'pending', iterationId,
-      })
-      const simStepId = addLogEntry({
-        type: 'ai-step', content: 'Running simulation...', status: 'pending', iterationId,
-      })
-      const calcStepId = addLogEntry({
-        type: 'ai-step', content: 'Calculating metrics...', status: 'pending', iterationId,
-      })
-      const metricSubStepIds = METRIC_SUBSTEPS.map(label =>
-        addLogEntry({
-          type: 'ai-step', content: label, status: 'pending', substep: true, iterationId,
-        })
+
+      const promises = timeframes.map((tf) =>
+        executeSingleTimeframe(scriptId, scriptCode, tf, iterationId, signal, overrideSymbol)
       )
+      const settled = await Promise.allSettled(promises)
+      const doneNow = Date.now()
+      tfRunnerIds.forEach(id => updateLogEntry(id, { status: 'done', completedAt: doneNow }))
 
-      const stepIds = { validate: validateStepId, fetch: fetchStepId, sim: simStepId, calc: calcStepId, metrics: metricSubStepIds }
-      const executionStartTime = Date.now()
-
-      // Animate estimated progress while API call is in-flight
-      startProgressTimers(stepIds)
-
-      // 7. POST /api/execute-backtest
-      const execResponse = await fetch(`${API_BASE_URL}/api/execute-backtest`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          script_id: scriptId,
-          script_code: scriptCode,
-          symbol: backtestParams.symbol,
-          timeframe: backtestParams.timeframe,
-          start_date: backtestParams.start_date,
-          end_date: backtestParams.end_date,
-          initial_capital: backtestParams.initial_capital,
-        }),
+      // Build final TF results from settled promises
+      const tfResults: TimeframeResult[] = timeframes.map((tf, i) => {
+        const outcome = settled[i]
+        if (outcome.status === 'fulfilled' && outcome.value) {
+          return {
+            timeframe: tf,
+            status: 'complete' as TimeframeStatus,
+            result: outcome.value.result,
+            rating: outcome.value.rating,
+          }
+        } else {
+          // Check if this was an abort
+          if (signal.aborted) {
+            return {
+              timeframe: tf,
+              status: 'error' as TimeframeStatus,
+              result: null,
+              rating: null,
+              error: 'Cancelled by user',
+            }
+          }
+          const errMsg = outcome.status === 'rejected'
+            ? (outcome.reason?.message || `Backtest failed for ${tf}`)
+            : `Backtest failed for ${tf}`
+          return {
+            timeframe: tf,
+            status: 'error' as TimeframeStatus,
+            result: null,
+            rating: null,
+            error: errMsg,
+          }
+        }
       })
 
-      const execData = await execResponse.json()
+      // Update iteration with final TF results
+      setIterationHistory(prev => prev.map(n =>
+        n.id === iterationId ? { ...n, timeframeResults: [...tfResults] } : n
+      ))
 
-      // Stop estimated timers — real timings will overwrite
-      clearProgressTimers()
+      // If aborted, return early (cancelOperation already cleaned up state)
+      if (signal.aborted) return
 
-      if (!execData.success) {
-        const errMsg = execData.errors?.join(', ') || 'Backtest execution failed'
-        const errNow = Date.now()
-        updateLogEntry(validateStepId, { status: 'done', completedAt: errNow })
-        updateLogEntry(fetchStepId, { status: 'done', completedAt: errNow })
-        updateLogEntry(simStepId, { status: 'done', completedAt: errNow })
-        updateLogEntry(calcStepId, { status: 'error', completedAt: errNow })
-        metricSubStepIds.forEach(id => updateLogEntry(id, { status: 'error', completedAt: errNow }))
+      // 7. All timeframes done — set top-level result from first successful TF
+      const firstSuccess = tfResults.find(r => r.status === 'complete' && r.result)
+      const anySuccess = !!firstSuccess
+
+      if (anySuccess && firstSuccess?.result) {
+        const backtestResult = firstSuccess.result
+
+        const returnPct = (backtestResult.total_return * 100).toFixed(2)
+        const returnSign = backtestResult.total_return >= 0 ? '+' : ''
+        const tfSummaries = tfResults
+          .filter(r => r.status === 'complete' && r.result)
+          .map(r => `${r.timeframe}: ${r.result!.total_return >= 0 ? '+' : ''}${(r.result!.total_return * 100).toFixed(2)}%`)
+          .join(', ')
+        addLogEntry({
+          type: 'complete',
+          content: timeframes.length > 1
+            ? `Results: ${tfSummaries}`
+            : `${returnSign}${returnPct}% return, ${backtestResult.num_trades} trades, ${(backtestResult.win_rate * 100).toFixed(0)}% win rate, ${backtestResult.sharpe_ratio.toFixed(2)} sharpe`,
+          iterationId,
+        })
+
+        setIterationHistory(prev => prev.map(n =>
+          n.id === iterationId
+            ? {
+                ...n,
+                result: backtestResult,
+                rating: firstSuccess.rating,
+                totalReturn: backtestResult.total_return,
+                winRate: backtestResult.win_rate,
+                numTrades: backtestResult.num_trades,
+                sharpe: backtestResult.sharpe_ratio,
+                status: 'complete',
+                activeTimeframe: null,
+              }
+            : n
+        ))
+
+        setPhase('results')
+        setIsLoading(false)
+
+        // 8. Auto-generate insights using first successful result
+        const insightsStepId = addLogEntry({
+          type: 'ai-step',
+          content: 'Generating suggestions...',
+          status: 'active',
+          startedAt: Date.now(),
+          iterationId,
+        })
+
+        try {
+          const insResponse = await fetch(`${API_BASE_URL}/api/generate-insights`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              backtest_result: backtestResult,
+              strategy_name: strategyName,
+              strategy_description: genData.strategy_description || '',
+              script_code: scriptCode,
+              model: model,
+              natural_language_prompt: prompt,
+              symbol: overrideSymbol ?? backtestParams.symbol,
+              timeframe: firstSuccess.timeframe,
+              start_date: backtestParams.start_date,
+              end_date: backtestParams.end_date,
+            }),
+            signal,
+          })
+
+          const insData = await insResponse.json()
+
+          if (insData.success) {
+            const newInsights: StrategyInsights = {
+              summary: insData.summary || '',
+              suggestions: insData.suggestions || [],
+            }
+
+            updateLogEntry(insightsStepId, { status: 'done', completedAt: Date.now() })
+
+            addLogEntry({
+              type: 'insights',
+              content: newInsights.summary,
+              detail: JSON.stringify(newInsights.suggestions),
+              iterationId,
+            })
+
+            setIterationHistory(prev => prev.map(n =>
+              n.id === iterationId ? { ...n, insights: newInsights } : n
+            ))
+          } else {
+            updateLogEntry(insightsStepId, { status: 'done', completedAt: Date.now() })
+          }
+        } catch {
+          updateLogEntry(insightsStepId, { status: 'done', completedAt: Date.now() })
+        }
+      } else {
+        // All timeframes failed
+        const errMsg = 'All timeframe backtests failed'
         addLogEntry({ type: 'error', content: errMsg, iterationId })
         setIterationHistory(prev => prev.map(n =>
-          n.id === iterationId ? { ...n, status: 'error', error: errMsg } : n
+          n.id === iterationId ? { ...n, status: 'error', error: errMsg, activeTimeframe: null } : n
         ))
         setError(errMsg)
         setPhase('idle')
         setIsLoading(false)
-        return
-      }
-
-      // 8. Execution success — overwrite with real backend timings
-      applyRealTimings(execData.timings, executionStartTime, stepIds)
-
-      const backtestResult: BacktestResult = execData.result
-      const resultRating: StrategyRating | null = execData.rating || null
-
-      // Complete entry
-      const returnPct = (backtestResult.total_return * 100).toFixed(2)
-      const returnSign = backtestResult.total_return >= 0 ? '+' : ''
-      addLogEntry({
-        type: 'complete',
-        content: `${returnSign}${returnPct}% return, ${backtestResult.num_trades} trades, ${(backtestResult.win_rate * 100).toFixed(0)}% win rate, ${backtestResult.sharpe_ratio.toFixed(2)} sharpe`,
-        iterationId,
-      })
-
-      // Update iteration
-      setIterationHistory(prev => prev.map(n =>
-        n.id === iterationId
-          ? {
-              ...n,
-              result: backtestResult,
-              rating: resultRating,
-              totalReturn: backtestResult.total_return,
-              winRate: backtestResult.win_rate,
-              numTrades: backtestResult.num_trades,
-              sharpe: backtestResult.sharpe_ratio,
-              status: 'complete',
-            }
-          : n
-      ))
-
-      setPhase('results')
-      setIsLoading(false)
-
-      // 9. Auto-generate insights
-      const insightsStepId = addLogEntry({
-        type: 'ai-step',
-        content: 'Generating suggestions...',
-        status: 'active',
-        startedAt: Date.now(),
-        iterationId,
-      })
-
-      try {
-        const insResponse = await fetch(`${API_BASE_URL}/api/generate-insights`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            backtest_result: backtestResult,
-            strategy_name: strategyName,
-            strategy_description: genData.strategy_description || '',
-            script_code: scriptCode,
-            model: 'claude-haiku-4-5-20251001',
-            symbol: backtestParams.symbol,
-            timeframe: backtestParams.timeframe,
-            start_date: backtestParams.start_date,
-            end_date: backtestParams.end_date,
-          }),
-        })
-
-        const insData = await insResponse.json()
-
-        if (insData.success) {
-          const newInsights: StrategyInsights = {
-            summary: insData.summary || '',
-            suggestions: insData.suggestions || [],
-          }
-
-          updateLogEntry(insightsStepId, { status: 'done', completedAt: Date.now() })
-
-          // Add insights log entry with clickable suggestions (store full JSON)
-          addLogEntry({
-            type: 'insights',
-            content: newInsights.summary,
-            detail: JSON.stringify(newInsights.suggestions),
-            iterationId,
-          })
-
-          setIterationHistory(prev => prev.map(n =>
-            n.id === iterationId ? { ...n, insights: newInsights } : n
-          ))
-        } else {
-          updateLogEntry(insightsStepId, { status: 'done', completedAt: Date.now() })
-        }
-      } catch {
-        updateLogEntry(insightsStepId, { status: 'done', completedAt: Date.now() })
       }
     } catch (err) {
-      clearProgressTimers()
+      clearAllPolls()
+      // If aborted, return early — cancelOperation already handled state
+      if (err instanceof DOMException && err.name === 'AbortError') return
       const errMsg = err instanceof Error ? err.message : 'Failed to run strategy'
       addLogEntry({ type: 'error', content: errMsg, iterationId })
       setIterationHistory(prev => prev.map(n =>
@@ -818,20 +1139,26 @@ export function useBacktest() {
       setPhase('idle')
       setIsLoading(false)
     }
-  }, [backtestParams, addLogEntry, updateLogEntry, startProgressTimers, clearProgressTimers, applyRealTimings])
+  }, [backtestParams, addLogEntry, updateLogEntry, clearAllPolls, executeSingleTimeframe])
 
   // ==========================================================================
   // editAndRerun — execute with edited script code (skip generation)
   // ==========================================================================
 
   const editAndRerun = useCallback(async (originalIterationId: string, editedCode: string) => {
-    // Find the original iteration to get context
     const original = iterationHistory.find(n => n.id === originalIterationId)
     if (!original) return
+
+    const timeframes = backtestParams.timeframes
 
     setPhase('executing')
     setIsLoading(true)
     setError(null)
+
+    // Create AbortController for this operation
+    const abortController = new AbortController()
+    abortControllerRef.current = abortController
+    const { signal } = abortController
 
     const iterationId = crypto.randomUUID()
 
@@ -848,7 +1175,13 @@ export function useBacktest() {
       iterationId,
     })
 
-    // Create new iteration
+    const initialTfResults: TimeframeResult[] = timeframes.map(tf => ({
+      timeframe: tf,
+      status: 'pending' as TimeframeStatus,
+      result: null,
+      rating: null,
+    }))
+
     const newIteration: IterationNode = {
       id: iterationId,
       prompt: original.prompt + ' (edited)',
@@ -864,105 +1197,129 @@ export function useBacktest() {
       sharpe: 0,
       timestamp: new Date().toISOString(),
       status: 'executing',
+      timeframeResults: initialTfResults,
+      activeTimeframe: null,
     }
     setIterationHistory(prev => [...prev, newIteration])
 
-    // Step entries
-    const validateStepId = addLogEntry({
-      type: 'ai-step', content: 'Validating code...', status: 'active', startedAt: Date.now(), iterationId,
-    })
-    const fetchStepId = addLogEntry({
-      type: 'ai-step', content: 'Fetching market data...', status: 'pending', iterationId,
-    })
-    const simStepId = addLogEntry({
-      type: 'ai-step', content: 'Running simulation...', status: 'pending', iterationId,
-    })
-    const calcStepId = addLogEntry({
-      type: 'ai-step', content: 'Calculating metrics...', status: 'pending', iterationId,
-    })
-    const metricSubStepIds = METRIC_SUBSTEPS.map(label =>
-      addLogEntry({
-        type: 'ai-step', content: label, status: 'pending', substep: true, iterationId,
-      })
-    )
-
-    const stepIds = { validate: validateStepId, fetch: fetchStepId, sim: simStepId, calc: calcStepId, metrics: metricSubStepIds }
-    const executionStartTime = Date.now()
-
-    // Animate estimated progress while API call is in-flight
-    startProgressTimers(stepIds)
-
     try {
-      const response = await fetch(`${API_BASE_URL}/api/execute-backtest`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          script_id: original.scriptId,
-          script_code: editedCode,
-          symbol: backtestParams.symbol,
-          timeframe: backtestParams.timeframe,
-          start_date: backtestParams.start_date,
-          end_date: backtestParams.end_date,
-          initial_capital: backtestParams.initial_capital,
-        }),
+      // Mark all TFs as running simultaneously
+      const runningTfResults: TimeframeResult[] = timeframes.map(tf => ({
+        timeframe: tf,
+        status: 'running' as TimeframeStatus,
+        result: null,
+        rating: null,
+      }))
+      setIterationHistory(prev => prev.map(n =>
+        n.id === iterationId
+          ? { ...n, timeframeResults: [...runningTfResults], activeTimeframe: timeframes[0] }
+          : n
+      ))
+
+      const tfRunnerIds: string[] = []
+      timeframes.forEach((tf, i) => {
+        tfRunnerIds.push(addLogEntry({
+          type: 'ai-step',
+          content: `Running ${tf}... (${i + 1}/${timeframes.length})`,
+          status: 'active',
+          startedAt: Date.now(),
+          iterationId,
+        }))
       })
 
-      const data = await response.json()
+      const promises = timeframes.map((tf) =>
+        executeSingleTimeframe(original.scriptId, editedCode, tf, iterationId, signal)
+      )
+      const settled = await Promise.allSettled(promises)
+      const doneNow = Date.now()
+      tfRunnerIds.forEach(id => updateLogEntry(id, { status: 'done', completedAt: doneNow }))
 
-      // Stop estimated timers — real timings will overwrite
-      clearProgressTimers()
+      // Build final TF results from settled promises
+      const tfResults: TimeframeResult[] = timeframes.map((tf, i) => {
+        const outcome = settled[i]
+        if (outcome.status === 'fulfilled' && outcome.value) {
+          return {
+            timeframe: tf,
+            status: 'complete' as TimeframeStatus,
+            result: outcome.value.result,
+            rating: outcome.value.rating,
+          }
+        } else {
+          if (signal.aborted) {
+            return {
+              timeframe: tf,
+              status: 'error' as TimeframeStatus,
+              result: null,
+              rating: null,
+              error: 'Cancelled by user',
+            }
+          }
+          return {
+            timeframe: tf,
+            status: 'error' as TimeframeStatus,
+            result: null,
+            rating: null,
+            error: `Backtest failed for ${tf}`,
+          }
+        }
+      })
 
-      if (!data.success) {
-        const errMsg = data.errors?.join(', ') || 'Backtest execution failed'
-        const errNow = Date.now()
-        updateLogEntry(validateStepId, { status: 'done', completedAt: errNow })
-        updateLogEntry(fetchStepId, { status: 'done', completedAt: errNow })
-        updateLogEntry(simStepId, { status: 'done', completedAt: errNow })
-        updateLogEntry(calcStepId, { status: 'error', completedAt: errNow })
-        metricSubStepIds.forEach(id => updateLogEntry(id, { status: 'error', completedAt: errNow }))
+      setIterationHistory(prev => prev.map(n =>
+        n.id === iterationId ? { ...n, timeframeResults: [...tfResults] } : n
+      ))
+
+      // If aborted, return early
+      if (signal.aborted) return
+
+      const firstSuccess = tfResults.find(r => r.status === 'complete' && r.result)
+
+      if (firstSuccess?.result) {
+        const backtestResult = firstSuccess.result
+        const returnPct = (backtestResult.total_return * 100).toFixed(2)
+        const returnSign = backtestResult.total_return >= 0 ? '+' : ''
+        const tfSummaries = tfResults
+          .filter(r => r.status === 'complete' && r.result)
+          .map(r => `${r.timeframe}: ${r.result!.total_return >= 0 ? '+' : ''}${(r.result!.total_return * 100).toFixed(2)}%`)
+          .join(', ')
+        addLogEntry({
+          type: 'complete',
+          content: timeframes.length > 1
+            ? `Results: ${tfSummaries}`
+            : `${returnSign}${returnPct}% return, ${backtestResult.num_trades} trades, ${(backtestResult.win_rate * 100).toFixed(0)}% win rate, ${backtestResult.sharpe_ratio.toFixed(2)} sharpe`,
+          iterationId,
+        })
+
+        setIterationHistory(prev => prev.map(n =>
+          n.id === iterationId
+            ? {
+                ...n,
+                result: backtestResult,
+                rating: firstSuccess.rating,
+                totalReturn: backtestResult.total_return,
+                winRate: backtestResult.win_rate,
+                numTrades: backtestResult.num_trades,
+                sharpe: backtestResult.sharpe_ratio,
+                status: 'complete',
+                activeTimeframe: null,
+              }
+            : n
+        ))
+
+        setPhase('results')
+        setIsLoading(false)
+      } else {
+        const errMsg = 'All timeframe backtests failed'
         addLogEntry({ type: 'error', content: errMsg, iterationId })
         setIterationHistory(prev => prev.map(n =>
-          n.id === iterationId ? { ...n, status: 'error', error: errMsg } : n
+          n.id === iterationId ? { ...n, status: 'error', error: errMsg, activeTimeframe: null } : n
         ))
         setError(errMsg)
         setPhase('idle')
         setIsLoading(false)
-        return
       }
-
-      // Overwrite with real backend timings
-      applyRealTimings(data.timings, executionStartTime, stepIds)
-
-      const backtestResult: BacktestResult = data.result
-      const resultRating: StrategyRating | null = data.rating || null
-
-      const returnPct = (backtestResult.total_return * 100).toFixed(2)
-      const returnSign = backtestResult.total_return >= 0 ? '+' : ''
-      addLogEntry({
-        type: 'complete',
-        content: `${returnSign}${returnPct}% return, ${backtestResult.num_trades} trades, ${(backtestResult.win_rate * 100).toFixed(0)}% win rate, ${backtestResult.sharpe_ratio.toFixed(2)} sharpe`,
-        iterationId,
-      })
-
-      setIterationHistory(prev => prev.map(n =>
-        n.id === iterationId
-          ? {
-              ...n,
-              result: backtestResult,
-              rating: resultRating,
-              totalReturn: backtestResult.total_return,
-              winRate: backtestResult.win_rate,
-              numTrades: backtestResult.num_trades,
-              sharpe: backtestResult.sharpe_ratio,
-              status: 'complete',
-            }
-          : n
-      ))
-
-      setPhase('results')
-      setIsLoading(false)
     } catch (err) {
-      clearProgressTimers()
+      clearAllPolls()
+      if (err instanceof DOMException && err.name === 'AbortError') return
       const errMsg = err instanceof Error ? err.message : 'Failed to execute backtest'
       addLogEntry({ type: 'error', content: errMsg, iterationId })
       setIterationHistory(prev => prev.map(n =>
@@ -972,7 +1329,7 @@ export function useBacktest() {
       setPhase('idle')
       setIsLoading(false)
     }
-  }, [iterationHistory, backtestParams, addLogEntry, updateLogEntry, startProgressTimers, clearProgressTimers, applyRealTimings])
+  }, [iterationHistory, backtestParams, addLogEntry, clearAllPolls, executeSingleTimeframe])
 
   // ==========================================================================
   // deleteIteration
@@ -1021,6 +1378,7 @@ export function useBacktest() {
     iterationHistory,
     generateAndExecute,
     editAndRerun,
+    cancelOperation,
     deleteIteration,
     selectIteration,
     resetToIdle,

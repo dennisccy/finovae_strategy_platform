@@ -13,7 +13,17 @@ interface IterationDetailViewProps {
 
 export function IterationDetailView({ iteration, onBack }: IterationDetailViewProps) {
   const [codeExpanded, setCodeExpanded] = useState(false)
-  const result = iteration.result
+  const hasMultipleTf = iteration.timeframeResults && iteration.timeframeResults.filter(r => r.status === 'complete').length > 1
+  const [selectedTf, setSelectedTf] = useState<string>(
+    iteration.timeframeResults?.[0]?.timeframe ?? ''
+  )
+
+  // Determine which result/rating to render based on selected TF tab
+  const activeTfResult = hasMultipleTf
+    ? iteration.timeframeResults.find(r => r.timeframe === selectedTf && r.status === 'complete')
+    : null
+  const result = activeTfResult?.result ?? iteration.result
+  const rating = activeTfResult?.rating ?? iteration.rating
 
   if (!result) return null
 
@@ -51,6 +61,38 @@ export function IterationDetailView({ iteration, onBack }: IterationDetailViewPr
         </div>
       </div>
 
+      {/* Timeframe tab bar */}
+      {hasMultipleTf && (
+        <div className="px-4 lg:px-6 bg-white border-b border-slate-200">
+          <div className="flex gap-0.5 -mb-px">
+            {iteration.timeframeResults
+              .filter(r => r.status === 'complete')
+              .map(tfr => {
+                const isActive = selectedTf === tfr.timeframe
+                const ret = tfr.result?.total_return
+                return (
+                  <button
+                    key={tfr.timeframe}
+                    onClick={() => setSelectedTf(tfr.timeframe)}
+                    className={`px-3 py-2 text-xs font-medium border-b-2 transition-colors ${
+                      isActive
+                        ? 'border-primary-600 text-primary-700'
+                        : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
+                    }`}
+                  >
+                    {tfr.timeframe}
+                    {ret !== undefined && ret !== null && (
+                      <span className={`ml-1.5 ${ret >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                        {ret >= 0 ? '+' : ''}{(ret * 100).toFixed(1)}%
+                      </span>
+                    )}
+                  </button>
+                )
+              })}
+          </div>
+        </div>
+      )}
+
       <div className="p-4 lg:p-6 space-y-4 lg:space-y-6">
         {/* Collapsible code preview */}
         {iteration.scriptCode && (
@@ -78,8 +120,8 @@ export function IterationDetailView({ iteration, onBack }: IterationDetailViewPr
         )}
 
         {/* Rating Panel or Metrics Grid */}
-        {iteration.rating ? (
-          <RatingPanel rating={iteration.rating} />
+        {rating ? (
+          <RatingPanel rating={rating} />
         ) : (
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3 lg:gap-4">
             <MetricsCard

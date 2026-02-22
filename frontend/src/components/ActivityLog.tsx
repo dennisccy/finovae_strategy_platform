@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef, useMemo, FormEvent } from 'react'
-import { Send, Loader2, Sparkles, CheckCircle2, AlertCircle, ChevronDown, ChevronRight } from 'lucide-react'
+import { Send, Square, Sparkles, CheckCircle2, AlertCircle, ChevronDown, ChevronRight } from 'lucide-react'
 import { ActivityLogEntry } from './ActivityLogEntry'
 import type { ActivityEntry } from '../hooks/useBacktest'
+import { getStrategyPrompts, type StrategyCard } from '../data/strategyPrompts'
 
 interface IterationGroup {
   iterationId: string
@@ -96,49 +97,18 @@ function CollapsedIteration({ group, onEditAndRerun }: {
   )
 }
 
-interface RecommendCard {
-  id: string
-  title: string
-  description: string
-  prompt: string
-}
-
-const recommendCards: RecommendCard[] = [
-  {
-    id: 'multi-factor',
-    title: 'Multi-Factor Quantitative',
-    description: 'Combines momentum, trend, and volatility signals. Each factor must confirm before entering.',
-    prompt: 'Build a quantitative multi-factor trading strategy that combines momentum, trend, and volatility technical dimensions to generate buy/sell signals. Each factor should confirm the others before entering, making the strategy more robust than any single indicator.',
-  },
-  {
-    id: 'momentum-trend',
-    title: 'Momentum Trend Following',
-    description: 'Identifies and rides sustained price movements, entering on confirmed breakouts.',
-    prompt: 'Build a trend-following trading strategy that identifies and rides sustained price movements. Enter on confirmed trend breakouts and exit when the trend weakens or reverses.',
-  },
-  {
-    id: 'volatility-breakout',
-    title: 'Volatility Breakout',
-    description: 'Detects low-volatility consolidation and enters when price breaks out.',
-    prompt: 'Build a volatility breakout trading strategy that detects low-volatility consolidation phases and enters when price breaks out of the consolidation range to capture the ensuing explosive move.',
-  },
-  {
-    id: 'volume-momentum',
-    title: 'Volume Momentum',
-    description: 'Uses volume expansion to confirm price momentum direction.',
-    prompt: 'Build a volume momentum trading strategy that uses volume expansion to confirm price momentum direction. Enter when price and volume expand together, and exit when volume contracts or diverges.',
-  },
-]
-
 interface ActivityLogProps {
   entries: ActivityEntry[]
   onSubmitPrompt: (prompt: string, model: string) => void
+  currentSymbol: string
+  currentTimeframe: string
   isLoading: boolean
   onEditAndRerun: (iterationId: string) => void
   onSuggestionClick?: (prompt: string) => void
+  onCancel?: () => void
 }
 
-export function ActivityLog({ entries, onSubmitPrompt, isLoading, onEditAndRerun, onSuggestionClick }: ActivityLogProps) {
+export function ActivityLog({ entries, onSubmitPrompt, currentSymbol, currentTimeframe, isLoading, onEditAndRerun, onSuggestionClick, onCancel }: ActivityLogProps) {
   const [prompt, setPrompt] = useState('')
   const [model, setModel] = useState('claude-haiku-4-5-20251001')
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -189,10 +159,15 @@ export function ActivityLog({ entries, onSubmitPrompt, isLoading, onEditAndRerun
     setPrompt('')
   }
 
-  const handleRecommendClick = (cardPrompt: string) => {
+  const handleRecommendClick = (card: StrategyCard) => {
     if (isLoading) return
-    onSubmitPrompt(cardPrompt, model)
+    onSubmitPrompt(card.prompt, model)
   }
+
+  const cards = useMemo(
+    () => getStrategyPrompts(currentSymbol, currentTimeframe),
+    [currentSymbol, currentTimeframe]
+  )
 
   const isEmpty = entries.length === 0
 
@@ -212,20 +187,27 @@ export function ActivityLog({ entries, onSubmitPrompt, isLoading, onEditAndRerun
               </div>
               <h3 className="text-base font-semibold text-slate-800">Strategy Builder</h3>
               <p className="text-sm text-slate-500 mt-1">
-                Describe your trading strategy in plain English
+                10 strategies for{' '}
+                <span className="font-medium text-slate-700">
+                  {currentSymbol.replace('USDT', '')}/USDT · {currentTimeframe}
+                </span>
               </p>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 lg:gap-3">
-              {recommendCards.map((card) => (
+              {cards.map((card) => (
                 <button
                   key={card.id}
                   type="button"
                   disabled={isLoading}
-                  onClick={() => handleRecommendClick(card.prompt)}
+                  onClick={() => handleRecommendClick(card)}
                   className="text-left p-3 border border-slate-200 rounded-xl hover:border-primary-300 hover:bg-primary-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
-                  <span className="block text-sm font-semibold text-slate-800">{card.title}</span>
-                  <span className="block mt-1 text-xs text-slate-500 leading-relaxed">{card.description}</span>
+                  <div className="mb-1.5">
+                    <span className="text-xs px-1.5 py-0.5 bg-primary-50 text-primary-600 border border-primary-100 rounded font-medium">
+                      {card.title}
+                    </span>
+                  </div>
+                  <span className="block mt-1.5 text-xs text-slate-500 leading-relaxed">{card.tagline}</span>
                 </button>
               ))}
             </div>
@@ -279,6 +261,8 @@ export function ActivityLog({ entries, onSubmitPrompt, isLoading, onEditAndRerun
           >
             <option value="claude-haiku-4-5-20251001">Haiku 4.5</option>
             <option value="claude-sonnet-4-5-20250929">Sonnet 4.5</option>
+            <option value="claude-sonnet-4-6">Sonnet 4.6</option>
+            <option value="claude-opus-4-6">Opus 4.6</option>
           </select>
         </div>
         <form onSubmit={handleSubmit} className="flex gap-2">
@@ -296,17 +280,24 @@ export function ActivityLog({ entries, onSubmitPrompt, isLoading, onEditAndRerun
             rows={1}
             className="flex-1 px-3 py-2 text-sm border border-slate-200 rounded-lg resize-none focus:ring-2 focus:ring-primary-500 focus:border-transparent disabled:bg-slate-50 disabled:cursor-not-allowed chat-input"
           />
-          <button
-            type="submit"
-            disabled={!prompt.trim() || isLoading}
-            className="px-3 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 disabled:bg-slate-300 disabled:cursor-not-allowed transition-colors flex-shrink-0"
-          >
-            {isLoading ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
+          {isLoading ? (
+            <button
+              type="button"
+              onClick={onCancel}
+              className="px-3 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors flex-shrink-0"
+              title="Stop operation"
+            >
+              <Square className="w-4 h-4" />
+            </button>
+          ) : (
+            <button
+              type="submit"
+              disabled={!prompt.trim()}
+              className="px-3 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 disabled:bg-slate-300 disabled:cursor-not-allowed transition-colors flex-shrink-0"
+            >
               <Send className="w-4 h-4" />
-            )}
-          </button>
+            </button>
+          )}
         </form>
       </div>
     </div>

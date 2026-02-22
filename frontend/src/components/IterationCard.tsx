@@ -117,12 +117,41 @@ export function IterationCard({ iteration, onSelect, onDelete, isLatest = false 
         </div>
       )}
 
+      {/* Multi-TF badges */}
+      {iteration.timeframeResults && iteration.timeframeResults.length > 1 && (
+        <div className="flex flex-wrap gap-1 mt-2">
+          {iteration.timeframeResults.map(tfr => {
+            const badgeColors = {
+              pending: 'bg-slate-100 text-slate-400',
+              running: 'bg-amber-100 text-amber-700 animate-pulse',
+              complete: 'bg-emerald-100 text-emerald-700',
+              error: 'bg-red-100 text-red-700',
+            }
+            return (
+              <span
+                key={tfr.timeframe}
+                className={`px-1.5 py-0.5 text-[10px] font-medium rounded ${badgeColors[tfr.status]}`}
+              >
+                {tfr.timeframe}
+                {tfr.status === 'complete' && tfr.result && (
+                  <> {tfr.result.total_return >= 0 ? '+' : ''}{(tfr.result.total_return * 100).toFixed(1)}%</>
+                )}
+              </span>
+            )
+          })}
+        </div>
+      )}
+
       {/* Loading indicator */}
       {isInProgress && (
         <div className="flex items-center gap-2 mt-2.5">
           <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-400" />
           <span className="text-xs text-slate-500">
-            {iteration.status === 'generating' ? 'AI is crafting your strategy...' : 'Running backtest...'}
+            {iteration.status === 'generating'
+              ? 'AI is crafting your strategy...'
+              : iteration.activeTimeframe && iteration.timeframeResults.length > 1
+                ? `Running ${iteration.activeTimeframe}... (${iteration.timeframeResults.filter(r => r.status === 'complete' || r.status === 'running').length}/${iteration.timeframeResults.length})`
+                : 'Running backtest...'}
           </span>
         </div>
       )}
