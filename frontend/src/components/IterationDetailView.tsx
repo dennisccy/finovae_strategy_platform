@@ -170,6 +170,17 @@ export function IterationDetailView({ iteration, previousIteration, onBack }: It
           </div>
         )}
 
+        {/* vs Benchmark (Alpha) — visible only when rating data is available */}
+        {rating && (
+          <div className="grid grid-cols-1 gap-3">
+            <MetricsCard
+              label="vs Benchmark (Alpha)"
+              value={`${((result.total_return - rating.benchmark_total_return) * 100) >= 0 ? '+' : ''}${((result.total_return - rating.benchmark_total_return) * 100).toFixed(2)}%`}
+              variant={(result.total_return - rating.benchmark_total_return) >= 0 ? 'positive' : 'negative'}
+            />
+          </div>
+        )}
+
         {/* Rating Panel or Metrics Grid */}
         {rating ? (
           <RatingPanel rating={rating} />

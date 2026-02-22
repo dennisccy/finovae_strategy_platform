@@ -1,5 +1,6 @@
 import { RotateCw, Square, Zap } from 'lucide-react'
 import type { BacktestParams } from '../hooks/useBacktest'
+import { EXCHANGE_CONFIGS } from '../hooks/useBacktest'
 
 interface BacktestConfigBarProps {
   params: BacktestParams
@@ -122,6 +123,20 @@ export function BacktestConfigBar({ params, onChange, disabled, onRerun, canReru
             disabled={disabled}
             className="w-24 px-2 py-1 text-sm border border-slate-200 rounded-md focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white disabled:opacity-50 disabled:cursor-not-allowed"
           />
+        </div>
+
+        <div className="flex items-center gap-1.5">
+          <label className="text-xs font-medium text-slate-500">Exchange</label>
+          <select
+            value={params.exchange}
+            onChange={(e) => update('exchange', e.target.value)}
+            disabled={disabled}
+            className="px-2 py-1 text-sm border border-slate-200 rounded-md focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {Object.entries(EXCHANGE_CONFIGS).map(([key, cfg]) => (
+              <option key={key} value={key}>{cfg.label} ({parseFloat((cfg.commission * 100).toFixed(3))}%)</option>
+            ))}
+          </select>
         </div>
 
         {canRerun && (

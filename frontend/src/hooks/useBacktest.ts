@@ -80,6 +80,10 @@ function migrateSession(data: SessionData): SessionData {
       ? [params.timeframes as string]
       : ['4h']
   }
+  // Migrate old sessions without exchange field
+  if (!('exchange' in params)) {
+    params.exchange = 'binance'
+  }
   // Migrate old iterations: add timeframeResults + activeTimeframe
   data.iterationHistory = data.iterationHistory.map(n => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -380,6 +384,15 @@ export interface BacktestParams {
   start_date: string
   end_date: string
   initial_capital: number
+  exchange: string
+}
+
+export const EXCHANGE_CONFIGS: Record<string, { label: string; commission: number }> = {
+  binance:  { label: 'Binance',  commission: 0.00075 },
+  bybit:    { label: 'Bybit',    commission: 0.001  },
+  okx:      { label: 'OKX',      commission: 0.001  },
+  kraken:   { label: 'Kraken',   commission: 0.0026 },
+  coinbase: { label: 'Coinbase', commission: 0.006  },
 }
 
 export type TimeframeStatus = 'pending' | 'running' | 'complete' | 'error'
@@ -440,9 +453,10 @@ export interface LiveSessionStatus {
 const DEFAULT_PARAMS: BacktestParams = {
   symbol: 'SOLUSDT',
   timeframes: ['4h'],
-  start_date: '2024-01-01',
+  start_date: '2020-01-01',
   end_date: new Date().toISOString().split('T')[0],
-  initial_capital: 10000,
+  initial_capital: 1500,
+  exchange: 'binance',
 }
 
 export function useBacktest(sessionId: string) {
@@ -467,8 +481,16 @@ export function useBacktest(sessionId: string) {
     capacity_levels: CapacityLevel[]
   } | null>(null)
 
-  // Activity log state — always start empty on page load
-  const [activityLog, setActivityLog] = useState<ActivityEntry[]>([])
+  // Activity log state — restore from saved session (active/pending entries marked done)
+  const [activityLog, setActivityLog] = useState<ActivityEntry[]>(() => {
+    const saved = loadSession(sessionId)
+    if (!saved) return []
+    return saved.activityLog.map(e =>
+      (e.status === 'active' || e.status === 'pending')
+        ? { ...e, status: 'done' as const, completedAt: e.completedAt ?? Date.now() }
+        : e
+    )
+  })
   const [selectedIterationId, setSelectedIterationId] = useState<string | null>(() => {
     const saved = loadSession(sessionId)
     return saved?.selectedIterationId ?? null
@@ -492,7 +514,7 @@ export function useBacktest(sessionId: string) {
     return saved?.backtestParams ?? DEFAULT_PARAMS
   })
 
-  // Persist session to localStorage — activityLog intentionally excluded (always cleared on reload)
+  // Persist session to localStorage on every relevant state change
   useEffect(() => {
     saveSession(sessionId, {
       iterationHistory,
@@ -500,7 +522,7 @@ export function useBacktest(sessionId: string) {
       backtestParams,
       selectedIterationId,
     })
-  }, [sessionId, iterationHistory, backtestParams, selectedIterationId])
+  }, [sessionId, iterationHistory, activityLog, backtestParams, selectedIterationId])
 
   // ==========================================================================
   // Session Archive (shared across all sessions)
@@ -854,6 +876,7 @@ export function useBacktest(sessionId: string) {
           start_date: backtestParams.start_date,
           end_date: backtestParams.end_date,
           initial_capital: backtestParams.initial_capital,
+          commission: EXCHANGE_CONFIGS[backtestParams.exchange]?.commission ?? 0.00075,
           job_id: jobId,
         }),
         signal,
@@ -1238,10 +1261,107 @@ export function useBacktest(sessionId: string) {
   }, [backtestParams, addLogEntry, updateLogEntry, clearAllPolls, executeSingleTimeframe])
 
   // ==========================================================================
+  // deleteIteration
+  // ==========================================================================
+
+  const deleteIteration = useCallback((id: string) => {
+    setIterationHistory(prev => {
+      const next = prev.filter(n => n.id !== id)
+      if (next.length === 0) {
+        localStorage.removeItem(`finovae_session_${sessionId}`)
+        setPhase('idle')
+      }
+      return next
+    })
+    setActivityLog(prev => prev.filter(e => e.iterationId !== id))
+    if (selectedIterationId === id) {
+      setSelectedIterationId(null)
+    }
+  }, [sessionId, selectedIterationId])
+
+  // ==========================================================================
+  // selectIteration
+  // ==========================================================================
+
+  const selectIteration = useCallback((id: string | null) => {
+    setSelectedIterationId(id)
+  }, [])
+
+  // ==========================================================================
+  // resetToIdle
+  // ==========================================================================
+
+  const resetToIdle = useCallback(() => {
+    setPhase('idle')
+    setError(null)
+  }, [])
+
+  const generateInsightsForIteration = useCallback(async (iterationId: string, model: string) => {
+    const iteration = iterationHistoryRef.current.find(n => n.id === iterationId)
+    if (!iteration?.result) return
+
+    const firstSuccessfulTf = iteration.timeframeResults.find(r => r.status === 'complete')
+    const timeframe = firstSuccessfulTf?.timeframe ?? backtestParams.timeframes[0]
+
+    const insightsStepId = addLogEntry({
+      type: 'ai-step',
+      content: 'Generating suggestions...',
+      status: 'active',
+      startedAt: Date.now(),
+      iterationId,
+    })
+
+    try {
+      const insResponse = await fetch(`${API_BASE_URL}/api/generate-insights`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          backtest_result: iteration.result,
+          strategy_name: iteration.strategyName,
+          strategy_description: '',
+          script_code: iteration.scriptCode,
+          model,
+          natural_language_prompt: iteration.prompt,
+          symbol: backtestParams.symbol,
+          timeframe,
+          start_date: backtestParams.start_date,
+          end_date: backtestParams.end_date,
+        }),
+      })
+      const insData = await insResponse.json()
+      if (insData.success) {
+        const newInsights: StrategyInsights = {
+          summary: insData.summary || '',
+          suggestions: insData.suggestions || [],
+        }
+        updateLogEntry(insightsStepId, { status: 'done', completedAt: Date.now() })
+        addLogEntry({
+          type: 'insights',
+          content: newInsights.summary,
+          detail: JSON.stringify(newInsights.suggestions),
+          iterationId,
+        })
+        setIterationHistory(prev => prev.map(n =>
+          n.id === iterationId ? { ...n, insights: newInsights } : n
+        ))
+        // Sync ref immediately so startAutoRun can read the new suggestions
+        // on the very next loop iteration (before React re-renders).
+        iterationHistoryRef.current = iterationHistoryRef.current.map(n =>
+          n.id === iterationId ? { ...n, insights: newInsights } : n
+        )
+      } else {
+        updateLogEntry(insightsStepId, { status: 'done', completedAt: Date.now() })
+      }
+    } catch {
+      updateLogEntry(insightsStepId, { status: 'done', completedAt: Date.now() })
+    }
+  }, [backtestParams, addLogEntry, updateLogEntry])
+
+  // ==========================================================================
   // editAndRerun
   // ==========================================================================
 
-  const editAndRerun = useCallback(async (originalIterationId: string, editedCode: string) => {
+  const editAndRerun = useCallback(async (originalIterationId: string, editedCode: string, model: string = 'claude-sonnet-4-6') => {
     const original = iterationHistory.find(n => n.id === originalIterationId)
     if (!original) return
 
@@ -1410,8 +1530,19 @@ export function useBacktest(sessionId: string) {
             : n
         ))
 
+        // Sync the ref immediately so generateInsightsForIteration can read
+        // iteration.result before the useEffect re-syncs after re-render.
+        iterationHistoryRef.current = iterationHistoryRef.current.map(n =>
+          n.id === iterationId
+            ? { ...n, result: backtestResult, rating: finalRating, status: 'complete' }
+            : n
+        )
+
         setPhase('results')
         setIsLoading(false)
+
+        // Generate summary and suggestions (mirrors generateAndExecute flow)
+        await generateInsightsForIteration(iterationId, model)
       } else {
         const errMsg = 'All timeframe backtests failed'
         addLogEntry({ type: 'error', content: errMsg, iterationId })
@@ -1434,104 +1565,7 @@ export function useBacktest(sessionId: string) {
       setPhase('idle')
       setIsLoading(false)
     }
-  }, [iterationHistory, backtestParams, addLogEntry, clearAllPolls, executeSingleTimeframe])
-
-  // ==========================================================================
-  // deleteIteration
-  // ==========================================================================
-
-  const deleteIteration = useCallback((id: string) => {
-    setIterationHistory(prev => {
-      const next = prev.filter(n => n.id !== id)
-      if (next.length === 0) {
-        localStorage.removeItem(`finovae_session_${sessionId}`)
-        setPhase('idle')
-      }
-      return next
-    })
-    setActivityLog(prev => prev.filter(e => e.iterationId !== id))
-    if (selectedIterationId === id) {
-      setSelectedIterationId(null)
-    }
-  }, [sessionId, selectedIterationId])
-
-  // ==========================================================================
-  // selectIteration
-  // ==========================================================================
-
-  const selectIteration = useCallback((id: string | null) => {
-    setSelectedIterationId(id)
-  }, [])
-
-  // ==========================================================================
-  // resetToIdle
-  // ==========================================================================
-
-  const resetToIdle = useCallback(() => {
-    setPhase('idle')
-    setError(null)
-  }, [])
-
-  const generateInsightsForIteration = useCallback(async (iterationId: string, model: string) => {
-    const iteration = iterationHistoryRef.current.find(n => n.id === iterationId)
-    if (!iteration?.result) return
-
-    const firstSuccessfulTf = iteration.timeframeResults.find(r => r.status === 'complete')
-    const timeframe = firstSuccessfulTf?.timeframe ?? backtestParams.timeframes[0]
-
-    const insightsStepId = addLogEntry({
-      type: 'ai-step',
-      content: 'Generating suggestions...',
-      status: 'active',
-      startedAt: Date.now(),
-      iterationId,
-    })
-
-    try {
-      const insResponse = await fetch(`${API_BASE_URL}/api/generate-insights`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          backtest_result: iteration.result,
-          strategy_name: iteration.strategyName,
-          strategy_description: '',
-          script_code: iteration.scriptCode,
-          model,
-          natural_language_prompt: iteration.prompt,
-          symbol: backtestParams.symbol,
-          timeframe,
-          start_date: backtestParams.start_date,
-          end_date: backtestParams.end_date,
-        }),
-      })
-      const insData = await insResponse.json()
-      if (insData.success) {
-        const newInsights: StrategyInsights = {
-          summary: insData.summary || '',
-          suggestions: insData.suggestions || [],
-        }
-        updateLogEntry(insightsStepId, { status: 'done', completedAt: Date.now() })
-        addLogEntry({
-          type: 'insights',
-          content: newInsights.summary,
-          detail: JSON.stringify(newInsights.suggestions),
-          iterationId,
-        })
-        setIterationHistory(prev => prev.map(n =>
-          n.id === iterationId ? { ...n, insights: newInsights } : n
-        ))
-        // Sync ref immediately so startAutoRun can read the new suggestions
-        // on the very next loop iteration (before React re-renders).
-        iterationHistoryRef.current = iterationHistoryRef.current.map(n =>
-          n.id === iterationId ? { ...n, insights: newInsights } : n
-        )
-      } else {
-        updateLogEntry(insightsStepId, { status: 'done', completedAt: Date.now() })
-      }
-    } catch {
-      updateLogEntry(insightsStepId, { status: 'done', completedAt: Date.now() })
-    }
-  }, [backtestParams, addLogEntry, updateLogEntry])
+  }, [iterationHistory, backtestParams, addLogEntry, clearAllPolls, executeSingleTimeframe, generateInsightsForIteration])
 
   const startAutoRun = useCallback(async (maxAttempts: number, model: string) => {
     const baseline = [...iterationHistoryRef.current]

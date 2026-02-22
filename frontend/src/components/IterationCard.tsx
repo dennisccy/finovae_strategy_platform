@@ -62,6 +62,14 @@ export function IterationCard({ iteration, onSelect, onDelete, isLatest = false 
               <span className={`font-medium ${iteration.totalReturn >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
                 {formatReturn(iteration.totalReturn)}
               </span>
+              {iteration.rating && (
+                <>
+                  <span className="text-slate-300">·</span>
+                  <span className={`font-medium ${(iteration.totalReturn - iteration.rating.benchmark_total_return) >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                    {(iteration.totalReturn - iteration.rating.benchmark_total_return) >= 0 ? '+' : ''}{((iteration.totalReturn - iteration.rating.benchmark_total_return) * 100).toFixed(2)}% vs BM
+                  </span>
+                </>
+              )}
               <span className="text-slate-300">·</span>
               <span>{iteration.numTrades} trades</span>
               <span className="text-slate-300">·</span>
@@ -128,6 +136,14 @@ export function IterationCard({ iteration, onSelect, onDelete, isLatest = false 
           <span className={`font-semibold ${iteration.totalReturn >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
             {formatReturn(iteration.totalReturn)}
           </span>
+          {iteration.rating && (
+            <>
+              <span className="text-slate-400">|</span>
+              <span className={`font-semibold ${(iteration.totalReturn - iteration.rating.benchmark_total_return) >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                {(iteration.totalReturn - iteration.rating.benchmark_total_return) >= 0 ? '+' : ''}{((iteration.totalReturn - iteration.rating.benchmark_total_return) * 100).toFixed(2)}% vs BM
+              </span>
+            </>
+          )}
           <span className="text-slate-400">|</span>
           <span className="text-slate-600">{iteration.numTrades} trades</span>
           <span className="text-slate-400">|</span>

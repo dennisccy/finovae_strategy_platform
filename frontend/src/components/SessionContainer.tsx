@@ -108,8 +108,8 @@ export function SessionContainer({
 
   const handleRerun = useCallback(() => {
     if (!latestComplete?.scriptCode) return
-    editAndRerun(latestComplete.id, latestComplete.scriptCode)
-  }, [latestComplete, editAndRerun])
+    editAndRerun(latestComplete.id, latestComplete.scriptCode, lastUsedModel)
+  }, [latestComplete, editAndRerun, lastUsedModel])
 
   const canAutoRun = !!latestComplete?.insights?.suggestions?.length && !isAutoRunning && !isLoading
 
@@ -165,7 +165,7 @@ export function SessionContainer({
           iterationId={editorModal.iterationId}
           initialCode={editorModal.code}
           strategyName={editorModal.name}
-          onRerun={editAndRerun}
+          onRerun={(iterationId, code) => editAndRerun(iterationId, code, lastUsedModel)}
           onClose={() => setEditorModal(null)}
         />
       )}

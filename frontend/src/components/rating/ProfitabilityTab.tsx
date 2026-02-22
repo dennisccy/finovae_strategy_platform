@@ -25,7 +25,7 @@ export function ProfitabilityTab({ rating }: ProfitabilityTabProps) {
   return (
     <div className="space-y-4">
       {/* Key Metrics */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-2">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
         <MetricsCard
           label="Annual Return"
           value={`${Number(km.annual_return) >= 0 ? '+' : ''}${km.annual_return}%`}
@@ -50,6 +50,16 @@ export function ProfitabilityTab({ rating }: ProfitabilityTabProps) {
           label="Total Trades"
           value={String(km.total_trades)}
           variant="neutral"
+        />
+        <MetricsCard
+          label="Total Commissions"
+          value={`$${Number(km.total_commission).toFixed(2)}`}
+          variant="negative"
+        />
+        <MetricsCard
+          label="Fee Drag"
+          value={`-${km.commission_pct_capital}%`}
+          variant="negative"
         />
       </div>
 
