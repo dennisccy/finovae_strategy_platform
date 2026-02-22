@@ -30,6 +30,16 @@ function downsample<T>(arr: T[], maxLen: number): T[] {
   return Array.from({ length: maxLen }, (_, i) => arr[Math.round(i * step)])
 }
 
+function trimRating(rating: StrategyRating): StrategyRating {
+  return {
+    ...rating,
+    benchmark_equity: downsample(rating.benchmark_equity, 300),
+    rolling_sharpe: downsample(rating.rolling_sharpe, 300),
+    rolling_sharpe_benchmark: downsample(rating.rolling_sharpe_benchmark, 300),
+    trade_excursions: rating.trade_excursions.slice(-200),
+  }
+}
+
 /** Trim session data before writing to localStorage to stay under quota. */
 function trimForStorage(data: SessionData): SessionData {
   return {
@@ -41,6 +51,7 @@ function trimForStorage(data: SessionData): SessionData {
         equity_curve: downsample(n.result.equity_curve, 300),
         trades: n.result.trades.slice(-200),
       } : null,
+      rating: n.rating ? trimRating(n.rating) : null,
       timeframeResults: n.timeframeResults.map(tf => ({
         ...tf,
         result: tf.result ? {
@@ -48,6 +59,7 @@ function trimForStorage(data: SessionData): SessionData {
           equity_curve: downsample(tf.result.equity_curve, 300),
           trades: tf.result.trades.slice(-200),
         } : null,
+        rating: tf.rating ? trimRating(tf.rating) : null,
       })),
     })),
     activityLog: data.activityLog.slice(-150),
@@ -102,8 +114,12 @@ function saveSession(sessionId: string, data: SessionData): void {
   try {
     localStorage.setItem(key, JSON.stringify(trimForStorage(data)))
   } catch (e) {
-    if (e instanceof DOMException && e.name === 'QuotaExceededError') {
+    const isQuota = e instanceof DOMException &&
+      (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED')
+    if (isQuota) {
       console.warn('[session] localStorage quota exceeded — session not saved')
+    } else {
+      console.error('[session] unexpected save error', e)
     }
   }
 }
