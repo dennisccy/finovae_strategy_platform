@@ -107,7 +107,33 @@ function loadSession(sessionId: string): SessionData | null {
     if (!raw) return null
     const data = JSON.parse(raw) as SessionData
     if (!data.iterationHistory || !data.activityLog || !data.backtestParams) return null
-    return migrateSession(data)
+    const migrated = migrateSession(data)
+
+    // Robustness: re-synthesize 'insights' activityLog entries for completed
+    // iterations whose entries may have been trimmed by the 150-entry cap.
+    const insightedIterationIds = new Set(
+      migrated.activityLog
+        .filter(e => e.type === 'insights')
+        .map(e => e.iterationId)
+    )
+    for (const iter of migrated.iterationHistory) {
+      if (
+        iter.status === 'complete' &&
+        iter.insights?.suggestions?.length &&
+        !insightedIterationIds.has(iter.id)
+      ) {
+        migrated.activityLog.push({
+          id: `insights-synth-${iter.id}`,
+          timestamp: iter.timestamp,
+          type: 'insights',
+          content: iter.insights.summary,
+          detail: JSON.stringify(iter.insights.suggestions),
+          iterationId: iter.id,
+        } as ActivityEntry)
+      }
+    }
+
+    return migrated
   } catch {
     return null
   }
@@ -425,6 +451,7 @@ export interface IterationNode {
   timestamp: string
   status: IterationStatus
   error?: string
+  modelUsed?: string
   timeframeResults: TimeframeResult[]
   activeTimeframe: string | null
 }
@@ -938,6 +965,12 @@ export function useBacktest(sessionId: string) {
     skipInsights?: boolean,
     changeSummary?: string,
   ) => {
+    // Deduplicate: if already loading, abort the previous request first
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort()
+      abortControllerRef.current = null
+    }
+
     const timeframes = overrideTimeframes ?? backtestParams.timeframes
     setPhase('generating')
     setIsLoading(true)
@@ -1034,6 +1067,7 @@ export function useBacktest(sessionId: string) {
       const scriptCode = genData.script_code
       const scriptId = genData.script_id
       const strategyName = genData.strategy_name || 'Strategy'
+      const modelUsed = genData.model_used || undefined
 
       addLogEntry({
         type: 'code-preview',
@@ -1044,7 +1078,7 @@ export function useBacktest(sessionId: string) {
 
       setIterationHistory(prev => prev.map(n =>
         n.id === iterationId
-          ? { ...n, scriptCode, scriptId, strategyName, status: 'executing' }
+          ? { ...n, scriptCode, scriptId, strategyName, modelUsed, status: 'executing' }
           : n
       ))
 
@@ -1155,7 +1189,7 @@ export function useBacktest(sessionId: string) {
           iterationId,
         })
 
-        const completedFields = {
+        const metricsFields = {
           result: backtestResult,
           rating: finalRating,
           totalReturn: backtestResult.total_return,
@@ -1163,20 +1197,21 @@ export function useBacktest(sessionId: string) {
           numTrades: backtestResult.num_trades,
           sharpe: backtestResult.sharpe_ratio,
           maxDrawdown: backtestResult.max_drawdown,
-          status: 'complete' as const,
-          activeTimeframe: null,
         }
         setIterationHistory(prev => prev.map(n =>
-          n.id === iterationId ? { ...n, ...completedFields } : n
+          n.id === iterationId ? { ...n, ...metricsFields } : n
         ))
         // Sync the ref immediately so startAutoRun can read the final metrics
         // before React re-renders and the useEffect syncs it.
         iterationHistoryRef.current = iterationHistoryRef.current.map(n =>
-          n.id === iterationId ? { ...n, ...completedFields } : n
+          n.id === iterationId ? { ...n, ...metricsFields } : n
         )
 
         setPhase('results')
-        setIsLoading(false)
+        // isLoading stays true while insights are being fetched — the generate
+        // button and auto-run remain disabled until the iteration is fully done.
+
+        let newInsights: StrategyInsights | null = null
 
         if (!skipInsights) {
           const insightsStepId = addLogEntry({
@@ -1209,7 +1244,7 @@ export function useBacktest(sessionId: string) {
             const insData = await insResponse.json()
 
             if (insData.success) {
-              const newInsights: StrategyInsights = {
+              newInsights = {
                 summary: insData.summary || '',
                 suggestions: insData.suggestions || [],
               }
@@ -1222,10 +1257,6 @@ export function useBacktest(sessionId: string) {
                 detail: JSON.stringify(newInsights.suggestions),
                 iterationId,
               })
-
-              setIterationHistory(prev => prev.map(n =>
-                n.id === iterationId ? { ...n, insights: newInsights } : n
-              ))
             } else {
               updateLogEntry(insightsStepId, { status: 'done', completedAt: Date.now() })
             }
@@ -1233,6 +1264,23 @@ export function useBacktest(sessionId: string) {
             updateLogEntry(insightsStepId, { status: 'done', completedAt: Date.now() })
           }
         }
+
+        // Atomic: mark iteration complete (with insights if available) in one
+        // render batch. This ensures the save that fires on status='complete'
+        // always captures both backtest results and any suggestions together.
+        setIterationHistory(prev => prev.map(n =>
+          n.id === iterationId
+            ? { ...n, status: 'complete' as const, activeTimeframe: null,
+                ...(newInsights ? { insights: newInsights } : {}) }
+            : n
+        ))
+        iterationHistoryRef.current = iterationHistoryRef.current.map(n =>
+          n.id === iterationId
+            ? { ...n, status: 'complete' as const, activeTimeframe: null,
+                ...(newInsights ? { insights: newInsights } : {}) }
+            : n
+        )
+        setIsLoading(false)
         return iterationId
       } else {
         const errMsg = 'All timeframe backtests failed'
