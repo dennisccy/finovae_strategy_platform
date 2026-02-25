@@ -77,7 +77,7 @@ export function RiskResistanceTab({ rating }: RiskResistanceTabProps) {
                       -{(dd.depth * 100).toFixed(1)}%
                     </td>
                     <td className="py-2 px-2 text-slate-600">
-                      {new Date(dd.start_time).toLocaleDateString()}
+                      {new Date(dd.start_time).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
                     </td>
                     <td className="py-2 px-2 text-slate-600">
                       {dd.duration_days.toFixed(0)}d
@@ -119,7 +119,7 @@ function DrawdownChart({
   const sampled = benchmarkEquity.filter((_, i) => i % step === 0)
 
   const chartData = sampled.map((ep) => ({
-    time: new Date(ep.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+    time: new Date(ep.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
     benchmark: -(ep.drawdown * 100),
   }))
 

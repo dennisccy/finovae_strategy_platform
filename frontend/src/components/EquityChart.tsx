@@ -32,6 +32,7 @@ export function EquityChart({ data }: EquityChartProps) {
     timestamp: new Date(point.timestamp).toLocaleDateString('en-US', {
       month: 'short',
       day: 'numeric',
+      year: 'numeric',
     }),
     equity: point.equity,
     drawdown: point.drawdown * 100,

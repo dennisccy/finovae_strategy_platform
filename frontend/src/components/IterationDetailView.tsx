@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ArrowLeft, ChevronDown, ChevronRight, Code, GitCompare } from 'lucide-react'
+import { ArrowLeft, Check, ChevronDown, ChevronRight, Code, Copy, GitCompare } from 'lucide-react'
 import type { IterationNode } from '../hooks/useBacktest'
 import { RatingPanel } from './RatingPanel'
 import { MetricsCard } from './MetricsCard'
@@ -39,7 +39,16 @@ function DiffView({ lines }: { lines: DiffLine[] }) {
 
 export function IterationDetailView({ iteration, previousIteration, onBack }: IterationDetailViewProps) {
   const [codeExpanded, setCodeExpanded] = useState(false)
-  const [showDiff, setShowDiff] = useState(false)
+  const [showDiff, setShowDiff] = useState(true)
+  const [copied, setCopied] = useState(false)
+
+  function copyScript() {
+    if (!iteration.scriptCode) return
+    navigator.clipboard.writeText(iteration.scriptCode).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    })
+  }
   const hasMultipleTf = iteration.timeframeResults && iteration.timeframeResults.filter(r => r.status === 'complete').length > 1
   const [selectedTf, setSelectedTf] = useState<string>(
     iteration.timeframeResults?.[0]?.timeframe ?? ''
@@ -153,6 +162,18 @@ export function IterationDetailView({ iteration, previousIteration, onBack }: It
                 >
                   <GitCompare className="w-3.5 h-3.5" />
                   {showDiff ? 'Full' : 'Diff'}
+                </button>
+              )}
+              {codeExpanded && (
+                <button
+                  onClick={copyScript}
+                  className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-l border-slate-200 transition-colors text-slate-500 hover:text-slate-700 hover:bg-slate-50"
+                >
+                  {copied ? (
+                    <><Check className="w-3.5 h-3.5 text-emerald-500" /><span className="text-emerald-500">Copied</span></>
+                  ) : (
+                    <><Copy className="w-3.5 h-3.5" />Copy</>
+                  )}
                 </button>
               )}
             </div>

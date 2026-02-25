@@ -104,7 +104,7 @@ function mergeRollingSharpe(
   return strategy
     .filter((_, i) => i % step === 0)
     .map((s) => ({
-      time: new Date(s.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+      time: new Date(s.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
       strategy: Number(s.value.toFixed(2)),
       benchmark: Number((bmMap.get(s.timestamp) ?? 0).toFixed(2)),
     }))
