@@ -6,10 +6,10 @@ import {
   CartesianGrid,
   Tooltip,
   Legend,
-  ResponsiveContainer,
 } from 'recharts'
 import { StrategyRating } from '../../hooks/useBacktest'
 import { MetricsCard } from '../MetricsCard'
+import { ChartContainer } from '../ChartContainer'
 
 interface RiskRewardTabProps {
   rating: StrategyRating
@@ -62,7 +62,7 @@ export function RiskRewardTab({ rating }: RiskRewardTabProps) {
           <h4 className="text-sm font-semibold text-slate-700 mb-3">
             Rolling Sharpe Ratio (90-period window)
           </h4>
-          <ResponsiveContainer width="100%" height={250}>
+          <ChartContainer height={250}>
             <LineChart data={rollingSharpeData} margin={{ top: 5, right: 5, bottom: 5, left: 5 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
               <XAxis dataKey="time" tick={{ fontSize: 9 }} interval="preserveStartEnd" />
@@ -86,7 +86,7 @@ export function RiskRewardTab({ rating }: RiskRewardTabProps) {
                 name="Benchmark"
               />
             </LineChart>
-          </ResponsiveContainer>
+          </ChartContainer>
         </div>
       )}
     </div>

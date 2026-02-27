@@ -5,11 +5,11 @@ import {
   YAxis,
   CartesianGrid,
   Tooltip,
-  ResponsiveContainer,
 } from 'recharts'
 import { StrategyRating } from '../../hooks/useBacktest'
 import { MetricsCard } from '../MetricsCard'
 import { ScatterPlot } from './ScatterPlot'
+import { ChartContainer } from '../ChartContainer'
 
 interface WinRateEvTabProps {
   rating: StrategyRating
@@ -100,7 +100,7 @@ export function WinRateEvTab({ rating }: WinRateEvTabProps) {
           <h4 className="text-sm font-semibold text-slate-700 mb-3">
             Trade Return Distribution
           </h4>
-          <ResponsiveContainer width="100%" height={200}>
+          <ChartContainer height={200}>
             <BarChart data={histData} margin={{ top: 5, right: 5, bottom: 5, left: 5 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
               <XAxis dataKey="range" tick={{ fontSize: 9 }} />
@@ -112,7 +112,7 @@ export function WinRateEvTab({ rating }: WinRateEvTabProps) {
                 ))}
               </Bar>
             </BarChart>
-          </ResponsiveContainer>
+          </ChartContainer>
         </div>
       )}
 

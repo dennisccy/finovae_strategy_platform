@@ -12,16 +12,19 @@ export function ProfitabilityTab({ rating }: ProfitabilityTabProps) {
   const cat = rating.profitability
   const km = cat.key_metrics
 
-  // Annual returns comparison data
-  const annualData = Object.keys(rating.annual_returns)
-    .map(Number)
+  // Annual returns comparison data — long + short stacked, benchmark separate
+  const allYears = new Set([
+    ...Object.keys(rating.annual_long_returns ?? {}).map(Number),
+    ...Object.keys(rating.annual_short_returns ?? {}).map(Number),
+    ...Object.keys(rating.benchmark_annual_returns).map(Number),
+  ])
+  const annualData = [...allYears]
     .sort()
     .map((year) => ({
       label: String(year),
-      strategy: rating.annual_returns[year] || 0,
-      benchmark: rating.benchmark_annual_returns[year] || 0,
       long: rating.annual_long_returns?.[year] || 0,
       short: rating.annual_short_returns?.[year] || 0,
+      benchmark: rating.benchmark_annual_returns[year] || 0,
     }))
 
   return (

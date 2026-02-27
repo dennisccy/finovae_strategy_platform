@@ -4,10 +4,10 @@ import {
   XAxis,
   YAxis,
   Tooltip,
-  ResponsiveContainer,
   CartesianGrid,
 } from 'recharts'
 import { EquityPoint } from '../hooks/useBacktest'
+import { ChartContainer } from './ChartContainer'
 
 interface EquityChartProps {
   data: EquityPoint[]
@@ -50,7 +50,7 @@ export function EquityChart({ data }: EquityChartProps) {
 
   return (
     <div className="h-48 sm:h-56 lg:h-64">
-      <ResponsiveContainer width="100%" height="100%">
+      <ChartContainer height="100%">
         <AreaChart data={chartData}>
           <defs>
             <linearGradient id="equityGradient" x1="0" y1="0" x2="0" y2="1">
@@ -96,7 +96,7 @@ export function EquityChart({ data }: EquityChartProps) {
             dot={false}
           />
         </AreaChart>
-      </ResponsiveContainer>
+      </ChartContainer>
     </div>
   )
 }

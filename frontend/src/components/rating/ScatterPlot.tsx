@@ -5,8 +5,8 @@ import {
   YAxis,
   CartesianGrid,
   Tooltip,
-  ResponsiveContainer,
 } from 'recharts'
+import { ChartContainer } from '../ChartContainer'
 
 interface ScatterPlotProps {
   data: Array<{ x: number; y: number; label?: string }>
@@ -19,7 +19,7 @@ export function ScatterPlot({ data, xLabel, yLabel, color = '#6366f1' }: Scatter
   if (!data.length) return <p className="text-xs text-slate-400">No data</p>
 
   return (
-    <ResponsiveContainer width="100%" height={250}>
+    <ChartContainer height={250}>
       <ScatterChart margin={{ top: 10, right: 10, bottom: 20, left: 10 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
         <XAxis
@@ -44,6 +44,6 @@ export function ScatterPlot({ data, xLabel, yLabel, color = '#6366f1' }: Scatter
         />
         <Scatter data={data} fill={color} fillOpacity={0.6} r={4} />
       </ScatterChart>
-    </ResponsiveContainer>
+    </ChartContainer>
   )
 }

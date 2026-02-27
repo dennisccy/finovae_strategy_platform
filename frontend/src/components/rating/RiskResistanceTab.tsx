@@ -5,10 +5,10 @@ import {
   YAxis,
   CartesianGrid,
   Tooltip,
-  ResponsiveContainer,
 } from 'recharts'
 import { StrategyRating } from '../../hooks/useBacktest'
 import { MetricsCard } from '../MetricsCard'
+import { ChartContainer } from '../ChartContainer'
 
 interface RiskResistanceTabProps {
   rating: StrategyRating
@@ -124,7 +124,7 @@ function DrawdownChart({
   }))
 
   return (
-    <ResponsiveContainer width="100%" height={200}>
+    <ChartContainer height={200}>
       <AreaChart data={chartData} margin={{ top: 5, right: 5, bottom: 5, left: 5 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
         <XAxis dataKey="time" tick={{ fontSize: 9 }} interval="preserveStartEnd" />
@@ -139,6 +139,6 @@ function DrawdownChart({
           name="Benchmark DD"
         />
       </AreaChart>
-    </ResponsiveContainer>
+    </ChartContainer>
   )
 }

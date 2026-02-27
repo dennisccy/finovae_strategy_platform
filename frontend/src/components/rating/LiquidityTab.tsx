@@ -5,10 +5,10 @@ import {
   YAxis,
   CartesianGrid,
   Tooltip,
-  ResponsiveContainer,
 } from 'recharts'
 import { StrategyRating } from '../../hooks/useBacktest'
 import { MetricsCard } from '../MetricsCard'
+import { ChartContainer } from '../ChartContainer'
 
 interface LiquidityTabProps {
   rating: StrategyRating
@@ -68,7 +68,7 @@ export function LiquidityTab({ rating }: LiquidityTabProps) {
           <h4 className="text-sm font-semibold text-slate-700 mb-3">
             Capacity Analysis — Volume Participation at Different Capital Levels
           </h4>
-          <ResponsiveContainer width="100%" height={250}>
+          <ChartContainer height={250}>
             <BarChart data={capacityData} margin={{ top: 5, right: 5, bottom: 5, left: 5 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
               <XAxis dataKey="capital" tick={{ fontSize: 10 }} />
@@ -89,7 +89,7 @@ export function LiquidityTab({ rating }: LiquidityTabProps) {
               <Bar yAxisId="vpr" dataKey="vpr" name="Vol Participation %" fill="#06b6d4" radius={[2, 2, 0, 0]} />
               <Bar yAxisId="slip" dataKey="slippage" name="Est. Slippage (bps)" fill="#f59e0b" radius={[2, 2, 0, 0]} />
             </BarChart>
-          </ResponsiveContainer>
+          </ChartContainer>
         </div>
       )}
     </div>
