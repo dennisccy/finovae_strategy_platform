@@ -144,6 +144,7 @@ export function SessionContainer({
             onEditAndRerun={handleEditAndRerun}
             onSuggestionClick={handleSuggestionClick}
             onCancel={cancelOperation}
+            allowShort={backtestParams.allow_short ?? false}
           />
         </div>
 

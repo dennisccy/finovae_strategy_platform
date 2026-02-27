@@ -139,6 +139,47 @@ export function BacktestConfigBar({ params, onChange, disabled, onRerun, canReru
           </select>
         </div>
 
+        <div className="flex items-center gap-1.5">
+          <label className="flex items-center gap-1 text-xs font-medium text-slate-500 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={params.allow_short ?? false}
+              onChange={(e) => onChange({ ...params, allow_short: e.target.checked })}
+              disabled={disabled}
+              className="rounded border-slate-300 text-primary-600 focus:ring-primary-500 disabled:opacity-50 disabled:cursor-not-allowed"
+            />
+            Shorts
+          </label>
+        </div>
+
+        <div className="flex items-center gap-1.5">
+          <label className="flex items-center gap-1 text-xs font-medium text-slate-500 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={(params.leverage ?? 1) > 1}
+              onChange={(e) => onChange({ ...params, leverage: e.target.checked ? (params.leverage && params.leverage > 1 ? params.leverage : 2) : 1 })}
+              disabled={disabled}
+              className="rounded border-slate-300 text-primary-600 focus:ring-primary-500 disabled:opacity-50 disabled:cursor-not-allowed"
+            />
+            Leverage
+          </label>
+          {(params.leverage ?? 1) > 1 && (
+            <div className="flex items-center gap-0.5">
+              <input
+                type="number"
+                value={params.leverage ?? 2}
+                onChange={(e) => onChange({ ...params, leverage: Math.min(10, Math.max(1, Number(e.target.value))) })}
+                min={1}
+                max={10}
+                step={1}
+                disabled={disabled}
+                className="w-10 px-1 py-1 text-sm border border-slate-200 rounded-md focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white disabled:opacity-50 disabled:cursor-not-allowed text-center"
+              />
+              <span className="text-xs text-slate-400">x</span>
+            </div>
+          )}
+        </div>
+
         {canRerun && (
           <button
             onClick={onRerun}

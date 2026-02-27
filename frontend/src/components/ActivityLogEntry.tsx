@@ -18,9 +18,10 @@ interface ActivityLogEntryProps {
   entry: ActivityEntry
   onEditAndRerun?: (iterationId: string) => void
   onSuggestionClick?: (prompt: string, title?: string) => void
+  suggestionsDisabled?: boolean
 }
 
-export function ActivityLogEntry({ entry, onEditAndRerun, onSuggestionClick }: ActivityLogEntryProps) {
+export function ActivityLogEntry({ entry, onEditAndRerun, onSuggestionClick, suggestionsDisabled }: ActivityLogEntryProps) {
   const [expanded, setExpanded] = useState(false)
 
   if (entry.type === 'auto-run') {
@@ -175,9 +176,14 @@ export function ActivityLogEntry({ entry, onEditAndRerun, onSuggestionClick }: A
                   {suggestions.map((s, i) => (
                     <button
                       key={i}
-                      onClick={() => onSuggestionClick(s.prompt, s.title)}
-                      title={s.description}
-                      className="px-2.5 py-1 text-xs font-medium bg-blue-100 text-blue-700 rounded-full hover:bg-blue-200 transition-colors"
+                      onClick={() => !suggestionsDisabled && onSuggestionClick(s.prompt, s.title)}
+                      title={suggestionsDisabled ? 'Only the latest iteration\'s suggestions can be applied' : s.description}
+                      disabled={suggestionsDisabled}
+                      className={`px-2.5 py-1 text-xs font-medium rounded-full transition-colors ${
+                        suggestionsDisabled
+                          ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                          : 'bg-blue-100 text-blue-700 hover:bg-blue-200'
+                      }`}
                     >
                       {s.title}
                     </button>

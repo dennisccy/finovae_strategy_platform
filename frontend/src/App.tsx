@@ -108,6 +108,23 @@ function App() {
     setArchivedSessions(prev => prev.filter(s => s.id !== id))
   }, [])
 
+  const handleDeleteLive = useCallback((id: string) => {
+    setLiveSessions(prev => {
+      const next = prev.filter(s => s.id !== id)
+      // Switch active session if the deleted one was active
+      setActiveSessionId(cur => {
+        if (cur === id) {
+          const fallback = next.find(s => s.id !== id) ?? next[0]
+          return fallback?.id ?? cur
+        }
+        return cur
+      })
+      return next
+    })
+    // Remove localStorage data for the deleted session
+    try { localStorage.removeItem(`finovae_session_${id}`) } catch { /* ignore */ }
+  }, [])
+
   // Build the list of LiveSessionStatus objects for SessionPicker
   const liveSessionStatuses: LiveSessionStatus[] = liveSessions.map(s => {
     const status = liveStatuses[s.id]
@@ -146,6 +163,7 @@ function App() {
               onNewSession={handleNewSession}
               onRestoreArchived={handleRestoreArchived}
               onDeleteArchived={handleDeleteArchived}
+              onDeleteLive={handleDeleteLive}
             />
             <span className="text-xs lg:text-sm text-slate-500">v0.3.0</span>
           </div>

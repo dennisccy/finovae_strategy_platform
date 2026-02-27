@@ -20,6 +20,8 @@ export function ProfitabilityTab({ rating }: ProfitabilityTabProps) {
       label: String(year),
       strategy: rating.annual_returns[year] || 0,
       benchmark: rating.benchmark_annual_returns[year] || 0,
+      long: rating.annual_long_returns?.[year] || 0,
+      short: rating.annual_short_returns?.[year] || 0,
     }))
 
   return (
@@ -60,6 +62,16 @@ export function ProfitabilityTab({ rating }: ProfitabilityTabProps) {
           label="Fee Drag"
           value={`-${km.commission_pct_capital}%`}
           variant="negative"
+        />
+        <MetricsCard
+          label="Return from Long"
+          value={`${Number(km.return_from_long) >= 0 ? '+' : ''}${km.return_from_long ?? '—'}%`}
+          variant={Number(km.return_from_long) >= 0 ? 'positive' : 'negative'}
+        />
+        <MetricsCard
+          label="Return from Short"
+          value={`${Number(km.return_from_short) >= 0 ? '+' : ''}${km.return_from_short ?? '—'}%`}
+          variant={Number(km.return_from_short) >= 0 ? 'positive' : 'negative'}
         />
       </div>
 

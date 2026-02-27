@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Trade } from '../hooks/useBacktest'
-import { ArrowUpRight, ArrowDownRight, ChevronLeft, ChevronRight } from 'lucide-react'
+import { ArrowUpRight, ArrowDownRight, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react'
 
 interface TradesTableProps {
   trades: Trade[]
@@ -47,8 +47,12 @@ export function TradesTable({ trades }: TradesTableProps) {
     return price.toFixed(4)
   }
 
-  const totalPages = Math.ceil(trades.length / PAGE_SIZE)
-  const pageTrades = trades.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
+  const sortedTrades = [...trades].sort((a, b) =>
+    new Date(b.entry_time).getTime() - new Date(a.entry_time).getTime()
+  )
+
+  const totalPages = Math.ceil(sortedTrades.length / PAGE_SIZE)
+  const pageTrades = sortedTrades.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
   const globalOffset = page * PAGE_SIZE
 
   function Pagination() {
@@ -56,35 +60,49 @@ export function TradesTable({ trades }: TradesTableProps) {
     return (
       <div className="flex items-center justify-between mt-3 pt-3 border-t border-slate-100">
         <span className="text-xs text-slate-500">
-          {globalOffset + 1}–{Math.min(globalOffset + PAGE_SIZE, trades.length)} of {trades.length}
+          {globalOffset + 1}–{Math.min(globalOffset + PAGE_SIZE, sortedTrades.length)} of {sortedTrades.length}
         </span>
         <div className="flex items-center gap-1">
+          <button
+            onClick={() => setPage(0)}
+            disabled={page === 0}
+            className="p-1 rounded text-slate-400 hover:text-slate-700 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            title="First page"
+          >
+            <ChevronsLeft className="w-4 h-4" />
+          </button>
           <button
             onClick={() => setPage(p => p - 1)}
             disabled={page === 0}
             className="p-1 rounded text-slate-400 hover:text-slate-700 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            title="Previous page"
           >
             <ChevronLeft className="w-4 h-4" />
           </button>
-          {Array.from({ length: totalPages }, (_, i) => i).map(i => (
-            <button
-              key={i}
-              onClick={() => setPage(i)}
-              className={`w-7 h-7 text-xs rounded transition-colors ${
-                i === page
-                  ? 'bg-primary-600 text-white font-medium'
-                  : 'text-slate-500 hover:bg-slate-100 hover:text-slate-700'
-              }`}
-            >
-              {i + 1}
-            </button>
-          ))}
+          <select
+            value={page}
+            onChange={e => setPage(Number(e.target.value))}
+            className="text-xs text-slate-700 bg-white border border-slate-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-primary-500 cursor-pointer"
+          >
+            {Array.from({ length: totalPages }, (_, i) => (
+              <option key={i} value={i}>Page {i + 1} of {totalPages}</option>
+            ))}
+          </select>
           <button
             onClick={() => setPage(p => p + 1)}
             disabled={page === totalPages - 1}
             className="p-1 rounded text-slate-400 hover:text-slate-700 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            title="Next page"
           >
             <ChevronRight className="w-4 h-4" />
+          </button>
+          <button
+            onClick={() => setPage(totalPages - 1)}
+            disabled={page === totalPages - 1}
+            className="p-1 rounded text-slate-400 hover:text-slate-700 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            title="Last page"
+          >
+            <ChevronsRight className="w-4 h-4" />
           </button>
         </div>
       </div>
@@ -144,6 +162,7 @@ export function TradesTable({ trades }: TradesTableProps) {
           <thead>
             <tr className="text-left text-slate-500 border-b border-slate-200">
               <th className="pb-3 font-medium">#</th>
+              <th className="pb-3 font-medium">Dir</th>
               <th className="pb-3 font-medium">Entry</th>
               <th className="pb-3 font-medium">Exit</th>
               <th className="pb-3 font-medium text-right">Entry Price</th>
@@ -153,9 +172,23 @@ export function TradesTable({ trades }: TradesTableProps) {
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {pageTrades.map((trade, index) => (
+            {pageTrades.map((trade, index) => {
+              const isShort = trade.direction === 'short'
+              const lev = trade.leverage && trade.leverage > 1 ? trade.leverage : null
+              return (
               <tr key={trade.trade_id} className="hover:bg-slate-50">
                 <td className="py-3 text-slate-600">{globalOffset + index + 1}</td>
+                <td className="py-3">
+                  <span
+                    className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-bold ${
+                      isShort
+                        ? 'bg-orange-100 text-orange-700'
+                        : 'bg-blue-100 text-blue-700'
+                    }`}
+                  >
+                    {isShort ? 'S' : 'L'}{lev ? ` ${lev}x` : ''}
+                  </span>
+                </td>
                 <td className="py-3 text-slate-600">{formatDate(trade.entry_time)}</td>
                 <td className="py-3 text-slate-600">{formatDate(trade.exit_time)}</td>
                 <td className="py-3 text-right text-slate-800 font-mono">
@@ -189,7 +222,8 @@ export function TradesTable({ trades }: TradesTableProps) {
                   </span>
                 </td>
               </tr>
-            ))}
+            )})}
+
           </tbody>
         </table>
         <Pagination />

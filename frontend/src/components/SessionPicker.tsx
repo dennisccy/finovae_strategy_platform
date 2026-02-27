@@ -10,6 +10,13 @@ interface SessionPickerProps {
   onNewSession: () => void
   onRestoreArchived: (id: string) => void
   onDeleteArchived: (id: string) => void
+  onDeleteLive: (id: string) => void
+}
+
+interface PendingDelete {
+  id: string
+  name: string
+  type: 'live' | 'archived'
 }
 
 function SessionDot({ status }: { status: LiveSessionStatus }) {
@@ -30,8 +37,10 @@ export function SessionPicker({
   onNewSession,
   onRestoreArchived,
   onDeleteArchived,
+  onDeleteLive,
 }: SessionPickerProps) {
   const [open, setOpen] = useState(false)
+  const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null)
   const ref = useRef<HTMLDivElement>(null)
 
   // Close on outside click
@@ -88,11 +97,12 @@ export function SessionPicker({
               <div className="max-h-48 overflow-y-auto">
                 {liveSessions.map(session => {
                   const isActive = session.id === activeSessionId
+                  const canDelete = liveSessions.length > 1
                   return (
                     <div
                       key={session.id}
                       onClick={() => { onSelectLive(session.id); setOpen(false) }}
-                      className={`flex items-center gap-2 px-3 py-2.5 cursor-pointer transition-colors border-b border-slate-50 last:border-0 ${
+                      className={`flex items-center gap-2 px-3 py-2.5 cursor-pointer transition-colors border-b border-slate-50 last:border-0 group ${
                         isActive ? 'bg-primary-50' : 'hover:bg-slate-50'
                       }`}
                     >
@@ -116,6 +126,19 @@ export function SessionPicker({
                           )}
                         </div>
                       </div>
+                      {canDelete && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setOpen(false)
+                            setPendingDelete({ id: session.id, name: session.name, type: 'live' })
+                          }}
+                          className="p-1 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded opacity-0 group-hover:opacity-100 transition-all"
+                          title="Delete session"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      )}
                     </div>
                   )
                 })}
@@ -160,7 +183,8 @@ export function SessionPicker({
                     <button
                       onClick={(e) => {
                         e.stopPropagation()
-                        onDeleteArchived(session.id)
+                        setOpen(false)
+                        setPendingDelete({ id: session.id, name: session.name, type: 'archived' })
                       }}
                       className="p-1 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded opacity-0 group-hover:opacity-100 transition-all"
                       title="Delete session"
@@ -172,6 +196,42 @@ export function SessionPicker({
               </div>
             </>
           )}
+        </div>
+      )}
+      {pendingDelete && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center">
+          <div
+            className="absolute inset-0 bg-black/40"
+            onClick={() => setPendingDelete(null)}
+          />
+          <div className="relative bg-white rounded-xl shadow-xl p-5 w-72 mx-4">
+            <h3 className="text-sm font-semibold text-slate-800 mb-1">Delete session?</h3>
+            <p className="text-xs text-slate-500 mb-4 leading-relaxed">
+              <span className="font-medium text-slate-700">"{pendingDelete.name}"</span> will be
+              permanently deleted. This cannot be undone.
+            </p>
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => setPendingDelete(null)}
+                className="px-3 py-1.5 text-xs font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  if (pendingDelete.type === 'live') {
+                    onDeleteLive(pendingDelete.id)
+                  } else {
+                    onDeleteArchived(pendingDelete.id)
+                  }
+                  setPendingDelete(null)
+                }}
+                className="px-3 py-1.5 text-xs font-medium text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

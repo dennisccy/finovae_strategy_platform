@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef, useMemo, FormEvent } from 'react'
-import { Send, Square, Sparkles, CheckCircle2, AlertCircle, ChevronDown, ChevronRight } from 'lucide-react'
+import { Send, Square, Sparkles } from 'lucide-react'
 import { ActivityLogEntry } from './ActivityLogEntry'
 import type { ActivityEntry } from '../hooks/useBacktest'
-import { getStrategyPrompts, type StrategyCard } from '../data/strategyPrompts'
+import { getStrategyPrompts, getShortStrategyPrompts, type StrategyCard } from '../data/strategyPrompts'
 
 interface IterationGroup {
   iterationId: string
@@ -49,53 +49,6 @@ function groupByIteration(entries: ActivityEntry[]): { groups: IterationGroup[];
   return { groups, ungrouped }
 }
 
-function CollapsedIteration({ group, onEditAndRerun }: {
-  group: IterationGroup
-  onEditAndRerun?: (iterationId: string) => void
-}) {
-  const [expanded, setExpanded] = useState(false)
-
-  return (
-    <div className="mb-2">
-      <button
-        onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 transition-colors text-left group"
-      >
-        {group.isComplete && (
-          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />
-        )}
-        {group.isError && (
-          <AlertCircle className="w-3.5 h-3.5 text-red-500 flex-shrink-0" />
-        )}
-        <div className="flex-1 min-w-0">
-          <span className="text-xs font-medium text-slate-700 truncate block">
-            {group.strategyName || group.prompt || 'Iteration'}
-          </span>
-          {group.summary && (
-            <span className="text-xs text-slate-400 truncate block">
-              {group.summary}
-            </span>
-          )}
-        </div>
-        {expanded
-          ? <ChevronDown className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
-          : <ChevronRight className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
-        }
-      </button>
-      {expanded && (
-        <div className="mt-1 pl-2 border-l-2 border-slate-200 ml-3">
-          {group.entries.map(entry => (
-            <ActivityLogEntry
-              key={entry.id}
-              entry={entry}
-              onEditAndRerun={onEditAndRerun}
-            />
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
 
 interface ActivityLogProps {
   entries: ActivityEntry[]
@@ -106,9 +59,10 @@ interface ActivityLogProps {
   onEditAndRerun: (iterationId: string) => void
   onSuggestionClick?: (prompt: string, title?: string) => void
   onCancel?: () => void
+  allowShort?: boolean
 }
 
-export function ActivityLog({ entries, onSubmitPrompt, currentSymbol, currentTimeframe, isLoading, onEditAndRerun, onSuggestionClick, onCancel }: ActivityLogProps) {
+export function ActivityLog({ entries, onSubmitPrompt, currentSymbol, currentTimeframe, isLoading, onEditAndRerun, onSuggestionClick, onCancel, allowShort }: ActivityLogProps) {
   const [prompt, setPrompt] = useState('')
   const [model, setModel] = useState('claude-sonnet-4-6')
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -165,8 +119,10 @@ export function ActivityLog({ entries, onSubmitPrompt, currentSymbol, currentTim
   }
 
   const cards = useMemo(
-    () => getStrategyPrompts(currentSymbol, currentTimeframe),
-    [currentSymbol, currentTimeframe]
+    () => allowShort
+      ? getShortStrategyPrompts(currentSymbol, currentTimeframe)
+      : getStrategyPrompts(currentSymbol, currentTimeframe),
+    [currentSymbol, currentTimeframe, allowShort]
   )
 
   const isEmpty = entries.length === 0
@@ -187,7 +143,7 @@ export function ActivityLog({ entries, onSubmitPrompt, currentSymbol, currentTim
               </div>
               <h3 className="text-base font-semibold text-slate-800">Strategy Builder</h3>
               <p className="text-sm text-slate-500 mt-1">
-                10 strategies for{' '}
+                {allowShort ? '10 long/short strategies for' : '10 strategies for'}{' '}
                 <span className="font-medium text-slate-700">
                   {currentSymbol.replace('USDT', '')}/USDT · {currentTimeframe}
                 </span>
@@ -223,27 +179,16 @@ export function ActivityLog({ entries, onSubmitPrompt, currentSymbol, currentTim
                 onSuggestionClick={onSuggestionClick}
               />
             ))}
-            {/* Iteration groups: past collapsed, latest expanded */}
+            {/* Iteration groups: all expanded, suggestions disabled for non-latest */}
             {groups.map((group) => {
-              const isPast = group.iterationId !== latestIterationId && (group.isComplete || group.isError)
-
-              if (isPast) {
-                return (
-                  <CollapsedIteration
-                    key={group.iterationId}
-                    group={group}
-                    onEditAndRerun={onEditAndRerun}
-                  />
-                )
-              }
-
-              // Latest / active iteration: render all entries fully
+              const isLatest = group.iterationId === latestIterationId
               return group.entries.map((entry) => (
                 <ActivityLogEntry
                   key={entry.id}
                   entry={entry}
                   onEditAndRerun={onEditAndRerun}
                   onSuggestionClick={onSuggestionClick}
+                  suggestionsDisabled={!isLatest}
                 />
               ))
             })}

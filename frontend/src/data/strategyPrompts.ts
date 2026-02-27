@@ -166,6 +166,81 @@ const strategies: StrategyGenerator[] = [
   }),
 ]
 
+// ── 10 SHORT-AWARE bidirectional strategy generators ──────────────────────────
+// All strategies return signal 1 (long) and -1 (short) symmetrically.
+
+const shortStrategies: StrategyGenerator[] = [
+  // 1. EMA Crossover — Bidirectional
+  (p) => ({
+    title: 'EMA Crossover L/S',
+    tagline: `Long on ${p.fastEma}/${p.slowEma} golden cross, short on death cross`,
+    prompt: `Build a bidirectional EMA crossover strategy for ${p.assetName} on the ${p.tfLabel} timeframe. Use the ${p.fastEma}-period EMA and ${p.slowEma}-period EMA. Return signal 1 (go long) when the ${p.fastEma} EMA crosses above the ${p.slowEma} EMA (golden cross). Return signal -1 (go short) when the ${p.fastEma} EMA crosses below the ${p.slowEma} EMA (death cross). Return 0 while no crossover occurs. Place a stop-loss ${p.stop} from entry in both directions. Both long AND short trades must fire — this is a fully symmetric, always-in-market trend strategy.`,
+  }),
+
+  // 2. RSI Midline — Bidirectional
+  (p) => ({
+    title: 'RSI Midline L/S',
+    tagline: `Long RSI > 55, short RSI < 45, neutral band around 50`,
+    prompt: `Build a bidirectional RSI momentum strategy for ${p.assetName} on the ${p.tfLabel} timeframe. Use RSI(14). Return signal 1 (go long) when RSI rises above 55 — bullish momentum confirmed. Return signal -1 (go short) when RSI drops below 45 — bearish momentum confirmed. Return 0 when RSI is between 45 and 55 (neutral zone — hold current position). Place a stop-loss ${p.stop} from entry. This symmetric RSI midline strategy captures directional momentum in both directions with a neutral buffer to avoid whipsaws.`,
+  }),
+
+  // 3. MACD Signal Crossover — Bidirectional
+  (p) => ({
+    title: 'MACD Crossover L/S',
+    tagline: `Long on MACD bullish cross, short on bearish cross`,
+    prompt: `Build a bidirectional MACD crossover strategy for ${p.assetName} on the ${p.tfLabel} timeframe. Use MACD(12,26,9). Return signal 1 (go long) when the MACD line crosses above the signal line — bullish momentum shift. Return signal -1 (go short) when the MACD line crosses below the signal line — bearish momentum shift. Return 0 while no crossover occurred. Place a stop-loss ${p.stop} from entry for both directions. This fully symmetric MACD strategy trades every momentum reversal in both directions, producing long and short trades in roughly equal measure.`,
+  }),
+
+  // 4. Bollinger Band Mean Reversion — Bidirectional
+  (p) => ({
+    title: 'BB Fade L/S',
+    tagline: `Long at lower band, short at upper band, exit at midline`,
+    prompt: `Build a bidirectional Bollinger Band mean reversion strategy for ${p.assetName} on the ${p.tfLabel} timeframe. Use Bollinger Bands (${p.bbPeriod}-period, 2.0 std dev). Return signal 1 (go long) when price touches or closes below the lower band — statistically oversold. Return signal -1 (go short) when price touches or closes above the upper band — statistically overbought. Return signal 2 (flatten) when price reaches the middle band (${p.bbPeriod}-period SMA) to take profit in either direction. Place a stop-loss ${p.stop} from entry. This symmetric fade strategy exploits mean reversion from extremes in both directions.`,
+  }),
+
+  // 5. Dual EMA Trend Direction — Bidirectional
+  (p) => ({
+    title: 'EMA Trend Direction L/S',
+    tagline: `Long above ${p.slowEma} EMA + RSI > 50, short below + RSI < 50`,
+    prompt: `Build a bidirectional EMA trend-direction strategy for ${p.assetName} on the ${p.tfLabel} timeframe. Return signal 1 (go long) when price is above the ${p.slowEma}-period EMA AND RSI(14) is above 50 — both trend and momentum are bullish. Return signal -1 (go short) when price is below the ${p.slowEma}-period EMA AND RSI(14) is below 50 — both trend and momentum are bearish. Return 0 otherwise. Place a stop-loss ${p.stop} from entry in both directions. The dual confirmation (price location + RSI side) reduces false signals and ensures both long and short entries are high-quality.`,
+  }),
+
+  // 6. MACD Histogram Sign — Bidirectional
+  (p) => ({
+    title: 'MACD Histogram L/S',
+    tagline: `Long when histogram turns positive, short when negative`,
+    prompt: `Build a bidirectional MACD histogram strategy for ${p.assetName} on the ${p.tfLabel} timeframe. Use MACD(12,26,9). Return signal 1 (go long) when the MACD histogram crosses from negative to positive — momentum turning bullish. Return signal -1 (go short) when the MACD histogram crosses from positive to negative — momentum turning bearish. Return 0 while no sign change. Place a stop-loss ${p.stop} from entry. This histogram sign-change strategy is highly responsive and produces both long and short trades symmetrically at every momentum direction shift.`,
+  }),
+
+  // 7. Stochastic Reversal — Bidirectional
+  (p) => ({
+    title: 'Stochastic Reversal L/S',
+    tagline: `Long from oversold (<20), short from overbought (>80)`,
+    prompt: `Build a bidirectional Stochastic reversal strategy for ${p.assetName} on the ${p.tfLabel} timeframe. Use Stochastic(14,3). Return signal 1 (go long) when %K crosses above %D while both are below 20 — reversal from oversold. Return signal -1 (go short) when %K crosses below %D while both are above 80 — reversal from overbought. Return 0 otherwise. Place a stop-loss ${p.stop} from entry in both directions. Both long and short trades must be generated — this is a symmetric oscillator reversal strategy that exploits exhaustion at extremes in both directions.`,
+  }),
+
+  // 8. EMA Pullback — Bidirectional
+  (p) => ({
+    title: 'EMA Pullback L/S',
+    tagline: `Long: dip to ${p.fastEma} EMA in uptrend · Short: rally to ${p.fastEma} EMA in downtrend`,
+    prompt: `Build a bidirectional EMA pullback strategy for ${p.assetName} on the ${p.tfLabel} timeframe. Uptrend: ${p.fastEma} EMA above ${p.slowEma} EMA. Downtrend: ${p.fastEma} EMA below ${p.slowEma} EMA. Return signal 1 (go long) when in an uptrend and price pulls back to within 0.5% of the ${p.fastEma} EMA from above. Return signal -1 (go short) when in a downtrend and price rallies back to within 0.5% of the ${p.fastEma} EMA from below. Place a stop-loss ${p.stop} from entry in both directions, target ${p.target}. Both long and short pullback trades must fire — each mirrors the other's logic exactly.`,
+  }),
+
+  // 9. Range Breakout — Bidirectional
+  (p) => ({
+    title: 'Breakout L/S',
+    tagline: `Long on ${p.lookback}-bar high break, short on ${p.lookback}-bar low break`,
+    prompt: `Build a bidirectional range breakout strategy for ${p.assetName} on the ${p.tfLabel} timeframe. Return signal 1 (go long) when price closes above the highest close of the past ${p.lookback} bars — bullish breakout. Return signal -1 (go short) when price closes below the lowest close of the past ${p.lookback} bars — bearish breakout. Return 0 otherwise. Place a stop-loss ${p.stop} from entry in both directions. Targeting ${p.target} from entry. Both long and short breakout trades must be generated — the breakout logic is fully symmetric and must not favour one direction.`,
+  }),
+
+  // 10. ATR Volatility Trend — Bidirectional
+  (p) => ({
+    title: 'ATR Trend L/S',
+    tagline: `Expanding ATR + ${p.fastEma}/${p.slowEma} direction, 2×ATR stop both ways`,
+    prompt: `Build a bidirectional ATR volatility trend strategy for ${p.assetName} on the ${p.tfLabel} timeframe. Measure expanding volatility as: 14-period ATR greater than its 10-bar average (trend accelerating). Return signal 1 (go long) when: ${p.fastEma} EMA is above ${p.slowEma} EMA AND ATR is expanding AND RSI(14) is above 50. Return signal -1 (go short) when: ${p.fastEma} EMA is below ${p.slowEma} EMA AND ATR is expanding AND RSI(14) is below 50. Return 0 otherwise. Place an initial stop at 2×ATR from entry, capped at ${p.stop}, for both directions. Both long and short trades must fire — the conditions are symmetric.`,
+  }),
+]
+
 // ── Public API ─────────────────────────────────────────────────────────────────
 
 export interface StrategyCard {
@@ -180,5 +255,13 @@ export function getStrategyPrompts(symbol: string, timeframe: string): StrategyC
   return strategies.map((gen, i) => {
     const { title, tagline, prompt } = gen(p)
     return { id: `strategy-${i}`, title, tagline, prompt }
+  })
+}
+
+export function getShortStrategyPrompts(symbol: string, timeframe: string): StrategyCard[] {
+  const p = buildParams(symbol, timeframe)
+  return shortStrategies.map((gen, i) => {
+    const { title, tagline, prompt } = gen(p)
+    return { id: `short-strategy-${i}`, title, tagline, prompt }
   })
 }

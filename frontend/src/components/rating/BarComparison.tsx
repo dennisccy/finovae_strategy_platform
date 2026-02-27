@@ -10,7 +10,7 @@ import {
 } from 'recharts'
 
 interface BarComparisonProps {
-  data: Array<{ label: string; strategy: number; benchmark: number }>
+  data: Array<{ label: string; strategy: number; benchmark: number; long?: number; short?: number }>
   strategyLabel?: string
   benchmarkLabel?: string
 }
@@ -21,6 +21,9 @@ export function BarComparison({
   benchmarkLabel = 'Benchmark',
 }: BarComparisonProps) {
   if (!data.length) return <p className="text-xs text-slate-400">No data</p>
+
+  const hasLong = data.some(d => d.long !== undefined && d.long !== 0)
+  const hasShort = data.some(d => d.short !== undefined && d.short !== 0)
 
   return (
     <ResponsiveContainer width="100%" height={250}>
@@ -35,6 +38,12 @@ export function BarComparison({
         <Legend wrapperStyle={{ fontSize: 11 }} />
         <Bar dataKey="strategy" name={strategyLabel} fill="#10b981" radius={[2, 2, 0, 0]} />
         <Bar dataKey="benchmark" name={benchmarkLabel} fill="#94a3b8" radius={[2, 2, 0, 0]} />
+        {hasLong && (
+          <Bar dataKey="long" name="Long" fill="#3b82f6" radius={[2, 2, 0, 0]} />
+        )}
+        {hasShort && (
+          <Bar dataKey="short" name="Short" fill="#f59e0b" radius={[2, 2, 0, 0]} />
+        )}
       </BarChart>
     </ResponsiveContainer>
   )
