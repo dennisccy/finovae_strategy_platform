@@ -30,36 +30,36 @@ function downsample<T>(arr: T[], maxLen: number): T[] {
   return Array.from({ length: maxLen }, (_, i) => arr[Math.round(i * step)])
 }
 
-function trimRating(rating: StrategyRating): StrategyRating {
+function trimRating(rating: StrategyRating, pts = 150): StrategyRating {
   return {
     ...rating,
-    benchmark_equity: downsample(rating.benchmark_equity, 300),
-    rolling_sharpe: downsample(rating.rolling_sharpe, 300),
-    rolling_sharpe_benchmark: downsample(rating.rolling_sharpe_benchmark, 300),
-    trade_excursions: rating.trade_excursions.slice(-200),
+    benchmark_equity: downsample(rating.benchmark_equity, pts),
+    rolling_sharpe: downsample(rating.rolling_sharpe, pts),
+    rolling_sharpe_benchmark: downsample(rating.rolling_sharpe_benchmark, pts),
+    trade_excursions: rating.trade_excursions.slice(-100),
   }
 }
 
 /** Trim session data before writing to localStorage to stay under quota. */
-function trimForStorage(data: SessionData): SessionData {
+function trimForStorage(data: SessionData, pts = 150, maxTrades = 100): SessionData {
   return {
     ...data,
     iterationHistory: data.iterationHistory.map(n => ({
       ...n,
       result: n.result ? {
         ...n.result,
-        equity_curve: downsample(n.result.equity_curve, 300),
-        trades: n.result.trades.slice(-200),
+        equity_curve: downsample(n.result.equity_curve, pts),
+        trades: n.result.trades.slice(-maxTrades),
       } : null,
-      rating: n.rating ? trimRating(n.rating) : null,
+      rating: n.rating ? trimRating(n.rating, pts) : null,
       timeframeResults: n.timeframeResults.map(tf => ({
         ...tf,
         result: tf.result ? {
           ...tf.result,
-          equity_curve: downsample(tf.result.equity_curve, 300),
-          trades: tf.result.trades.slice(-200),
+          equity_curve: downsample(tf.result.equity_curve, pts),
+          trades: tf.result.trades.slice(-maxTrades),
         } : null,
-        rating: tf.rating ? trimRating(tf.rating) : null,
+        rating: tf.rating ? trimRating(tf.rating, pts) : null,
       })),
     })),
     activityLog: data.activityLog.slice(-150),
@@ -83,6 +83,13 @@ function migrateSession(data: SessionData): SessionData {
   // Migrate old sessions without exchange field
   if (!('exchange' in params)) {
     params.exchange = 'binance'
+  }
+  // Migrate old sessions without allow_short / leverage fields (v0.7)
+  if (!('allow_short' in params)) {
+    params.allow_short = false
+  }
+  if (!('leverage' in params)) {
+    params.leverage = 1
   }
   // Migrate old iterations: add timeframeResults + activeTimeframe
   data.iterationHistory = data.iterationHistory.map(n => {
@@ -139,18 +146,42 @@ function loadSession(sessionId: string): SessionData | null {
   }
 }
 
+function isQuotaError(e: unknown): boolean {
+  return e instanceof DOMException &&
+    (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED')
+}
+
 function saveSession(sessionId: string, data: SessionData): void {
   const key = `finovae_session_${sessionId}`
+  // Try with standard trimming first
   try {
     localStorage.setItem(key, JSON.stringify(trimForStorage(data)))
+    return
   } catch (e) {
-    const isQuota = e instanceof DOMException &&
-      (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED')
-    if (isQuota) {
-      console.warn('[session] localStorage quota exceeded — session not saved')
-    } else {
+    if (!isQuotaError(e)) {
       console.error('[session] unexpected save error', e)
+      return
     }
+  }
+  // Quota hit — retry with very aggressive trimming (50 pts, no timeframe equity/trades)
+  try {
+    const minimal = trimForStorage(data, 50, 50)
+    const minimalWithStrippedTfs = {
+      ...minimal,
+      iterationHistory: minimal.iterationHistory.map(n => ({
+        ...n,
+        timeframeResults: n.timeframeResults.map(tf => ({
+          ...tf,
+          result: tf.result ? { ...tf.result, equity_curve: [], trades: [] } : null,
+          rating: null,
+        })),
+      })),
+      activityLog: minimal.activityLog.slice(-30),
+    }
+    localStorage.setItem(key, JSON.stringify(minimalWithStrippedTfs))
+    console.warn('[session] localStorage quota tight — saved with reduced data')
+  } catch {
+    console.warn('[session] localStorage quota exceeded — session not saved')
   }
 }
 
@@ -198,6 +229,8 @@ export interface Trade {
   pnl: number
   pnl_percent: number
   commission_paid: number
+  direction?: string   // "long" | "short" — v0.7 additive
+  leverage?: number    // leverage multiplier — v0.7 additive
 }
 
 export interface EquityPoint {
@@ -345,6 +378,8 @@ export interface StrategyRating {
   capacity_levels: CapacityLevel[]
   annual_returns: Record<number, number>
   benchmark_annual_returns: Record<number, number>
+  annual_long_returns: Record<number, number>
+  annual_short_returns: Record<number, number>
 }
 
 export interface InsightsSuggestion {
@@ -411,6 +446,8 @@ export interface BacktestParams {
   end_date: string
   initial_capital: number
   exchange: string
+  allow_short?: boolean  // v0.7 additive
+  leverage?: number      // v0.7 additive
 }
 
 export const EXCHANGE_CONFIGS: Record<string, { label: string; commission: number }> = {
@@ -489,7 +526,10 @@ const DEFAULT_PARAMS: BacktestParams = {
 export function useBacktest(sessionId: string) {
   const [phase, setPhase] = useState<Phase>(() => {
     const saved = loadSession(sessionId)
-    if (saved && saved.iterationHistory.some(n => n.status === 'complete')) return 'results'
+    if (saved && saved.iterationHistory.some(n =>
+      n.status === 'complete' ||
+      ((n.status === 'generating' || n.status === 'executing') && !!n.result)
+    )) return 'results'
     return 'idle'
   })
   const [isLoading, setIsLoading] = useState(false)
@@ -520,16 +560,38 @@ export function useBacktest(sessionId: string) {
   })
   const [selectedIterationId, setSelectedIterationId] = useState<string | null>(() => {
     const saved = loadSession(sessionId)
-    return saved?.selectedIterationId ?? null
+    if (!saved) return null
+    const savedId = saved.selectedIterationId
+    if (!savedId) return null
+    // Check the saved ID will survive the flatMap restore (won't be dropped)
+    const willSurvive = saved.iterationHistory.some(n =>
+      n.id === savedId &&
+      (n.status !== 'generating' && n.status !== 'executing' || !!n.result)
+    )
+    if (willSurvive) return savedId
+    // Selected iteration will be dropped — fall back to last restorable iteration
+    const lastRestorable = [...saved.iterationHistory]
+      .reverse()
+      .find(n =>
+        n.status === 'complete' ||
+        ((n.status === 'generating' || n.status === 'executing') && !!n.result)
+      )
+    return lastRestorable?.id ?? null
   })
   const [iterationHistory, setIterationHistory] = useState<IterationNode[]>(() => {
     const saved = loadSession(sessionId)
     if (!saved) return []
-    return saved.iterationHistory.map(n =>
-      (n.status === 'generating' || n.status === 'executing')
-        ? { ...n, status: 'error' as const, error: 'Session interrupted' }
-        : n
-    )
+    return saved.iterationHistory.flatMap(n => {
+      if (n.status === 'generating' || n.status === 'executing') {
+        if (n.result) {
+          // Backtest completed — insights were still fetching. Salvage as complete.
+          return [{ ...n, status: 'complete' as const, activeTimeframe: null }]
+        }
+        // No result data — nothing to salvage. Drop the iteration entirely.
+        return []
+      }
+      return [n]
+    })
   })
 
   const iterationHistoryRef = useRef<IterationNode[]>([])
@@ -541,6 +603,14 @@ export function useBacktest(sessionId: string) {
     return saved?.backtestParams ?? DEFAULT_PARAMS
   })
 
+  // Refs to keep latest values for the beforeunload handler
+  const activityLogRef = useRef<ActivityEntry[]>([])
+  useEffect(() => { activityLogRef.current = activityLog }, [activityLog])
+  const backtestParamsRef = useRef<BacktestParams>(DEFAULT_PARAMS)
+  useEffect(() => { backtestParamsRef.current = backtestParams }, [backtestParams])
+  const selectedIterationIdRef = useRef<string | null>(null)
+  useEffect(() => { selectedIterationIdRef.current = selectedIterationId }, [selectedIterationId])
+
   // Persist session to localStorage on every relevant state change
   useEffect(() => {
     saveSession(sessionId, {
@@ -550,6 +620,22 @@ export function useBacktest(sessionId: string) {
       selectedIterationId,
     })
   }, [sessionId, iterationHistory, activityLog, backtestParams, selectedIterationId])
+
+  // Final save on page unload — captures the very latest state via refs so
+  // that even if the user refreshes while a React effect hasn't flushed yet,
+  // the session is saved with the correct status.
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      saveSession(sessionId, {
+        iterationHistory: iterationHistoryRef.current,
+        activityLog: activityLogRef.current,
+        backtestParams: backtestParamsRef.current,
+        selectedIterationId: selectedIterationIdRef.current,
+      })
+    }
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
+  }, [sessionId])
 
   // ==========================================================================
   // Session Archive (shared across all sessions)
@@ -581,7 +667,7 @@ export function useBacktest(sessionId: string) {
       createdAt: new Date().toISOString(),
       iterationCount: iterationHistory.length,
       bestReturn: completedReturns.length > 0 ? Math.max(...completedReturns) : null,
-      data: snapshot,
+      data: trimForStorage(snapshot),  // trim before archiving to prevent quota issues
     }
 
     setArchivedSessions(prev => [archived, ...prev])
@@ -621,15 +707,22 @@ export function useBacktest(sessionId: string) {
       )
     )
     setIterationHistory(
-      data.iterationHistory.map(n =>
-        (n.status === 'generating' || n.status === 'executing')
-          ? { ...n, status: 'error' as const, error: 'Session interrupted' }
-          : n
-      )
+      data.iterationHistory.flatMap(n => {
+        if (n.status === 'generating' || n.status === 'executing') {
+          if (n.result) {
+            return [{ ...n, status: 'complete' as const, activeTimeframe: null }]
+          }
+          return []
+        }
+        return [n]
+      })
     )
     setBacktestParams(data.backtestParams)
     setSelectedIterationId(data.selectedIterationId)
-    setPhase(data.iterationHistory.some(n => n.status === 'complete') ? 'results' : 'idle')
+    setPhase(data.iterationHistory.some(n =>
+      n.status === 'complete' ||
+      ((n.status === 'generating' || n.status === 'executing') && !!n.result)
+    ) ? 'results' : 'idle')
     setError(null)
     setIsLoading(false)
     cachedLiquidityRef.current = null
@@ -905,6 +998,8 @@ export function useBacktest(sessionId: string) {
           initial_capital: backtestParams.initial_capital,
           commission: EXCHANGE_CONFIGS[backtestParams.exchange]?.commission ?? 0.00075,
           job_id: jobId,
+          allow_short: backtestParams.allow_short ?? false,
+          leverage: backtestParams.leverage ?? 1,
         }),
         signal,
       })
@@ -1032,6 +1127,8 @@ export function useBacktest(sessionId: string) {
         timeframe: timeframes[0],
         start_date: backtestParams.start_date,
         end_date: backtestParams.end_date,
+        allow_short: backtestParams.allow_short ?? false,
+        leverage: backtestParams.leverage ?? 1,
       }
       if (previousScriptCode) {
         body.previous_script_code = previousScriptCode
@@ -1223,6 +1320,10 @@ export function useBacktest(sessionId: string) {
           })
 
           try {
+            const previousSummary = iterationHistoryRef.current
+              .filter(n => n.status === 'complete' && n.id !== iterationId)
+              .slice(-1)[0]?.insights?.summary ?? undefined
+
             const insResponse = await fetch(`${API_BASE_URL}/api/generate-insights`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -1237,6 +1338,10 @@ export function useBacktest(sessionId: string) {
                 timeframe: firstSuccess.timeframe,
                 start_date: backtestParams.start_date,
                 end_date: backtestParams.end_date,
+                allow_short: backtestParams.allow_short ?? false,
+                leverage: backtestParams.leverage ?? 1,
+                initial_capital: backtestParams.initial_capital,
+                previous_summary: previousSummary,
               }),
               signal,
             })
@@ -1374,6 +1479,9 @@ export function useBacktest(sessionId: string) {
           timeframe,
           start_date: backtestParams.start_date,
           end_date: backtestParams.end_date,
+          allow_short: backtestParams.allow_short ?? false,
+          leverage: backtestParams.leverage ?? 1,
+          initial_capital: backtestParams.initial_capital,
         }),
       })
       const insData = await insResponse.json()
