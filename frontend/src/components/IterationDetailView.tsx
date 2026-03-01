@@ -135,6 +135,30 @@ export function IterationDetailView({ iteration, previousIteration, onBack }: It
       )}
 
       <div className="p-4 lg:p-6 space-y-4 lg:space-y-6">
+        {/* Backtest parameters */}
+        {iteration.params && (
+          <div className="bg-white rounded-xl border border-slate-200 px-4 py-3">
+            <dl className="flex flex-wrap gap-x-6 gap-y-2">
+              <div>
+                <dt className="text-xs text-slate-400">Symbol</dt>
+                <dd className="text-sm font-medium text-slate-700">{iteration.params.symbol}</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-slate-400">Timeframe</dt>
+                <dd className="text-sm font-medium text-slate-700">{iteration.params.timeframes.join('/')}</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-slate-400">Date Range</dt>
+                <dd className="text-sm font-medium text-slate-700">{iteration.params.start_date} – {iteration.params.end_date}</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-slate-400">Capital</dt>
+                <dd className="text-sm font-medium text-slate-700">${iteration.params.initial_capital.toLocaleString()}</dd>
+              </div>
+            </dl>
+          </div>
+        )}
+
         {/* Collapsible code preview with diff toggle */}
         {iteration.scriptCode && (
           <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">

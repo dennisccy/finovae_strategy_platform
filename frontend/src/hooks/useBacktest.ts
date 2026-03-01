@@ -489,6 +489,7 @@ export interface IterationNode {
   status: IterationStatus
   error?: string
   modelUsed?: string
+  params?: BacktestParams
   timeframeResults: TimeframeResult[]
   activeTimeframe: string | null
 }
@@ -1104,6 +1105,7 @@ export function useBacktest(sessionId: string) {
       sharpe: 0,
       maxDrawdown: 0,
       changeSummary,
+      params: { ...backtestParams },
       timestamp: new Date().toISOString(),
       status: 'generating',
       timeframeResults: initialTfResults,

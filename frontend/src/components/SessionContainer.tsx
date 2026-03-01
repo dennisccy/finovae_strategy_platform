@@ -134,7 +134,7 @@ export function SessionContainer({
       {/* Main Content */}
       <main className="flex flex-col lg:flex-row flex-1 lg:h-[calc(100vh-105px)] overflow-hidden">
         {/* Left Panel - Activity Log */}
-        <div className={`${mobileTab === 'activity' ? 'flex' : 'hidden'} lg:flex w-full lg:w-1/2 lg:border-r border-slate-200 flex-col min-h-0`}>
+        <div className={`${mobileTab === 'activity' ? 'flex' : 'hidden'} lg:flex w-full lg:w-1/2 lg:border-r border-slate-200 flex-col overflow-hidden min-h-0`}>
           <ActivityLog
             entries={activityLog}
             onSubmitPrompt={handleSubmitPrompt}

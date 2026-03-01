@@ -68,20 +68,21 @@ export function ActivityLog({ entries, onSubmitPrompt, currentSymbol, currentTim
   const scrollRef = useRef<HTMLDivElement>(null)
   const isUserScrolledUp = useRef(false)
   const lastScrollHeight = useRef(0)
+  const prevLengthRef = useRef(entries.length)
 
-  // Auto-scroll to bottom on new or updated entries (smooth behavior)
+  // Auto-scroll to bottom on new or updated entries
   useEffect(() => {
-    if (scrollRef.current && !isUserScrolledUp.current) {
-      const element = scrollRef.current
-      const isAtBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 50
+    const element = scrollRef.current
+    if (!element) return
 
-      if (isAtBottom || lastScrollHeight.current !== element.scrollHeight) {
-        element.scrollTo({
-          top: element.scrollHeight,
-          behavior: 'smooth'
-        })
-        lastScrollHeight.current = element.scrollHeight
-      }
+    const isNewEntry = entries.length > prevLengthRef.current
+    prevLengthRef.current = entries.length
+
+    // Always scroll when a new message is added;
+    // only scroll on content updates if user hasn't scrolled away
+    if (isNewEntry || !isUserScrolledUp.current) {
+      element.scrollTo({ top: element.scrollHeight, behavior: 'smooth' })
+      lastScrollHeight.current = element.scrollHeight
     }
   }, [entries])
 

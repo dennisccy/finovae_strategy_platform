@@ -58,6 +58,11 @@ export function IterationCard({ iteration, onSelect, onDelete, isLatest = false 
                 {iteration.changeSummary}
               </p>
             )}
+            {iteration.params && (
+              <p className="text-[10px] text-slate-400 truncate mb-0.5 ml-3.5">
+                {iteration.params.symbol} · {iteration.params.timeframes.join('/')} · {iteration.params.start_date}–{iteration.params.end_date} · ${iteration.params.initial_capital.toLocaleString()}
+              </p>
+            )}
             <div className="flex items-center gap-2 text-xs text-slate-500 flex-wrap">
               <span className={`font-medium ${iteration.totalReturn >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
                 {formatReturn(iteration.totalReturn)}
@@ -127,6 +132,13 @@ export function IterationCard({ iteration, onSelect, onDelete, isLatest = false 
       {!iteration.changeSummary && (
         <p className="text-xs text-slate-500 mt-0.5 truncate">
           {iteration.prompt.length > 60 ? iteration.prompt.slice(0, 60) + '...' : iteration.prompt}
+        </p>
+      )}
+
+      {/* Params chip */}
+      {iteration.params && (
+        <p className="text-xs text-slate-400 mt-0.5 truncate">
+          {iteration.params.symbol} · {iteration.params.timeframes.join('/')} · {iteration.params.start_date}–{iteration.params.end_date} · ${iteration.params.initial_capital.toLocaleString()}
         </p>
       )}
 

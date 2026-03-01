@@ -9,6 +9,7 @@ const SESSION_TABS_KEY = 'finovae_session_tabs'
 interface SessionTab {
   id: string
   name: string
+  lastAccessedAt: number
 }
 
 function loadLiveSessionTabs(): SessionTab[] {
@@ -16,7 +17,13 @@ function loadLiveSessionTabs(): SessionTab[] {
     const tabs = localStorage.getItem(SESSION_TABS_KEY)
     if (tabs) {
       const parsed = JSON.parse(tabs) as SessionTab[]
-      if (Array.isArray(parsed) && parsed.length > 0) return parsed
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        // Ensure all sessions have lastAccessedAt (migration)
+        return parsed.map(s => ({
+          ...s,
+          lastAccessedAt: s.lastAccessedAt ?? Date.now()
+        }))
+      }
     }
 
     // Migration: old single-session format
@@ -25,13 +32,13 @@ function loadLiveSessionTabs(): SessionTab[] {
       const newId = crypto.randomUUID()
       localStorage.setItem(`finovae_session_${newId}`, oldSession)
       localStorage.removeItem('finovae_session')
-      return [{ id: newId, name: 'Session 1' }]
+      return [{ id: newId, name: 'Session 1', lastAccessedAt: Date.now() }]
     }
 
     // Fresh start
-    return [{ id: crypto.randomUUID(), name: 'Session 1' }]
+    return [{ id: crypto.randomUUID(), name: 'Session 1', lastAccessedAt: Date.now() }]
   } catch {
-    return [{ id: crypto.randomUUID(), name: 'Session 1' }]
+    return [{ id: crypto.randomUUID(), name: 'Session 1', lastAccessedAt: Date.now() }]
   }
 }
 
@@ -43,9 +50,17 @@ function saveLiveSessionTabs(tabs: SessionTab[]): void {
   }
 }
 
+function getLatestSessionId(sessions: SessionTab[]): string {
+  if (sessions.length === 0) return ''
+  // Find session with most recent lastAccessedAt
+  return sessions.reduce((latest, current) =>
+    current.lastAccessedAt > latest.lastAccessedAt ? current : latest
+  ).id
+}
+
 function App() {
   const [liveSessions, setLiveSessions] = useState<SessionTab[]>(loadLiveSessionTabs)
-  const [activeSessionId, setActiveSessionId] = useState<string>(liveSessions[0].id)
+  const [activeSessionId, setActiveSessionId] = useState<string>(() => getLatestSessionId(liveSessions))
   const [liveStatuses, setLiveStatuses] = useState<Record<string, LiveSessionStatus>>({})
   const [mobileTab, setMobileTab] = useState<'activity' | 'iterations'>('activity')
   const [lastUsedModel, setLastUsedModel] = useState('claude-sonnet-4-6')
@@ -75,12 +90,14 @@ function App() {
   const handleNewSession = useCallback(() => {
     const n = liveSessions.length + 1
     const newId = crypto.randomUUID()
-    const newSession: SessionTab = { id: newId, name: `Session ${n}` }
+    const newSession: SessionTab = { id: newId, name: `Session ${n}`, lastAccessedAt: Date.now() }
     setLiveSessions(prev => [...prev, newSession])
     setActiveSessionId(newId)
   }, [liveSessions.length])
 
   const handleSelectLive = useCallback((id: string) => {
+    // Update lastAccessedAt when session is selected
+    setLiveSessions(prev => prev.map(s => s.id === id ? { ...s, lastAccessedAt: Date.now() } : s))
     setActiveSessionId(id)
   }, [])
 
@@ -96,8 +113,8 @@ function App() {
       // ignore quota issues
     }
 
-    // Add as a new live session
-    setLiveSessions(prev => [...prev, { id: newId, name: session.name }])
+    // Add as a new live session with current timestamp
+    setLiveSessions(prev => [...prev, { id: newId, name: session.name, lastAccessedAt: Date.now() }])
     setActiveSessionId(newId)
 
     // Remove from archive
@@ -142,7 +159,7 @@ function App() {
   const activeIterationCount = liveStatuses[activeSessionId]?.iterationCount ?? 0
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col">
+    <div className="h-screen bg-slate-50 flex flex-col overflow-hidden">
       {/* Header */}
       <header className="bg-white border-b border-slate-200 px-4 py-3 lg:px-6 lg:py-4">
         <div className="flex items-center justify-between max-w-screen-2xl mx-auto">
