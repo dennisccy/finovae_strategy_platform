@@ -154,7 +154,7 @@ export function ActivityLogEntry({ entry, onEditAndRerun, onSuggestionClick, sug
 
   if (entry.type === 'insights') {
     // Parse suggestions from JSON detail (array of {title, description, prompt})
-    let suggestions: Array<{ title: string; description: string; prompt: string }> = []
+    let suggestions: Array<{ title: string; description: string; prompt: string; disabled?: boolean }> = []
     if (entry.detail) {
       try {
         suggestions = JSON.parse(entry.detail)
@@ -173,21 +173,30 @@ export function ActivityLogEntry({ entry, onEditAndRerun, onSuggestionClick, sug
               <p className="text-sm text-blue-800 leading-relaxed">{entry.content}</p>
               {suggestions.length > 0 && onSuggestionClick && (
                 <div className="flex flex-wrap gap-1.5 mt-2">
-                  {suggestions.map((s, i) => (
-                    <button
-                      key={i}
-                      onClick={() => !suggestionsDisabled && onSuggestionClick(s.prompt, s.title)}
-                      title={suggestionsDisabled ? 'Only the latest iteration\'s suggestions can be applied' : s.description}
-                      disabled={suggestionsDisabled}
-                      className={`px-2.5 py-1 text-xs font-medium rounded-full transition-colors ${
-                        suggestionsDisabled
-                          ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
-                          : 'bg-blue-100 text-blue-700 hover:bg-blue-200'
-                      }`}
-                    >
-                      {s.title}
-                    </button>
-                  ))}
+                  {suggestions.map((s, i) => {
+                    const isDisabled = suggestionsDisabled || !!s.disabled
+                    return (
+                      <button
+                        key={i}
+                        onClick={() => !isDisabled && onSuggestionClick(s.prompt, s.title)}
+                        title={
+                          suggestionsDisabled
+                            ? "Only the latest iteration's suggestions can be applied"
+                            : s.disabled
+                            ? 'Already tried in auto run'
+                            : s.description
+                        }
+                        disabled={isDisabled}
+                        className={`px-2.5 py-1 text-xs font-medium rounded-full transition-colors ${
+                          isDisabled
+                            ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                            : 'bg-blue-100 text-blue-700 hover:bg-blue-200'
+                        }`}
+                      >
+                        {s.title}
+                      </button>
+                    )
+                  })}
                 </div>
               )}
             </div>

@@ -118,23 +118,40 @@ function loadSession(sessionId: string): SessionData | null {
 
     // Robustness: re-synthesize 'insights' activityLog entries for completed
     // iterations whose entries may have been trimmed by the 150-entry cap.
-    const insightedIterationIds = new Set(
-      migrated.activityLog
-        .filter(e => e.type === 'insights')
-        .map(e => e.iterationId)
-    )
+    // Supports multiple batches per iteration (batchIndex on each suggestion).
+    const insightBatchesByIterationId = new Map<string, Set<number>>()
+    for (const e of migrated.activityLog) {
+      if (e.type !== 'insights' || !e.iterationId || !e.detail) continue
+      try {
+        const sArr = JSON.parse(e.detail) as InsightsSuggestion[]
+        const batch = sArr[0]?.batchIndex ?? 0
+        if (!insightBatchesByIterationId.has(e.iterationId)) {
+          insightBatchesByIterationId.set(e.iterationId, new Set())
+        }
+        insightBatchesByIterationId.get(e.iterationId)!.add(batch)
+      } catch { /* ignore */ }
+    }
+
     for (const iter of migrated.iterationHistory) {
-      if (
-        iter.status === 'complete' &&
-        iter.insights?.suggestions?.length &&
-        !insightedIterationIds.has(iter.id)
-      ) {
+      if (iter.status !== 'complete' || !iter.insights?.suggestions?.length) continue
+
+      // Group suggestions by batchIndex
+      const byBatch = new Map<number, InsightsSuggestion[]>()
+      for (const s of iter.insights.suggestions) {
+        const b = s.batchIndex ?? 0
+        if (!byBatch.has(b)) byBatch.set(b, [])
+        byBatch.get(b)!.push(s)
+      }
+
+      const presentBatches = insightBatchesByIterationId.get(iter.id) ?? new Set<number>()
+      for (const [batchIdx, batchSuggestions] of [...byBatch.entries()].sort(([a], [b]) => a - b)) {
+        if (presentBatches.has(batchIdx)) continue  // Already in activity log
         migrated.activityLog.push({
-          id: `insights-synth-${iter.id}`,
+          id: `insights-synth-${iter.id}-batch-${batchIdx}`,
           timestamp: iter.timestamp,
           type: 'insights',
           content: iter.insights.summary,
-          detail: JSON.stringify(iter.insights.suggestions),
+          detail: JSON.stringify(batchSuggestions),
           iterationId: iter.id,
         } as ActivityEntry)
       }
@@ -386,6 +403,8 @@ export interface InsightsSuggestion {
   title: string
   description: string
   prompt: string
+  disabled?: boolean   // true = tried by auto-run and discarded; skip on next run
+  batchIndex?: number  // which generation batch, 0-based; undefined treated as 0
 }
 
 export interface StrategyInsights {
@@ -1435,6 +1454,37 @@ export function useBacktest(sessionId: string) {
   }, [sessionId, selectedIterationId])
 
   // ==========================================================================
+  // markSuggestionDisabled
+  // ==========================================================================
+
+  const markSuggestionDisabled = useCallback((iterationId: string, suggestionIdx: number) => {
+    const updater = (prev: IterationNode[]) =>
+      prev.map(n => {
+        if (n.id !== iterationId || !n.insights) return n
+        const suggestions = n.insights.suggestions.map((s, i) =>
+          i === suggestionIdx ? { ...s, disabled: true } : s
+        )
+        return { ...n, insights: { ...n.insights, suggestions } }
+      })
+    setIterationHistory(updater)
+    iterationHistoryRef.current = updater(iterationHistoryRef.current)
+
+    // Keep the activity log entry in sync so the UI reflects the disabled state immediately
+    setActivityLog(prev =>
+      prev.map(e => {
+        if (e.type !== 'insights' || e.iterationId !== iterationId || !e.detail) return e
+        try {
+          const sArr = JSON.parse(e.detail) as InsightsSuggestion[]
+          sArr[suggestionIdx] = { ...sArr[suggestionIdx], disabled: true }
+          return { ...e, detail: JSON.stringify(sArr) }
+        } catch {
+          return e
+        }
+      })
+    )
+  }, [])
+
+  // ==========================================================================
   // selectIteration
   // ==========================================================================
 
@@ -1451,7 +1501,11 @@ export function useBacktest(sessionId: string) {
     setError(null)
   }, [])
 
-  const generateInsightsForIteration = useCallback(async (iterationId: string, model: string) => {
+  const generateInsightsForIteration = useCallback(async (
+    iterationId: string,
+    model: string,
+    previousSuggestions?: InsightsSuggestion[],
+  ) => {
     const iteration = iterationHistoryRef.current.find(n => n.id === iterationId)
     if (!iteration?.result) return
 
@@ -1460,7 +1514,7 @@ export function useBacktest(sessionId: string) {
 
     const insightsStepId = addLogEntry({
       type: 'ai-step',
-      content: 'Generating suggestions...',
+      content: previousSuggestions ? 'Generating new batch of suggestions...' : 'Generating suggestions...',
       status: 'active',
       startedAt: Date.now(),
       iterationId,
@@ -1484,21 +1538,42 @@ export function useBacktest(sessionId: string) {
           allow_short: backtestParams.allow_short ?? false,
           leverage: backtestParams.leverage ?? 1,
           initial_capital: backtestParams.initial_capital,
+          ...(previousSuggestions && {
+            previous_suggestions: previousSuggestions.map(s => s.title),
+          }),
         }),
       })
       const insData = await insResponse.json()
       if (insData.success) {
-        const newInsights: StrategyInsights = {
-          summary: insData.summary || '',
-          suggestions: insData.suggestions || [],
-        }
+        // Compute next batchIndex
+        const nextBatchIndex = previousSuggestions
+          ? Math.max(0, ...previousSuggestions.map(s => s.batchIndex ?? 0)) + 1
+          : 0
+
+        // Tag new suggestions with batchIndex
+        const newBatchSuggestions: InsightsSuggestion[] = (insData.suggestions || []).map(
+          (s: InsightsSuggestion) => ({ ...s, batchIndex: nextBatchIndex })
+        )
+
         updateLogEntry(insightsStepId, { status: 'done', completedAt: Date.now() })
+
+        // Activity log entry shows ONLY the new batch's suggestions
         addLogEntry({
           type: 'insights',
-          content: newInsights.summary,
-          detail: JSON.stringify(newInsights.suggestions),
+          content: insData.summary || '',
+          detail: JSON.stringify(newBatchSuggestions),
           iterationId,
         })
+
+        // Combine: previous (all batches so far) + new batch
+        const allSuggestions = previousSuggestions
+          ? [...previousSuggestions, ...newBatchSuggestions]
+          : newBatchSuggestions
+
+        const newInsights: StrategyInsights = {
+          summary: insData.summary || '',
+          suggestions: allSuggestions,
+        }
         setIterationHistory(prev => prev.map(n =>
           n.id === iterationId ? { ...n, insights: newInsights } : n
         ))
@@ -1514,6 +1589,18 @@ export function useBacktest(sessionId: string) {
       updateLogEntry(insightsStepId, { status: 'done', completedAt: Date.now() })
     }
   }, [backtestParams, addLogEntry, updateLogEntry])
+
+  const didAutoGenerateInsightsRef = useRef(false)
+  useEffect(() => {
+    if (didAutoGenerateInsightsRef.current) return
+    didAutoGenerateInsightsRef.current = true
+    const latest = [...iterationHistoryRef.current]
+      .reverse()
+      .find(n => n.status === 'complete' && !!n.result && !(n.insights?.suggestions?.length))
+    if (latest) {
+      generateInsightsForIteration(latest.id, latest.modelUsed ?? 'claude-sonnet-4-6')
+    }
+  }, [generateInsightsForIteration])
 
   // ==========================================================================
   // editAndRerun
@@ -1569,6 +1656,7 @@ export function useBacktest(sessionId: string) {
       numTrades: 0,
       sharpe: 0,
       maxDrawdown: 0,
+      params: original.params ?? { ...backtestParams },
       timestamp: new Date().toISOString(),
       status: 'executing',
       timeframeResults: initialTfResults,
@@ -1738,11 +1826,33 @@ export function useBacktest(sessionId: string) {
     let baselineId = baseline.id
     let suggestionIndex = 0
     let attempt = 0
+    let generatedNewBatch = false
 
     while (attempt < maxAttempts && !autoRunStopRef.current) {
       const currentBaseline = iterationHistoryRef.current.find(n => n.id === baselineId)
       const suggestions = currentBaseline?.insights?.suggestions ?? []
-      if (suggestionIndex >= suggestions.length) break
+
+      // Skip suggestions that were already tried and discarded in a previous run
+      while (suggestionIndex < suggestions.length && suggestions[suggestionIndex]?.disabled) {
+        suggestionIndex++
+      }
+
+      if (suggestionIndex >= suggestions.length) {
+        if (suggestions.length === 0) break  // No suggestions at all — nothing to do
+
+        // All suggestions tried. Generate a new batch once per baseline.
+        if (!generatedNewBatch) {
+          addLogEntry({ type: 'auto-run', content: 'All suggestions tried — generating new batch...' })
+          await generateInsightsForIteration(baselineId, model, suggestions)
+          generatedNewBatch = true
+          const refreshed = iterationHistoryRef.current.find(n => n.id === baselineId)
+          const refreshedLen = refreshed?.insights?.suggestions?.length ?? 0
+          if (refreshedLen <= suggestions.length) break  // API failed to produce new suggestions
+          suggestionIndex = suggestions.length  // Start at first new suggestion
+          continue
+        }
+        break  // New batch was already generated and also exhausted — stop
+      }
 
       const suggestion = suggestions[suggestionIndex]
       const baselineScore = (currentBaseline?.numTrades ?? 0) > 0
@@ -1787,6 +1897,7 @@ export function useBacktest(sessionId: string) {
           addLogEntry({ type: 'auto-run', content: `Kept (${attempt}/${maxAttempts}): ${fmt(newScore)} > ${fmt(baselineScore)} — generating suggestions...` })
           baselineId = newId
           suggestionIndex = 0
+          generatedNewBatch = false
           await generateInsightsForIteration(newId, model)
         } else {
           const discardNumTrades = newIteration?.numTrades ?? 0
@@ -1803,6 +1914,7 @@ export function useBacktest(sessionId: string) {
             type: 'auto-run',
             content: `Discarded: Ret ${discardRet} | DD ${discardDd} | SR ${discardSr} | WR ${discardWr} — ${discardReason}, trying next`,
           })
+          markSuggestionDisabled(baselineId, suggestionIndex)
           deleteIteration(newId)
           suggestionIndex++
         }
@@ -1817,7 +1929,7 @@ export function useBacktest(sessionId: string) {
 
     const reason = attempt >= maxAttempts ? `${maxAttempts} improvements done` : 'no more suggestions'
     addLogEntry({ type: 'auto-run', content: `Auto Run finished — ${reason}` })
-  }, [generateAndExecute, deleteIteration, addLogEntry, generateInsightsForIteration])
+  }, [generateAndExecute, deleteIteration, markSuggestionDisabled, addLogEntry, generateInsightsForIteration])
 
   const stopAutoRun = useCallback(() => {
     autoRunStopRef.current = true
