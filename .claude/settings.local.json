@@ -1,16 +1,23 @@
 {
   "permissions": {
     "allow": [
-      "Bash(npx skills:*)",
-      "Bash(tree:*)",
+      "Bash(npm install:*)",
+      "Bash(npx tsc:*)",
+      "Bash(python:*)",
+      "Bash(npm run build:*)",
       "Bash(dir:*)",
-      "Bash(test:*)",
-      "Bash(wc:*)",
-      "Bash(du:*)",
-      "Bash(pip install:*)",
-      "Bash(pytest:*)",
-      "Bash(python -m pytest:*)",
-      "Bash(npm run build:*)"
+      "Bash(python3 -m py_compile:*)",
+      "mcp__ide__getDiagnostics",
+      "Bash(ls:*)",
+      "Bash(npx vite build)",
+      "Bash(npx skills:*)",
+      "Bash(cd C:\\\\Git\\\\finovae_strategy_platform_all\\\\finovae_strategy_platform_api:*)",
+      "Bash(cd:*)",
+      "Bash(find .:*)",
+      "Bash(git:*)"
     ]
+  },
+  "remote": {
+    "defaultEnvironmentId": "env_017pXoCXVi8mTGht9M5VpQKH"
   }
 }

@@ -1469,19 +1469,24 @@ export function useBacktest(sessionId: string) {
     setIterationHistory(updater)
     iterationHistoryRef.current = updater(iterationHistoryRef.current)
 
-    // Keep the activity log entry in sync so the UI reflects the disabled state immediately
-    setActivityLog(prev =>
-      prev.map(e => {
+    // Keep the activity log entry in sync so the UI reflects the disabled state immediately.
+    // Match by title (not global index) so second-batch entries (local indices 0–9) are found correctly.
+    setActivityLog(prev => {
+      const disabledTitle = iterationHistoryRef.current
+        .find(n => n.id === iterationId)?.insights?.suggestions[suggestionIdx]?.title
+      if (!disabledTitle) return prev
+      return prev.map(e => {
         if (e.type !== 'insights' || e.iterationId !== iterationId || !e.detail) return e
         try {
           const sArr = JSON.parse(e.detail) as InsightsSuggestion[]
-          sArr[suggestionIdx] = { ...sArr[suggestionIdx], disabled: true }
-          return { ...e, detail: JSON.stringify(sArr) }
+          const updated = sArr.map(s => s.title === disabledTitle ? { ...s, disabled: true } : s)
+          if (updated.every((s, i) => s === sArr[i])) return e  // no change — skip re-render
+          return { ...e, detail: JSON.stringify(updated) }
         } catch {
           return e
         }
       })
-    )
+    })
   }, [])
 
   // ==========================================================================
@@ -1583,10 +1588,28 @@ export function useBacktest(sessionId: string) {
           n.id === iterationId ? { ...n, insights: newInsights } : n
         )
       } else {
+        if (previousSuggestions) {
+          updateLogEntry(insightsStepId, { status: 'error', completedAt: Date.now() })
+          addLogEntry({
+            type: 'error',
+            content: `Failed to generate new suggestion batch: ${(insData.errors as string[] | undefined)?.join(', ') || 'API returned an error'}`,
+            iterationId,
+          })
+        } else {
+          updateLogEntry(insightsStepId, { status: 'done', completedAt: Date.now() })
+        }
+      }
+    } catch (e) {
+      if (previousSuggestions) {
+        updateLogEntry(insightsStepId, { status: 'error', completedAt: Date.now() })
+        addLogEntry({
+          type: 'error',
+          content: `Failed to generate new suggestion batch: ${e instanceof Error ? e.message : 'Unknown error'}`,
+          iterationId,
+        })
+      } else {
         updateLogEntry(insightsStepId, { status: 'done', completedAt: Date.now() })
       }
-    } catch {
-      updateLogEntry(insightsStepId, { status: 'done', completedAt: Date.now() })
     }
   }, [backtestParams, addLogEntry, updateLogEntry])
 
@@ -1842,7 +1865,7 @@ export function useBacktest(sessionId: string) {
 
         // All suggestions tried. Generate a new batch once per baseline.
         if (!generatedNewBatch) {
-          addLogEntry({ type: 'auto-run', content: 'All suggestions tried — generating new batch...' })
+          addLogEntry({ type: 'auto-run', content: 'All suggestions tried — generating new batch...', iterationId: baselineId })
           await generateInsightsForIteration(baselineId, model, suggestions)
           generatedNewBatch = true
           const refreshed = iterationHistoryRef.current.find(n => n.id === baselineId)
@@ -1859,7 +1882,7 @@ export function useBacktest(sessionId: string) {
         ? (currentBaseline?.totalReturn ?? -Infinity)
         : -Infinity
 
-      addLogEntry({ type: 'auto-run', content: `Trying "${suggestion.title}"...` })
+      addLogEntry({ type: 'auto-run', content: `Trying "${suggestion.title}"...`, iterationId: baselineId })
 
       const baselineResult = currentBaseline?.result
       const metrics = baselineResult ? {
@@ -1894,7 +1917,7 @@ export function useBacktest(sessionId: string) {
         if (newIteration?.status === 'complete' && newScore > baselineScore) {
           attempt++
           setAutoRunProgress({ current: attempt, max: maxAttempts })
-          addLogEntry({ type: 'auto-run', content: `Kept (${attempt}/${maxAttempts}): ${fmt(newScore)} > ${fmt(baselineScore)} — generating suggestions...` })
+          addLogEntry({ type: 'auto-run', content: `Kept (${attempt}/${maxAttempts}): ${fmt(newScore)} > ${fmt(baselineScore)} — generating suggestions...`, iterationId: newId })
           baselineId = newId
           suggestionIndex = 0
           generatedNewBatch = false
@@ -1913,6 +1936,7 @@ export function useBacktest(sessionId: string) {
           addLogEntry({
             type: 'auto-run',
             content: `Discarded: Ret ${discardRet} | DD ${discardDd} | SR ${discardSr} | WR ${discardWr} — ${discardReason}, trying next`,
+            iterationId: baselineId,
           })
           markSuggestionDisabled(baselineId, suggestionIndex)
           deleteIteration(newId)
@@ -1928,7 +1952,7 @@ export function useBacktest(sessionId: string) {
     autoRunStopRef.current = false
 
     const reason = attempt >= maxAttempts ? `${maxAttempts} improvements done` : 'no more suggestions'
-    addLogEntry({ type: 'auto-run', content: `Auto Run finished — ${reason}` })
+    addLogEntry({ type: 'auto-run', content: `Auto Run finished — ${reason}`, iterationId: baselineId })
   }, [generateAndExecute, deleteIteration, markSuggestionDisabled, addLogEntry, generateInsightsForIteration])
 
   const stopAutoRun = useCallback(() => {
