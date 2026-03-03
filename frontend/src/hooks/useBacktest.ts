@@ -535,7 +535,7 @@ export interface LiveSessionStatus {
 // =============================================================================
 
 const DEFAULT_PARAMS: BacktestParams = {
-  symbol: 'SOLUSDT',
+  symbol: 'PEPE/USDT',
   timeframes: ['4h'],
   start_date: '2020-01-01',
   end_date: new Date().toISOString().split('T')[0],
@@ -1067,6 +1067,24 @@ export function useBacktest(sessionId: string) {
   }, [backtestParams, addLogEntry, updateLogEntry, fetchJobStatus, applyRealTimings])
 
   // ==========================================================================
+  // validateSymbolExists
+  // ==========================================================================
+
+  const validateSymbolExists = useCallback(async (symbol: string): Promise<string | null> => {
+    if (!/^[A-Z]+\/USDT$/.test(symbol)) {
+      return `Symbol must be in BASE/USDT format (e.g. PEPE/USDT)`
+    }
+    try {
+      const baseUrl = import.meta.env.VITE_API_URL ?? ''
+      const resp = await fetch(`${baseUrl}/api/validate-symbol?symbol=${encodeURIComponent(symbol)}`)
+      const data = await resp.json()
+      return data.valid ? null : (data.error ?? `${symbol} not found on Binance`)
+    } catch {
+      return null // Network error: let backtest proceed, backend will catch
+    }
+  }, [])
+
+  // ==========================================================================
   // generateAndExecute
   // ==========================================================================
 
@@ -1087,6 +1105,15 @@ export function useBacktest(sessionId: string) {
     }
 
     const timeframes = overrideTimeframes ?? backtestParams.timeframes
+    const symbolToCheck = overrideSymbol ?? backtestParams.symbol
+    const symbolErr = await validateSymbolExists(symbolToCheck)
+    if (symbolErr) {
+      const iterationId = crypto.randomUUID()
+      addLogEntry({ type: 'error', content: `Invalid symbol: ${symbolErr}`, iterationId })
+      setIsLoading(false)
+      return null
+    }
+
     setPhase('generating')
     setIsLoading(true)
     setError(null)
@@ -1834,7 +1861,7 @@ export function useBacktest(sessionId: string) {
       setPhase('idle')
       setIsLoading(false)
     }
-  }, [iterationHistory, backtestParams, addLogEntry, clearAllPolls, executeSingleTimeframe, generateInsightsForIteration])
+  }, [iterationHistory, backtestParams, addLogEntry, clearAllPolls, executeSingleTimeframe, generateInsightsForIteration, validateSymbolExists])
 
   const startAutoRun = useCallback(async (maxAttempts: number, model: string) => {
     const baseline = [...iterationHistoryRef.current]

@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { RotateCw, Square, Zap } from 'lucide-react'
 import type { BacktestParams } from '../hooks/useBacktest'
 import { EXCHANGE_CONFIGS } from '../hooks/useBacktest'
@@ -18,8 +19,20 @@ interface BacktestConfigBarProps {
 }
 
 export function BacktestConfigBar({ params, onChange, disabled, onRerun, canRerun, isAutoRunning, autoRunProgress, canAutoRun, onStartAutoRun, onStopAutoRun, autoRunCount, onAutoRunCountChange }: BacktestConfigBarProps) {
+  const [symbolError, setSymbolError] = useState<string | null>(null)
+
   const update = (key: keyof BacktestParams, value: string | number) => {
     onChange({ ...params, [key]: value })
+  }
+
+  const handleSymbolChange = (val: string) => {
+    const upper = val.toUpperCase()
+    update('symbol', upper)
+    if (upper && !/^[A-Z]+\/USDT$/.test(upper)) {
+      setSymbolError('Must be BASE/USDT format (e.g. PEPE/USDT)')
+    } else {
+      setSymbolError(null)
+    }
   }
 
   return (
@@ -27,38 +40,20 @@ export function BacktestConfigBar({ params, onChange, disabled, onRerun, canReru
       <div className="flex flex-wrap items-center gap-3 max-w-screen-2xl mx-auto">
         <div className="flex items-center gap-1.5">
           <label className="text-xs font-medium text-slate-500">Symbol</label>
-          <select
-            value={params.symbol}
-            onChange={(e) => update('symbol', e.target.value)}
-            disabled={disabled}
-            className="px-2 py-1 text-sm border border-slate-200 rounded-md focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <option value="BTCUSDT">BTC/USDT</option>
-            <option value="ETHUSDT">ETH/USDT</option>
-            <option value="BNBUSDT">BNB/USDT</option>
-            <option value="SOLUSDT">SOL/USDT</option>
-            <option value="XRPUSDT">XRP/USDT</option>
-            <option value="ADAUSDT">ADA/USDT</option>
-            <option value="DOGEUSDT">DOGE/USDT</option>
-            <option value="AVAXUSDT">AVAX/USDT</option>
-            <option value="DOTUSDT">DOT/USDT</option>
-            <option value="LINKUSDT">LINK/USDT</option>
-            <option value="MATICUSDT">MATIC/USDT</option>
-            <option value="UNIUSDT">UNI/USDT</option>
-            <option value="LTCUSDT">LTC/USDT</option>
-            <option value="ATOMUSDT">ATOM/USDT</option>
-            <option value="NEARUSDT">NEAR/USDT</option>
-            <option value="ARBUSDT">ARB/USDT</option>
-            <option value="OPUSDT">OP/USDT</option>
-            <option value="SUIUSDT">SUI/USDT</option>
-            <option value="APTUSDT">APT/USDT</option>
-            <option value="INJUSDT">INJ/USDT</option>
-            <option value="TIAUSDT">TIA/USDT</option>
-            <option value="SEIUSDT">SEI/USDT</option>
-            <option value="FETUSDT">FET/USDT</option>
-            <option value="RENDERUSDT">RENDER/USDT</option>
-            <option value="WLDUSDT">WLD/USDT</option>
-          </select>
+          <div className="flex flex-col gap-0.5">
+            <input
+              type="text"
+              value={params.symbol}
+              onChange={(e) => handleSymbolChange(e.target.value)}
+              onBlur={(e) => handleSymbolChange(e.target.value.trim())}
+              disabled={disabled}
+              placeholder="e.g. PEPE/USDT"
+              className={`w-28 px-2 py-1 text-sm border rounded-md focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white disabled:opacity-50 disabled:cursor-not-allowed ${
+                symbolError ? 'border-red-400' : 'border-slate-200'
+              }`}
+            />
+            {symbolError && <span className="text-xs text-red-500">{symbolError}</span>}
+          </div>
         </div>
 
         <div className="flex items-center gap-1.5">
