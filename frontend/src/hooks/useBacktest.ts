@@ -1,10 +1,19 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
+import {
+  loadSession as apiLoadSession,
+  saveSessionMeta,
+  appendActivityEntries as apiAppendActivity,
+  rewriteActivityLog as apiRewriteActivity,
+  upsertIteration,
+  deleteIterationFromStore,
+  deleteSessionFromStore,
+  beaconSaveSession,
+} from '../lib/sessionApi'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '';
-const ARCHIVE_STORAGE_KEY = 'finovae_sessions_archive';
 
 // =============================================================================
-// Session Persistence Helpers
+// Session Persistence Types
 // =============================================================================
 
 interface SessionData {
@@ -20,50 +29,6 @@ export interface ArchivedSession {
   createdAt: string
   iterationCount: number
   bestReturn: number | null
-  data: SessionData
-}
-
-/** Downsample an array to at most `maxLen` evenly-spaced entries. */
-function downsample<T>(arr: T[], maxLen: number): T[] {
-  if (arr.length <= maxLen) return arr
-  const step = arr.length / maxLen
-  return Array.from({ length: maxLen }, (_, i) => arr[Math.round(i * step)])
-}
-
-function trimRating(rating: StrategyRating, pts = 150): StrategyRating {
-  return {
-    ...rating,
-    benchmark_equity: downsample(rating.benchmark_equity, pts),
-    rolling_sharpe: downsample(rating.rolling_sharpe, pts),
-    rolling_sharpe_benchmark: downsample(rating.rolling_sharpe_benchmark, pts),
-    trade_excursions: rating.trade_excursions.slice(-100),
-  }
-}
-
-/** Trim session data before writing to localStorage to stay under quota. */
-function trimForStorage(data: SessionData, pts = 150, maxTrades = 100): SessionData {
-  return {
-    ...data,
-    iterationHistory: data.iterationHistory.map(n => ({
-      ...n,
-      result: n.result ? {
-        ...n.result,
-        equity_curve: downsample(n.result.equity_curve, pts),
-        trades: n.result.trades.slice(-maxTrades),
-      } : null,
-      rating: n.rating ? trimRating(n.rating, pts) : null,
-      timeframeResults: n.timeframeResults.map(tf => ({
-        ...tf,
-        result: tf.result ? {
-          ...tf.result,
-          equity_curve: downsample(tf.result.equity_curve, pts),
-          trades: tf.result.trades.slice(-maxTrades),
-        } : null,
-        rating: tf.rating ? trimRating(tf.rating, pts) : null,
-      })),
-    })),
-    activityLog: data.activityLog.slice(-150),
-  }
 }
 
 function migrateSession(data: SessionData): SessionData {
@@ -107,130 +72,7 @@ function migrateSession(data: SessionData): SessionData {
   return data
 }
 
-function loadSession(sessionId: string): SessionData | null {
-  try {
-    const key = `finovae_session_${sessionId}`
-    const raw = localStorage.getItem(key)
-    if (!raw) return null
-    const data = JSON.parse(raw) as SessionData
-    if (!data.iterationHistory || !data.activityLog || !data.backtestParams) return null
-    const migrated = migrateSession(data)
 
-    // Robustness: re-synthesize 'insights' activityLog entries for completed
-    // iterations whose entries may have been trimmed by the 150-entry cap.
-    // Supports multiple batches per iteration (batchIndex on each suggestion).
-    const insightBatchesByIterationId = new Map<string, Set<number>>()
-    for (const e of migrated.activityLog) {
-      if (e.type !== 'insights' || !e.iterationId || !e.detail) continue
-      try {
-        const sArr = JSON.parse(e.detail) as InsightsSuggestion[]
-        const batch = sArr[0]?.batchIndex ?? 0
-        if (!insightBatchesByIterationId.has(e.iterationId)) {
-          insightBatchesByIterationId.set(e.iterationId, new Set())
-        }
-        insightBatchesByIterationId.get(e.iterationId)!.add(batch)
-      } catch { /* ignore */ }
-    }
-
-    for (const iter of migrated.iterationHistory) {
-      if (iter.status !== 'complete' || !iter.insights?.suggestions?.length) continue
-
-      // Group suggestions by batchIndex
-      const byBatch = new Map<number, InsightsSuggestion[]>()
-      for (const s of iter.insights.suggestions) {
-        const b = s.batchIndex ?? 0
-        if (!byBatch.has(b)) byBatch.set(b, [])
-        byBatch.get(b)!.push(s)
-      }
-
-      const presentBatches = insightBatchesByIterationId.get(iter.id) ?? new Set<number>()
-      for (const [batchIdx, batchSuggestions] of [...byBatch.entries()].sort(([a], [b]) => a - b)) {
-        if (presentBatches.has(batchIdx)) continue  // Already in activity log
-        migrated.activityLog.push({
-          id: `insights-synth-${iter.id}-batch-${batchIdx}`,
-          timestamp: iter.timestamp,
-          type: 'insights',
-          content: iter.insights.summary,
-          detail: JSON.stringify(batchSuggestions),
-          iterationId: iter.id,
-        } as ActivityEntry)
-      }
-    }
-
-    return migrated
-  } catch {
-    return null
-  }
-}
-
-function isQuotaError(e: unknown): boolean {
-  return e instanceof DOMException &&
-    (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED')
-}
-
-function saveSession(sessionId: string, data: SessionData): void {
-  const key = `finovae_session_${sessionId}`
-  // Try with standard trimming first
-  try {
-    localStorage.setItem(key, JSON.stringify(trimForStorage(data)))
-    return
-  } catch (e) {
-    if (!isQuotaError(e)) {
-      console.error('[session] unexpected save error', e)
-      return
-    }
-  }
-  // Quota hit — retry with very aggressive trimming (50 pts, no timeframe equity/trades)
-  try {
-    const minimal = trimForStorage(data, 50, 50)
-    const minimalWithStrippedTfs = {
-      ...minimal,
-      iterationHistory: minimal.iterationHistory.map(n => ({
-        ...n,
-        timeframeResults: n.timeframeResults.map(tf => ({
-          ...tf,
-          result: tf.result ? { ...tf.result, equity_curve: [], trades: [] } : null,
-          rating: null,
-        })),
-      })),
-      activityLog: minimal.activityLog.slice(-30),
-    }
-    localStorage.setItem(key, JSON.stringify(minimalWithStrippedTfs))
-    console.warn('[session] localStorage quota tight — saved with reduced data')
-  } catch {
-    console.warn('[session] localStorage quota exceeded — session not saved')
-  }
-}
-
-export function loadArchive(): ArchivedSession[] {
-  try {
-    const raw = localStorage.getItem(ARCHIVE_STORAGE_KEY)
-    if (!raw) return []
-    return JSON.parse(raw) as ArchivedSession[]
-  } catch {
-    return []
-  }
-}
-
-export function saveArchive(archive: ArchivedSession[]): void {
-  try {
-    localStorage.setItem(ARCHIVE_STORAGE_KEY, JSON.stringify(archive))
-  } catch (e) {
-    if (e instanceof DOMException && e.name === 'QuotaExceededError') {
-      console.warn('[session] localStorage quota exceeded — archive not saved')
-    }
-  }
-}
-
-function deriveSessionName(data: SessionData): string {
-  const firstComplete = data.iterationHistory.find(n => n.status === 'complete')
-  if (firstComplete?.strategyName) return firstComplete.strategyName
-
-  const firstPrompt = data.iterationHistory[0]?.prompt
-  if (firstPrompt) return firstPrompt.length > 40 ? firstPrompt.slice(0, 40) + '...' : firstPrompt
-
-  return `Session ${new Date().toLocaleDateString()}`
-}
 
 // =============================================================================
 // Core Types
@@ -470,11 +312,11 @@ export interface BacktestParams {
 }
 
 export const EXCHANGE_CONFIGS: Record<string, { label: string; commission: number }> = {
-  binance:  { label: 'Binance',  commission: 0.00075 },
-  bybit:    { label: 'Bybit',    commission: 0.001  },
-  okx:      { label: 'OKX',      commission: 0.001  },
-  kraken:   { label: 'Kraken',   commission: 0.0026 },
-  coinbase: { label: 'Coinbase', commission: 0.006  },
+  binance: { label: 'Binance', commission: 0.00075 },
+  bybit: { label: 'Bybit', commission: 0.001 },
+  okx: { label: 'OKX', commission: 0.001 },
+  kraken: { label: 'Kraken', commission: 0.0026 },
+  coinbase: { label: 'Coinbase', commission: 0.006 },
 }
 
 export type TimeframeStatus = 'pending' | 'running' | 'complete' | 'error'
@@ -525,6 +367,7 @@ export interface LiveSessionStatus {
   name: string
   isLoading: boolean
   isAutoRunning: boolean
+  isFetchingSession: boolean
   iterationCount: number
   bestReturn: number | null
   hasError: boolean
@@ -535,23 +378,17 @@ export interface LiveSessionStatus {
 // =============================================================================
 
 const DEFAULT_PARAMS: BacktestParams = {
-  symbol: 'PEPE/USDT',
+  symbol: 'BNB/USDT',
   timeframes: ['4h'],
   start_date: '2020-01-01',
-  end_date: new Date().toISOString().split('T')[0],
+  end_date: '2024-01-01',
   initial_capital: 1500,
   exchange: 'binance',
 }
 
 export function useBacktest(sessionId: string) {
-  const [phase, setPhase] = useState<Phase>(() => {
-    const saved = loadSession(sessionId)
-    if (saved && saved.iterationHistory.some(n =>
-      n.status === 'complete' ||
-      ((n.status === 'generating' || n.status === 'executing') && !!n.result)
-    )) return 'results'
-    return 'idle'
-  })
+  const [isHydrated, setIsHydrated] = useState(false)
+  const [phase, setPhase] = useState<Phase>('idle')
   const [isLoading, setIsLoading] = useState(false)
   const abortControllerRef = useRef<AbortController | null>(null)
   const pollIntervalsRef = useRef<ReturnType<typeof setInterval>[]>([])
@@ -568,87 +405,170 @@ export function useBacktest(sessionId: string) {
     capacity_levels: CapacityLevel[]
   } | null>(null)
 
-  // Activity log state — restore from saved session (active/pending entries marked done)
-  const [activityLog, setActivityLog] = useState<ActivityEntry[]>(() => {
-    const saved = loadSession(sessionId)
-    if (!saved) return []
-    return saved.activityLog.map(e =>
-      (e.status === 'active' || e.status === 'pending')
-        ? { ...e, status: 'done' as const, completedAt: e.completedAt ?? Date.now() }
-        : e
-    )
-  })
-  const [selectedIterationId, setSelectedIterationId] = useState<string | null>(() => {
-    const saved = loadSession(sessionId)
-    if (!saved) return null
-    const savedId = saved.selectedIterationId
-    if (!savedId) return null
-    // Check the saved ID will survive the flatMap restore (won't be dropped)
-    const willSurvive = saved.iterationHistory.some(n =>
-      n.id === savedId &&
-      (n.status !== 'generating' && n.status !== 'executing' || !!n.result)
-    )
-    if (willSurvive) return savedId
-    // Selected iteration will be dropped — fall back to last restorable iteration
-    const lastRestorable = [...saved.iterationHistory]
-      .reverse()
-      .find(n =>
-        n.status === 'complete' ||
-        ((n.status === 'generating' || n.status === 'executing') && !!n.result)
-      )
-    return lastRestorable?.id ?? null
-  })
-  const [iterationHistory, setIterationHistory] = useState<IterationNode[]>(() => {
-    const saved = loadSession(sessionId)
-    if (!saved) return []
-    return saved.iterationHistory.flatMap(n => {
-      if (n.status === 'generating' || n.status === 'executing') {
-        if (n.result) {
-          // Backtest completed — insights were still fetching. Salvage as complete.
-          return [{ ...n, status: 'complete' as const, activeTimeframe: null }]
-        }
-        // No result data — nothing to salvage. Drop the iteration entirely.
-        return []
-      }
-      return [n]
-    })
-  })
+  const [activityLog, setActivityLog] = useState<ActivityEntry[]>([])
+  const [selectedIterationId, setSelectedIterationId] = useState<string | null>(null)
+  const [iterationHistory, setIterationHistory] = useState<IterationNode[]>([])
 
   const iterationHistoryRef = useRef<IterationNode[]>([])
   useEffect(() => { iterationHistoryRef.current = iterationHistory }, [iterationHistory])
 
-  // Backtest params with defaults
-  const [backtestParams, setBacktestParams] = useState<BacktestParams>(() => {
-    const saved = loadSession(sessionId)
-    return saved?.backtestParams ?? DEFAULT_PARAMS
-  })
+  const [backtestParams, setBacktestParams] = useState<BacktestParams>(DEFAULT_PARAMS)
 
-  // Refs to keep latest values for the beforeunload handler
-  const activityLogRef = useRef<ActivityEntry[]>([])
-  useEffect(() => { activityLogRef.current = activityLog }, [activityLog])
+  // Refs to keep latest values for the beacon handler
   const backtestParamsRef = useRef<BacktestParams>(DEFAULT_PARAMS)
   useEffect(() => { backtestParamsRef.current = backtestParams }, [backtestParams])
   const selectedIterationIdRef = useRef<string | null>(null)
   useEffect(() => { selectedIterationIdRef.current = selectedIterationId }, [selectedIterationId])
 
-  // Persist session to localStorage on every relevant state change
-  useEffect(() => {
-    saveSession(sessionId, {
-      iterationHistory,
-      activityLog,
-      backtestParams,
-      selectedIterationId,
-    })
-  }, [sessionId, iterationHistory, activityLog, backtestParams, selectedIterationId])
+  // Refs for save tracking — declared before hydration effect so they can be
+  // pre-populated during hydration to prevent re-saving restored data.
+  const savedIterationVersionRef = useRef<Map<string, string>>(new Map())
+  const savedActivityCountRef = useRef(0)
+  const activityRewriteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const metaSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // Final save on page unload — captures the very latest state via refs so
-  // that even if the user refreshes while a React effect hasn't flushed yet,
-  // the session is saved with the correct status.
+  // Async hydration — load session from backend on mount
+  useEffect(() => {
+    let cancelled = false
+    apiLoadSession(sessionId).then(raw => {
+      if (cancelled) return
+      if (raw) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const data = raw as any
+        const migrated = migrateSession({
+          iterationHistory: Array.isArray(data.iterationHistory) ? data.iterationHistory : [],
+          activityLog: Array.isArray(data.activityLog) ? data.activityLog : [],
+          backtestParams: data.backtestParams ?? DEFAULT_PARAMS,
+          selectedIterationId: data.selectedIterationId ?? null,
+        })
+
+        // Fix up in-progress statuses that survived a page reload
+        const restoredHistory = migrated.iterationHistory.flatMap((n: IterationNode) => {
+          if (n.status === 'generating' || n.status === 'executing') {
+            if (n.result) return [{ ...n, status: 'complete' as const, activeTimeframe: null }]
+            return []
+          }
+          return [n]
+        })
+
+        const restoredActivity = migrated.activityLog.map((e: ActivityEntry) =>
+          (e.status === 'active' || e.status === 'pending')
+            ? { ...e, status: 'done' as const, completedAt: e.completedAt ?? Date.now() }
+            : e
+        )
+
+        // Determine selected iteration (validate it still exists after filter)
+        const savedId = migrated.selectedIterationId
+        let resolvedId: string | null = null
+        if (savedId) {
+          const found = restoredHistory.find((n: IterationNode) => n.id === savedId)
+          if (found) {
+            resolvedId = savedId
+          } else {
+            const last = [...restoredHistory].reverse().find(
+              (n: IterationNode) => n.status === 'complete' || !!n.result
+            )
+            resolvedId = last?.id ?? null
+          }
+        }
+
+        // Pre-populate refs so save effects don't re-save already-stored data
+        savedActivityCountRef.current = restoredActivity.length
+        restoredHistory.forEach((n: IterationNode) => {
+          if (n.status === 'complete' || n.status === 'error') {
+            const vk = `${n.status}:${n.insights?.suggestions?.length ?? 0}`
+            savedIterationVersionRef.current.set(n.id, vk)
+          }
+        })
+
+        setIterationHistory(restoredHistory)
+        setActivityLog(restoredActivity)
+        setBacktestParams(migrated.backtestParams)
+        setSelectedIterationId(resolvedId)
+        if (restoredHistory.some((n: IterationNode) =>
+          n.status === 'complete' || ((n.status === 'generating' || n.status === 'executing') && !!n.result)
+        )) {
+          setPhase('results')
+        }
+      }
+      setIsHydrated(true)
+    }).catch(() => {
+      if (!cancelled) setIsHydrated(true)
+    })
+    return () => { cancelled = true }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId])
+
+  // ==========================================================================
+  // Granular save effects (replaces monolithic localStorage save)
+  // ==========================================================================
+
+  // Save completed/errored iterations when they change
+  useEffect(() => {
+    if (!isHydrated) return
+    let savedAny = false
+    iterationHistory.forEach((node, idx) => {
+      if (node.status !== 'complete' && node.status !== 'error') return
+      const versionKey = `${node.status}:${node.insights?.suggestions?.length ?? 0}`
+      if (savedIterationVersionRef.current.get(node.id) !== versionKey) {
+        savedIterationVersionRef.current.set(node.id, versionKey)
+        upsertIteration(sessionId, idx + 1, node)
+        savedAny = true
+      }
+    })
+    // When iterations are saved, immediately flush meta to ensure session.json exists
+    if (savedAny) {
+      if (metaSaveTimerRef.current) clearTimeout(metaSaveTimerRef.current)
+      metaSaveTimerRef.current = null
+      saveSessionMeta(sessionId, {
+        backtestParams: backtestParamsRef.current,
+        selectedIterationId: selectedIterationIdRef.current,
+      })
+    }
+  }, [isHydrated, sessionId, iterationHistory])
+
+  // Activity log: append new entries immediately; debounced rewrite for updates
+  useEffect(() => {
+    if (!isHydrated) return
+    const prev = savedActivityCountRef.current
+    const curr = activityLog.length
+
+    if (curr > prev) {
+      const newEntries = activityLog.slice(prev)
+      savedActivityCountRef.current = curr
+      // Clear pending rewrite to prevent stale snapshot overwriting new entries
+      if (activityRewriteTimerRef.current) {
+        clearTimeout(activityRewriteTimerRef.current)
+        activityRewriteTimerRef.current = null
+      }
+      apiAppendActivity(sessionId, newEntries)
+    } else if (curr !== prev || (curr === prev && curr > 0)) {
+      // Entries updated or deleted — debounced rewrite
+      if (activityRewriteTimerRef.current) clearTimeout(activityRewriteTimerRef.current)
+      const snapshot = [...activityLog]
+      savedActivityCountRef.current = curr
+      activityRewriteTimerRef.current = setTimeout(() => {
+        apiRewriteActivity(sessionId, snapshot)
+      }, 1000)
+    }
+  }, [isHydrated, sessionId, activityLog])
+
+  // Meta save: debounced 2s on params / selectedIteration change
+  useEffect(() => {
+    if (!isHydrated) return
+    if (metaSaveTimerRef.current) clearTimeout(metaSaveTimerRef.current)
+    const params = backtestParams
+    const selId = selectedIterationId
+    metaSaveTimerRef.current = setTimeout(() => {
+      saveSessionMeta(sessionId, { backtestParams: params, selectedIterationId: selId })
+    }, 2000)
+    return () => { if (metaSaveTimerRef.current) clearTimeout(metaSaveTimerRef.current) }
+  }, [isHydrated, sessionId, backtestParams, selectedIterationId])
+
+  // Beacon save on page unload (fire-and-forget, survives page close)
   useEffect(() => {
     const handleBeforeUnload = () => {
-      saveSession(sessionId, {
-        iterationHistory: iterationHistoryRef.current,
-        activityLog: activityLogRef.current,
+      beaconSaveSession(sessionId, {
         backtestParams: backtestParamsRef.current,
         selectedIterationId: selectedIterationIdRef.current,
       })
@@ -656,42 +576,6 @@ export function useBacktest(sessionId: string) {
     window.addEventListener('beforeunload', handleBeforeUnload)
     return () => window.removeEventListener('beforeunload', handleBeforeUnload)
   }, [sessionId])
-
-  // ==========================================================================
-  // Session Archive (shared across all sessions)
-  // ==========================================================================
-
-  const [archivedSessions, setArchivedSessions] = useState<ArchivedSession[]>(() => loadArchive())
-
-  useEffect(() => {
-    saveArchive(archivedSessions)
-  }, [archivedSessions])
-
-  const archiveCurrentSession = useCallback((): void => {
-    if (iterationHistory.length === 0) return
-
-    const snapshot: SessionData = {
-      iterationHistory,
-      activityLog,
-      backtestParams,
-      selectedIterationId,
-    }
-
-    const completedReturns = iterationHistory
-      .filter(n => n.status === 'complete' && n.result)
-      .map(n => n.totalReturn)
-
-    const archived: ArchivedSession = {
-      id: crypto.randomUUID(),
-      name: deriveSessionName(snapshot),
-      createdAt: new Date().toISOString(),
-      iterationCount: iterationHistory.length,
-      bestReturn: completedReturns.length > 0 ? Math.max(...completedReturns) : null,
-      data: trimForStorage(snapshot),  // trim before archiving to prevent quota issues
-    }
-
-    setArchivedSessions(prev => [archived, ...prev])
-  }, [iterationHistory, activityLog, backtestParams, selectedIterationId])
 
   const resetToDefaults = useCallback(() => {
     setIterationHistory([])
@@ -702,55 +586,10 @@ export function useBacktest(sessionId: string) {
     setError(null)
     setIsLoading(false)
     cachedLiquidityRef.current = null
-    localStorage.removeItem(`finovae_session_${sessionId}`)
+    savedIterationVersionRef.current.clear()
+    savedActivityCountRef.current = 0
+    deleteSessionFromStore(sessionId)
   }, [sessionId])
-
-  const newSession = useCallback(() => {
-    archiveCurrentSession()
-    resetToDefaults()
-  }, [archiveCurrentSession, resetToDefaults])
-
-  const switchSession = useCallback((id: string) => {
-    archiveCurrentSession()
-
-    const target = archivedSessions.find(s => s.id === id)
-    if (!target) return
-
-    setArchivedSessions(prev => prev.filter(s => s.id !== id))
-
-    const data = migrateSession(target.data)
-    setActivityLog(
-      data.activityLog.map(e =>
-        (e.status === 'active' || e.status === 'pending')
-          ? { ...e, status: 'done' as const, completedAt: e.completedAt ?? Date.now() }
-          : e
-      )
-    )
-    setIterationHistory(
-      data.iterationHistory.flatMap(n => {
-        if (n.status === 'generating' || n.status === 'executing') {
-          if (n.result) {
-            return [{ ...n, status: 'complete' as const, activeTimeframe: null }]
-          }
-          return []
-        }
-        return [n]
-      })
-    )
-    setBacktestParams(data.backtestParams)
-    setSelectedIterationId(data.selectedIterationId)
-    setPhase(data.iterationHistory.some(n =>
-      n.status === 'complete' ||
-      ((n.status === 'generating' || n.status === 'executing') && !!n.result)
-    ) ? 'results' : 'idle')
-    setError(null)
-    setIsLoading(false)
-    cachedLiquidityRef.current = null
-  }, [archiveCurrentSession, archivedSessions])
-
-  const deleteArchivedSession = useCallback((id: string) => {
-    setArchivedSessions(prev => prev.filter(s => s.id !== id))
-  }, [])
 
   // Derived live session status for multi-session UI
   const sessionStatus: LiveSessionStatus = useMemo(() => {
@@ -765,11 +604,12 @@ export function useBacktest(sessionId: string) {
       name,
       isLoading,
       isAutoRunning,
+      isFetchingSession: !isHydrated,
       iterationCount: iterationHistory.length,
       bestReturn,
       hasError: iterationHistory.some(n => n.status === 'error'),
     }
-  }, [sessionId, isLoading, isAutoRunning, iterationHistory])
+  }, [sessionId, isLoading, isAutoRunning, isHydrated, iterationHistory])
 
   const addLogEntry = useCallback((entry: Omit<ActivityEntry, 'id' | 'timestamp'>) => {
     const newEntry: ActivityEntry = {
@@ -996,12 +836,15 @@ export function useBacktest(sessionId: string) {
       }
     }
 
-    const pollId = setInterval(async () => {
+    const pollJob = async () => {
       if (pollFinished) return
       const status = await fetchJobStatus(jobId)
       if (!status || pollFinished) return
       applyPolledStatus(status)
-    }, 500)
+    }
+
+    // Poll quickly (every 100ms instead of 500ms) to ensure fast backend phases like 'validate' instantly trigger UI updates
+    const pollId = setInterval(pollJob, 100)
     pollIntervalsRef.current.push(pollId)
 
     try {
@@ -1423,14 +1266,18 @@ export function useBacktest(sessionId: string) {
         // always captures both backtest results and any suggestions together.
         setIterationHistory(prev => prev.map(n =>
           n.id === iterationId
-            ? { ...n, status: 'complete' as const, activeTimeframe: null,
-                ...(newInsights ? { insights: newInsights } : {}) }
+            ? {
+              ...n, status: 'complete' as const, activeTimeframe: null,
+              ...(newInsights ? { insights: newInsights } : {})
+            }
             : n
         ))
         iterationHistoryRef.current = iterationHistoryRef.current.map(n =>
           n.id === iterationId
-            ? { ...n, status: 'complete' as const, activeTimeframe: null,
-                ...(newInsights ? { insights: newInsights } : {}) }
+            ? {
+              ...n, status: 'complete' as const, activeTimeframe: null,
+              ...(newInsights ? { insights: newInsights } : {})
+            }
             : n
         )
         setIsLoading(false)
@@ -1468,16 +1315,13 @@ export function useBacktest(sessionId: string) {
   const deleteIteration = useCallback((id: string) => {
     setIterationHistory(prev => {
       const next = prev.filter(n => n.id !== id)
-      if (next.length === 0) {
-        localStorage.removeItem(`finovae_session_${sessionId}`)
-        setPhase('idle')
-      }
+      if (next.length === 0) setPhase('idle')
       return next
     })
     setActivityLog(prev => prev.filter(e => e.iterationId !== id))
-    if (selectedIterationId === id) {
-      setSelectedIterationId(null)
-    }
+    if (selectedIterationId === id) setSelectedIterationId(null)
+    savedIterationVersionRef.current.delete(id)
+    deleteIterationFromStore(sessionId, id)
   }, [sessionId, selectedIterationId])
 
   // ==========================================================================
@@ -1648,7 +1492,7 @@ export function useBacktest(sessionId: string) {
       .reverse()
       .find(n => n.status === 'complete' && !!n.result && !(n.insights?.suggestions?.length))
     if (latest) {
-      generateInsightsForIteration(latest.id, latest.modelUsed ?? 'claude-sonnet-4-6')
+      generateInsightsForIteration(latest.id, latest.modelUsed ?? 'gpt-5-mini')
     }
   }, [generateInsightsForIteration])
 
@@ -1656,7 +1500,7 @@ export function useBacktest(sessionId: string) {
   // editAndRerun
   // ==========================================================================
 
-  const editAndRerun = useCallback(async (originalIterationId: string, editedCode: string, model: string = 'claude-sonnet-4-6') => {
+  const editAndRerun = useCallback(async (originalIterationId: string, editedCode: string, model: string = 'gpt-5-mini') => {
     const original = iterationHistory.find(n => n.id === originalIterationId)
     if (!original) return
 
@@ -1812,17 +1656,17 @@ export function useBacktest(sessionId: string) {
         setIterationHistory(prev => prev.map(n =>
           n.id === iterationId
             ? {
-                ...n,
-                result: backtestResult,
-                rating: finalRating,
-                totalReturn: backtestResult.total_return,
-                winRate: backtestResult.win_rate,
-                numTrades: backtestResult.num_trades,
-                sharpe: backtestResult.sharpe_ratio,
-                maxDrawdown: backtestResult.max_drawdown,
-                status: 'complete',
-                activeTimeframe: null,
-              }
+              ...n,
+              result: backtestResult,
+              rating: finalRating,
+              totalReturn: backtestResult.total_return,
+              winRate: backtestResult.win_rate,
+              numTrades: backtestResult.num_trades,
+              sharpe: backtestResult.sharpe_ratio,
+              maxDrawdown: backtestResult.max_drawdown,
+              status: 'complete',
+              activeTimeframe: null,
+            }
             : n
         ))
 
@@ -1951,10 +1795,10 @@ export function useBacktest(sessionId: string) {
           await generateInsightsForIteration(newId, model)
         } else {
           const discardNumTrades = newIteration?.numTrades ?? 0
-          const discardRet    = discardNumTrades === 0 ? '—' : fmt(newIteration?.totalReturn ?? 0)
-          const discardDd     = `${((newIteration?.maxDrawdown ?? 0) * 100).toFixed(1)}%`
-          const discardSr     = (newIteration?.sharpe ?? 0).toFixed(2)
-          const discardWr     = `${((newIteration?.winRate ?? 0) * 100).toFixed(0)}%`
+          const discardRet = discardNumTrades === 0 ? '—' : fmt(newIteration?.totalReturn ?? 0)
+          const discardDd = `${((newIteration?.maxDrawdown ?? 0) * 100).toFixed(1)}%`
+          const discardSr = (newIteration?.sharpe ?? 0).toFixed(2)
+          const discardWr = `${((newIteration?.winRate ?? 0) * 100).toFixed(0)}%`
           const discardReason = discardNumTrades === 0
             ? 'no trades'
             : newScore === baselineScore
@@ -1998,6 +1842,7 @@ export function useBacktest(sessionId: string) {
   }, [clearAllPolls])
 
   return {
+    isHydrated,
     phase,
     isLoading,
     error,
@@ -2012,10 +1857,6 @@ export function useBacktest(sessionId: string) {
     deleteIteration,
     selectIteration,
     resetToIdle,
-    archivedSessions,
-    newSession,
-    switchSession,
-    deleteArchivedSession,
     isAutoRunning,
     autoRunProgress,
     startAutoRun,

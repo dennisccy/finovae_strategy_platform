@@ -1,11 +1,12 @@
 import { useState, useRef, useEffect } from 'react'
-import { FilePlus, ChevronDown, Trash2, BarChart3, Clock } from 'lucide-react'
+import { FilePlus, ChevronDown, Trash2, BarChart3, Clock, Loader2 } from 'lucide-react'
 import type { ArchivedSession, LiveSessionStatus } from '../hooks/useBacktest'
 
 interface SessionPickerProps {
   liveSessions: LiveSessionStatus[]
   activeSessionId: string
   archivedSessions: ArchivedSession[]
+  isLoading?: boolean
   onSelectLive: (id: string) => void
   onNewSession: () => void
   onRestoreArchived: (id: string) => void
@@ -20,6 +21,9 @@ interface PendingDelete {
 }
 
 function SessionDot({ status }: { status: LiveSessionStatus }) {
+  if (status.isFetchingSession) {
+    return <Loader2 className="w-3 h-3 text-slate-400 animate-spin flex-shrink-0" />
+  }
   if (status.isLoading || status.isAutoRunning) {
     return <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse flex-shrink-0" />
   }
@@ -33,6 +37,7 @@ export function SessionPicker({
   liveSessions,
   activeSessionId,
   archivedSessions,
+  isLoading = false,
   onSelectLive,
   onNewSession,
   onRestoreArchived,
@@ -61,20 +66,23 @@ export function SessionPicker({
   return (
     <div ref={ref} className="relative">
       <button
-        onClick={() => setOpen(!open)}
+        onClick={() => !isLoading && setOpen(!open)}
         className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-md transition-colors"
       >
-        <Clock className="w-3.5 h-3.5" />
+        {isLoading
+          ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+          : <Clock className="w-3.5 h-3.5" />
+        }
         <span className="hidden sm:inline">Sessions</span>
-        {activeStatus && (
+        {!isLoading && activeStatus && (
           <SessionDot status={activeStatus} />
         )}
-        {totalCount > 1 && (
+        {!isLoading && totalCount > 1 && (
           <span className="w-4 h-4 rounded-full bg-primary-100 text-primary-600 text-[10px] flex items-center justify-center font-semibold">
             {totalCount}
           </span>
         )}
-        <ChevronDown className={`w-3 h-3 transition-transform ${open ? 'rotate-180' : ''}`} />
+        {!isLoading && <ChevronDown className={`w-3 h-3 transition-transform ${open ? 'rotate-180' : ''}`} />}
       </button>
 
       {open && (

@@ -1,84 +1,137 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { SessionContainer } from './components/SessionContainer'
 import { SessionPicker } from './components/SessionPicker'
 import { MessageSquare, GitBranch } from 'lucide-react'
-import { loadArchive, saveArchive, type ArchivedSession, type LiveSessionStatus } from './hooks/useBacktest'
+import { type LiveSessionStatus, type ArchivedSession } from './hooks/useBacktest'
+import {
+  fetchSessionTabs,
+  saveSessionTabs,
+  fetchArchive,
+  restoreArchivedSession,
+  deleteArchivedSession,
+  deleteSessionFromStore,
+  importSessionToBackend,
+  importArchiveToBackend,
+  type SessionTab,
+} from './lib/sessionApi'
 
-const SESSION_TABS_KEY = 'finovae_session_tabs'
-
-interface SessionTab {
-  id: string
-  name: string
-  lastAccessedAt: number
-}
-
-function loadLiveSessionTabs(): SessionTab[] {
-  try {
-    const tabs = localStorage.getItem(SESSION_TABS_KEY)
-    if (tabs) {
-      const parsed = JSON.parse(tabs) as SessionTab[]
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        // Ensure all sessions have lastAccessedAt (migration)
-        return parsed.map(s => ({
-          ...s,
-          lastAccessedAt: s.lastAccessedAt ?? Date.now()
-        }))
-      }
-    }
-
-    // Migration: old single-session format
-    const oldSession = localStorage.getItem('finovae_session')
-    if (oldSession) {
-      const newId = crypto.randomUUID()
-      localStorage.setItem(`finovae_session_${newId}`, oldSession)
-      localStorage.removeItem('finovae_session')
-      return [{ id: newId, name: 'Session 1', lastAccessedAt: Date.now() }]
-    }
-
-    // Fresh start
-    return [{ id: crypto.randomUUID(), name: 'Session 1', lastAccessedAt: Date.now() }]
-  } catch {
-    return [{ id: crypto.randomUUID(), name: 'Session 1', lastAccessedAt: Date.now() }]
-  }
-}
-
-function saveLiveSessionTabs(tabs: SessionTab[]): void {
-  try {
-    localStorage.setItem(SESSION_TABS_KEY, JSON.stringify(tabs))
-  } catch {
-    // ignore
-  }
-}
+const OLD_SESSION_TABS_KEY = 'finovae_session_tabs'
+const OLD_ARCHIVE_KEY = 'finovae_sessions_archive'
+const MIGRATION_FLAG = 'finovae_migrated_v1'
 
 function getLatestSessionId(sessions: SessionTab[]): string {
   if (sessions.length === 0) return ''
-  // Find session with most recent lastAccessedAt
   return sessions.reduce((latest, current) =>
     current.lastAccessedAt > latest.lastAccessedAt ? current : latest
   ).id
 }
 
+async function runMigration(): Promise<void> {
+  if (localStorage.getItem(MIGRATION_FLAG)) return
+
+  const oldTabsRaw = localStorage.getItem(OLD_SESSION_TABS_KEY)
+  if (!oldTabsRaw) {
+    localStorage.setItem(MIGRATION_FLAG, '1')
+    return
+  }
+
+  try {
+    const oldTabs = JSON.parse(oldTabsRaw) as SessionTab[]
+
+    // Migrate live sessions
+    for (const tab of oldTabs) {
+      const raw = localStorage.getItem(`finovae_session_${tab.id}`)
+      if (raw) {
+        try {
+          await importSessionToBackend(tab.id, JSON.parse(raw))
+        } catch (e) {
+          console.warn('[migration] failed to import session', tab.id, e)
+        }
+      }
+    }
+
+    // Migrate archive
+    const archiveRaw = localStorage.getItem(OLD_ARCHIVE_KEY)
+    if (archiveRaw) {
+      const archive = JSON.parse(archiveRaw) as Array<{
+        id: string; name: string; createdAt: string
+        iterationCount: number; bestReturn: number | null
+        data: object
+      }>
+      for (const entry of archive) {
+        try {
+          const { data, ...meta } = entry
+          await importArchiveToBackend(meta, data)
+        } catch (e) {
+          console.warn('[migration] failed to import archive entry', entry.id, e)
+        }
+      }
+    }
+
+    // Upload the tabs index
+    await saveSessionTabs(oldTabs)
+
+    // Clear old localStorage
+    oldTabs.forEach(tab => localStorage.removeItem(`finovae_session_${tab.id}`))
+    localStorage.removeItem(OLD_SESSION_TABS_KEY)
+    localStorage.removeItem(OLD_ARCHIVE_KEY)
+
+    console.info('[migration] Migrated', oldTabs.length, 'sessions from localStorage to backend')
+  } catch (e) {
+    console.warn('[migration] Migration failed:', e)
+  }
+
+  localStorage.setItem(MIGRATION_FLAG, '1')
+}
+
 function App() {
-  const [liveSessions, setLiveSessions] = useState<SessionTab[]>(loadLiveSessionTabs)
-  const [activeSessionId, setActiveSessionId] = useState<string>(() => getLatestSessionId(liveSessions))
+  const [liveSessions, setLiveSessions] = useState<SessionTab[]>([])
+  const [activeSessionId, setActiveSessionId] = useState<string>('')
   const [liveStatuses, setLiveStatuses] = useState<Record<string, LiveSessionStatus>>({})
   const [mobileTab, setMobileTab] = useState<'activity' | 'iterations'>('activity')
-  const [lastUsedModel, setLastUsedModel] = useState('claude-sonnet-4-6')
+  const [lastUsedModel, setLastUsedModel] = useState('gpt-5-mini')
+  const [tabsLoaded, setTabsLoaded] = useState(false)
 
-  // Archive state managed at App level (shared across sessions)
-  const [archivedSessions, setArchivedSessions] = useState<ArchivedSession[]>(() => loadArchive())
+  // Archive state managed at App level
+  const [archivedSessions, setArchivedSessions] = useState<ArchivedSession[]>([])
 
-  // Persist live session tabs whenever they change
+  // Debounce ref for saving tabs
+  const tabsSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Load tabs + archive from backend on mount (with migration)
   useEffect(() => {
-    saveLiveSessionTabs(liveSessions)
-  }, [liveSessions])
+    ;(async () => {
+      await runMigration()
 
-  // Persist archive changes
+      const [tabs, archive] = await Promise.all([fetchSessionTabs(), fetchArchive()])
+
+      if (tabs.length > 0) {
+        const sorted = [...tabs].sort((a, b) => b.lastAccessedAt - a.lastAccessedAt)
+        setLiveSessions(sorted)
+        setActiveSessionId(sorted[0].id)
+      } else {
+        const newId = crypto.randomUUID()
+        const initial: SessionTab[] = [{ id: newId, name: 'Session 1', lastAccessedAt: Date.now() }]
+        setLiveSessions(initial)
+        setActiveSessionId(newId)
+        await saveSessionTabs(initial)
+      }
+
+      setArchivedSessions(archive as ArchivedSession[])
+      setTabsLoaded(true)
+    })()
+  }, [])
+
+  // Persist live session tabs whenever they change (debounced 1s)
   useEffect(() => {
-    saveArchive(archivedSessions)
-  }, [archivedSessions])
+    if (!tabsLoaded) return
+    if (tabsSaveTimerRef.current) clearTimeout(tabsSaveTimerRef.current)
+    const snapshot = liveSessions
+    tabsSaveTimerRef.current = setTimeout(() => {
+      saveSessionTabs(snapshot)
+    }, 1000)
+  }, [tabsLoaded, liveSessions])
 
-  // Keep session names in sync with strategy names
   const handleNameChange = useCallback((sessionId: string, name: string) => {
     setLiveSessions(prev => prev.map(s => s.id === sessionId ? { ...s, name } : s))
   }, [])
@@ -96,53 +149,45 @@ function App() {
   }, [liveSessions.length])
 
   const handleSelectLive = useCallback((id: string) => {
-    // Update lastAccessedAt when session is selected
     setLiveSessions(prev => prev.map(s => s.id === id ? { ...s, lastAccessedAt: Date.now() } : s))
     setActiveSessionId(id)
   }, [])
 
-  const handleRestoreArchived = useCallback((archivedId: string) => {
+  const handleRestoreArchived = useCallback(async (archivedId: string) => {
     const session = archivedSessions.find(s => s.id === archivedId)
     if (!session) return
-
-    // Write the archived session data to the new session's localStorage key
     const newId = crypto.randomUUID()
     try {
-      localStorage.setItem(`finovae_session_${newId}`, JSON.stringify(session.data))
-    } catch {
-      // ignore quota issues
+      await restoreArchivedSession(archivedId, newId)
+    } catch (e) {
+      console.warn('[App] restoreArchivedSession failed:', e)
     }
-
-    // Add as a new live session with current timestamp
     setLiveSessions(prev => [...prev, { id: newId, name: session.name, lastAccessedAt: Date.now() }])
     setActiveSessionId(newId)
-
-    // Remove from archive
     setArchivedSessions(prev => prev.filter(s => s.id !== archivedId))
   }, [archivedSessions])
 
-  const handleDeleteArchived = useCallback((id: string) => {
+  const handleDeleteArchived = useCallback(async (id: string) => {
     setArchivedSessions(prev => prev.filter(s => s.id !== id))
+    await deleteArchivedSession(id)
   }, [])
 
-  const handleDeleteLive = useCallback((id: string) => {
+  const handleDeleteLive = useCallback(async (id: string) => {
     setLiveSessions(prev => {
       const next = prev.filter(s => s.id !== id)
-      // Switch active session if the deleted one was active
       setActiveSessionId(cur => {
         if (cur === id) {
-          const fallback = next.find(s => s.id !== id) ?? next[0]
+          const fallback = next[0]
           return fallback?.id ?? cur
         }
         return cur
       })
       return next
     })
-    // Remove localStorage data for the deleted session
-    try { localStorage.removeItem(`finovae_session_${id}`) } catch { /* ignore */ }
+    await deleteSessionFromStore(id)
   }, [])
 
-  // Build the list of LiveSessionStatus objects for SessionPicker
+  // Build LiveSessionStatus list for SessionPicker
   const liveSessionStatuses: LiveSessionStatus[] = liveSessions.map(s => {
     const status = liveStatuses[s.id]
     return status ?? {
@@ -150,6 +195,7 @@ function App() {
       name: s.name,
       isLoading: false,
       isAutoRunning: false,
+      isFetchingSession: true,
       iterationCount: 0,
       bestReturn: null,
       hasError: false,
@@ -176,6 +222,7 @@ function App() {
               liveSessions={liveSessionStatuses}
               activeSessionId={activeSessionId}
               archivedSessions={archivedSessions}
+              isLoading={!tabsLoaded}
               onSelectLive={handleSelectLive}
               onNewSession={handleNewSession}
               onRestoreArchived={handleRestoreArchived}
@@ -191,22 +238,20 @@ function App() {
       <div className="lg:hidden flex border-b border-slate-200 bg-white">
         <button
           onClick={() => setMobileTab('activity')}
-          className={`flex-1 flex items-center justify-center gap-2 py-2.5 text-sm font-medium transition-colors ${
-            mobileTab === 'activity'
+          className={`flex-1 flex items-center justify-center gap-2 py-2.5 text-sm font-medium transition-colors ${mobileTab === 'activity'
               ? 'text-primary-600 border-b-2 border-primary-600'
               : 'text-slate-500'
-          }`}
+            }`}
         >
           <MessageSquare className="w-4 h-4" />
           Activity
         </button>
         <button
           onClick={() => setMobileTab('iterations')}
-          className={`flex-1 flex items-center justify-center gap-2 py-2.5 text-sm font-medium transition-colors ${
-            mobileTab === 'iterations'
+          className={`flex-1 flex items-center justify-center gap-2 py-2.5 text-sm font-medium transition-colors ${mobileTab === 'iterations'
               ? 'text-primary-600 border-b-2 border-primary-600'
               : 'text-slate-500'
-          }`}
+            }`}
         >
           <GitBranch className="w-4 h-4" />
           Iterations
