@@ -64,7 +64,7 @@ interface ActivityLogProps {
 
 export function ActivityLog({ entries, onSubmitPrompt, currentSymbol, currentTimeframe, isLoading, onEditAndRerun, onSuggestionClick, onCancel, allowShort }: ActivityLogProps) {
   const [prompt, setPrompt] = useState('')
-  const [model, setModel] = useState('claude-sonnet-4-6')
+  const [model, setModel] = useState('gpt-5-mini')
   const scrollRef = useRef<HTMLDivElement>(null)
   const isUserScrolledUp = useRef(false)
   const lastScrollHeight = useRef(0)
@@ -209,6 +209,7 @@ export function ActivityLog({ entries, onSubmitPrompt, currentSymbol, currentTim
             <option value="claude-sonnet-4-5-20250929">Sonnet 4.5</option>
             <option value="claude-sonnet-4-6">Sonnet 4.6</option>
             <option value="claude-opus-4-6">Opus 4.6</option>
+            <option value="gpt-5-mini">GPT-5 Mini</option>
           </select>
         </div>
         <form onSubmit={handleSubmit} className="flex gap-2">
