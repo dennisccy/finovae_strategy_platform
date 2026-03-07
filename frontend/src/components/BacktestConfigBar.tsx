@@ -16,9 +16,10 @@ interface BacktestConfigBarProps {
   onStopAutoRun?: () => void
   autoRunCount?: number
   onAutoRunCountChange?: (n: number) => void
+  workerCount?: number
 }
 
-export function BacktestConfigBar({ params, onChange, disabled, onRerun, canRerun, isAutoRunning, autoRunProgress, canAutoRun, onStartAutoRun, onStopAutoRun, autoRunCount, onAutoRunCountChange }: BacktestConfigBarProps) {
+export function BacktestConfigBar({ params, onChange, disabled, onRerun, canRerun, isAutoRunning, autoRunProgress, canAutoRun, onStartAutoRun, onStopAutoRun, autoRunCount, onAutoRunCountChange, workerCount }: BacktestConfigBarProps) {
   const [symbolError, setSymbolError] = useState<string | null>(null)
 
   const update = (key: keyof BacktestParams, value: string | number) => {
@@ -214,6 +215,13 @@ export function BacktestConfigBar({ params, onChange, disabled, onRerun, canReru
                 onClick={e => e.stopPropagation()}
                 className="w-12 px-1 py-0.5 text-xs border border-slate-300 rounded text-center"
               />
+              {workerCount !== undefined && (
+                <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium ${
+                  workerCount > 1 ? 'bg-violet-100 text-violet-600' : 'bg-slate-100 text-slate-500'
+                }`}>
+                  {workerCount}w
+                </span>
+              )}
             </div>
           )
         )}

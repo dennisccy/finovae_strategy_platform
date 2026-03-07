@@ -6,11 +6,25 @@ import {
   rewriteActivityLog as apiRewriteActivity,
   upsertIteration,
   deleteIterationFromStore,
-  deleteSessionFromStore,
   beaconSaveSession,
 } from '../lib/sessionApi'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '';
+
+function createSemaphore(n: number) {
+  let count = 0
+  const queue: Array<() => void> = []
+  return {
+    acquire: () => new Promise<void>(resolve => {
+      if (count < n) { count++; resolve() }
+      else queue.push(() => { count++; resolve() })
+    }),
+    release: () => {
+      count--
+      queue.shift()?.()
+    },
+  }
+}
 
 // =============================================================================
 // Session Persistence Types
@@ -391,13 +405,29 @@ export function useBacktest(sessionId: string) {
   const [phase, setPhase] = useState<Phase>('idle')
   const [isLoading, setIsLoading] = useState(false)
   const abortControllerRef = useRef<AbortController | null>(null)
-  const pollIntervalsRef = useRef<ReturnType<typeof setInterval>[]>([])
   const [error, setError] = useState<string | null>(null)
 
   // Auto-run state
   const [isAutoRunning, setIsAutoRunning] = useState(false)
   const [autoRunProgress, setAutoRunProgress] = useState<{ current: number; max: number } | null>(null)
   const autoRunStopRef = useRef(false)
+  const autoRunIterationIdsRef = useRef<Set<string>>(new Set())
+
+  // Worker count (fetched from /api/config; controls auto-run concurrency)
+  const [workerCount, setWorkerCount] = useState(1)
+  const workerCountRef = useRef(1)
+  useEffect(() => { workerCountRef.current = workerCount }, [workerCount])
+
+  useEffect(() => {
+    fetch(`${API_BASE_URL}/api/config`)
+      .then(r => r.json())
+      .then(data => {
+        const n = typeof data.workers === 'number' && data.workers > 0 ? data.workers : 1
+        setWorkerCount(n)
+      })
+      .catch(() => { /* default 1 */ })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // Liquidity cache: computed once per symbol/timeframe/period, reused across iterations
   const cachedLiquidityRef = useRef<{
@@ -496,7 +526,7 @@ export function useBacktest(sessionId: string) {
       if (!cancelled) setIsHydrated(true)
     })
     return () => { cancelled = true }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId])
 
   // ==========================================================================
@@ -577,20 +607,6 @@ export function useBacktest(sessionId: string) {
     return () => window.removeEventListener('beforeunload', handleBeforeUnload)
   }, [sessionId])
 
-  const resetToDefaults = useCallback(() => {
-    setIterationHistory([])
-    setActivityLog([])
-    setBacktestParams(DEFAULT_PARAMS)
-    setSelectedIterationId(null)
-    setPhase('idle')
-    setError(null)
-    setIsLoading(false)
-    cachedLiquidityRef.current = null
-    savedIterationVersionRef.current.clear()
-    savedActivityCountRef.current = 0
-    deleteSessionFromStore(sessionId)
-  }, [sessionId])
-
   // Derived live session status for multi-session UI
   const sessionStatus: LiveSessionStatus = useMemo(() => {
     const completedNodes = iterationHistory.filter(n => n.status === 'complete' && n.result)
@@ -625,35 +641,10 @@ export function useBacktest(sessionId: string) {
     setActivityLog(prev => prev.map(e => e.id === id ? { ...e, ...updates } : e))
   }, [])
 
-  /** Clear all active polling intervals. */
-  const clearAllPolls = useCallback(() => {
-    pollIntervalsRef.current.forEach(clearInterval)
-    pollIntervalsRef.current = []
-  }, [])
-
-  /** Fetch job status from backend polling endpoint. Returns null on error/404. */
-  const fetchJobStatus = useCallback(async (jobId: string): Promise<{
-    phase: string
-    calculate_step: string | null
-    calculate_step_index: number
-    sim_bar: number
-    sim_total_bars: number
-  } | null> => {
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/job-status/${jobId}`)
-      if (!res.ok) return null
-      return await res.json()
-    } catch {
-      return null
-    }
-  }, [])
-
   /** Cancel the currently running operation. */
   const cancelOperation = useCallback(() => {
     abortControllerRef.current?.abort()
     abortControllerRef.current = null
-
-    clearAllPolls()
 
     setPhase('idle')
     setIsLoading(false)
@@ -689,21 +680,27 @@ export function useBacktest(sessionId: string) {
       }
       return [...updated, cancelEntry]
     })
-  }, [clearAllPolls])
+  }, [])
 
   /** Apply real backend timings to step entries. */
   const applyRealTimings = useCallback((
-    timings: { validate_ms: number; fetch_ms: number; simulate_ms: number; calculate_ms: number; calculate_steps?: Record<string, number> | null } | undefined,
+    timings: { validate_ms: number; fetch_ms: number; simulate_ms: number; calculate_ms: number; total_ms?: number; calculate_steps?: Record<string, number> | null } | undefined,
     base: number,
     stepIds: { validate: string; fetch: string; sim: string; calc: string; metrics: string[] },
+    resultArrivedAt?: number,
   ) => {
     if (timings) {
-      const validateEnd = base + timings.validate_ms
+      // Anchor to server execution end time (result arrived - total server time) for
+      // accurate alignment regardless of network latency or semaphore wait.
+      const effectiveBase = (resultArrivedAt && timings.total_ms)
+        ? resultArrivedAt - timings.total_ms
+        : base
+      const validateEnd = effectiveBase + timings.validate_ms
       const fetchEnd = validateEnd + timings.fetch_ms
       const simEnd = fetchEnd + timings.simulate_ms
       const calcEnd = simEnd + timings.calculate_ms
 
-      updateLogEntry(stepIds.validate, { status: 'done', startedAt: base, completedAt: validateEnd })
+      updateLogEntry(stepIds.validate, { status: 'done', startedAt: effectiveBase, completedAt: validateEnd })
       updateLogEntry(stepIds.fetch, { status: 'done', startedAt: validateEnd, completedAt: fetchEnd })
       updateLogEntry(stepIds.sim, { status: 'done', startedAt: fetchEnd, completedAt: simEnd })
       updateLogEntry(stepIds.calc, { status: 'done', startedAt: simEnd, completedAt: calcEnd })
@@ -756,6 +753,12 @@ export function useBacktest(sessionId: string) {
     const validateStepId = addLogEntry({
       type: 'ai-step', content: `[${timeframe}] Validating code...`, status: 'active', startedAt: Date.now(), iterationId,
     })
+    const validateSubStepIds = [
+      addLogEntry({ type: 'ai-step', content: `[${timeframe}] Pattern check`, status: 'pending', substep: true, iterationId }),
+      addLogEntry({ type: 'ai-step', content: `[${timeframe}] Compiling strategy`, status: 'pending', substep: true, iterationId }),
+      addLogEntry({ type: 'ai-step', content: `[${timeframe}] Instantiating class`, status: 'pending', substep: true, iterationId }),
+      addLogEntry({ type: 'ai-step', content: `[${timeframe}] Setup & signal wire-up`, status: 'pending', substep: true, iterationId }),
+    ]
     const fetchStepId = addLogEntry({
       type: 'ai-step', content: `[${timeframe}] Fetching market data...`, status: 'pending', iterationId,
     })
@@ -774,13 +777,9 @@ export function useBacktest(sessionId: string) {
     const stepIds = { validate: validateStepId, fetch: fetchStepId, sim: simStepId, calc: calcStepId, metrics: metricSubStepIds }
     const executionStartTime = Date.now()
 
-    const jobId = crypto.randomUUID()
-
     const donePhases = new Set<string>()
     const startedPhases = new Set<string>()
     const startedSubstepIds = new Set<number>()
-
-    let pollFinished = false
 
     const phaseOrder = ['validate', 'fetch', 'simulate', 'calculate'] as const
     const phaseToStepId: Record<string, string> = {
@@ -792,9 +791,11 @@ export function useBacktest(sessionId: string) {
 
     const applyPolledStatus = (status: {
       phase: string
-      calculate_step_index: number
-      sim_bar: number
-      sim_total_bars: number
+      validate_step?: string | null
+      calculate_step?: string | null
+      calculate_step_index?: number
+      sim_bar?: number
+      sim_total_bars?: number
     }) => {
       const currentPhaseIdx = phaseOrder.indexOf(status.phase as typeof phaseOrder[number])
 
@@ -804,6 +805,10 @@ export function useBacktest(sessionId: string) {
           donePhases.add(phaseName)
           const now = Date.now()
           updateLogEntry(phaseToStepId[phaseName], { status: 'done', completedAt: now })
+          // Mark all validate sub-steps done when moving past validate phase
+          if (phaseName === 'validate') {
+            validateSubStepIds.forEach(id => updateLogEntry(id, { status: 'done', completedAt: now }))
+          }
         }
       }
 
@@ -815,8 +820,26 @@ export function useBacktest(sessionId: string) {
         }
       }
 
-      if (status.phase === 'simulate' && status.sim_total_bars > 0) {
-        const pct = Math.round((status.sim_bar / status.sim_total_bars) * 100)
+      // Validate sub-steps
+      if (status.phase === 'validate' && status.validate_step) {
+        const stepMap: Record<string, number> = {
+          pattern_check: 0,
+          compile: 1,
+          instantiate: 2,
+          setup_signal: 3,
+        }
+        const activeIdx = stepMap[status.validate_step] ?? -1
+        validateSubStepIds.forEach((id, i) => {
+          if (i < activeIdx) {
+            updateLogEntry(id, { status: 'done', completedAt: Date.now() })
+          } else if (i === activeIdx) {
+            updateLogEntry(id, { status: 'active', startedAt: Date.now() })
+          }
+        })
+      }
+
+      if (status.phase === 'simulate' && (status.sim_total_bars ?? 0) > 0) {
+        const pct = Math.round(((status.sim_bar ?? 0) / (status.sim_total_bars ?? 1)) * 100)
         updateLogEntry(simStepId, {
           status: 'active',
           content: `[${timeframe}] Running simulation... ${pct}%`,
@@ -824,7 +847,7 @@ export function useBacktest(sessionId: string) {
       }
 
       if (status.phase === 'calculate') {
-        const doneUpTo = status.calculate_step_index
+        const doneUpTo = status.calculate_step_index ?? 0
         for (let s = 0; s < metricSubStepIds.length; s++) {
           if (s < doneUpTo) {
             updateLogEntry(metricSubStepIds[s], { status: 'done', completedAt: Date.now() })
@@ -836,50 +859,94 @@ export function useBacktest(sessionId: string) {
       }
     }
 
-    const pollJob = async () => {
-      if (pollFinished) return
-      const status = await fetchJobStatus(jobId)
-      if (!status || pollFinished) return
-      applyPolledStatus(status)
-    }
-
-    // Poll quickly (every 100ms instead of 500ms) to ensure fast backend phases like 'validate' instantly trigger UI updates
-    const pollId = setInterval(pollJob, 100)
-    pollIntervalsRef.current.push(pollId)
-
     try {
-      const execResponse = await fetch(`${API_BASE_URL}/api/execute-backtest`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          script_id: scriptId,
-          script_code: scriptCode,
-          symbol: symbolOverride ?? backtestParams.symbol,
-          timeframe,
-          start_date: backtestParams.start_date,
-          end_date: backtestParams.end_date,
-          initial_capital: backtestParams.initial_capital,
-          commission: EXCHANGE_CONFIGS[backtestParams.exchange]?.commission ?? 0.00075,
-          job_id: jobId,
-          allow_short: backtestParams.allow_short ?? false,
-          leverage: backtestParams.leverage ?? 1,
-        }),
-        signal,
+      const body = JSON.stringify({
+        script_id: scriptId,
+        script_code: scriptCode,
+        symbol: symbolOverride ?? backtestParams.symbol,
+        timeframe,
+        start_date: backtestParams.start_date,
+        end_date: backtestParams.end_date,
+        initial_capital: backtestParams.initial_capital,
+        commission: EXCHANGE_CONFIGS[backtestParams.exchange]?.commission ?? 0.00075,
+        allow_short: backtestParams.allow_short ?? false,
+        leverage: backtestParams.leverage ?? 1,
       })
 
-      const execData = await execResponse.json()
-      pollFinished = true
-      clearInterval(pollId)
-      pollIntervalsRef.current = pollIntervalsRef.current.filter(id => id !== pollId)
+      // Retry on transient "Failed to fetch" network errors (e.g. server busy during concurrent load)
+      let execResponse: Response | null = null
+      const MAX_RETRIES = 3
+      for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+        if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
+        if (attempt > 0) {
+          await new Promise(r => setTimeout(r, 500 * Math.pow(2, attempt - 1)))
+          addLogEntry({ type: 'ai-step', content: `[${timeframe}] Retrying... (attempt ${attempt + 1})`, status: 'active', iterationId, substep: true })
+        }
+        try {
+          execResponse = await fetch(`${API_BASE_URL}/api/execute-backtest`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body,
+            signal,
+          })
+          break  // success — exit retry loop
+        } catch (fetchErr) {
+          if (fetchErr instanceof DOMException && fetchErr.name === 'AbortError') throw fetchErr
+          if (attempt === MAX_RETRIES - 1) throw fetchErr  // propagate on last attempt
+          console.warn(`[${timeframe}] Fetch attempt ${attempt + 1} failed, retrying...`, fetchErr)
+        }
+      }
 
-      if (!execData.success) {
+      if (!execResponse!.ok) {
+        throw new Error(`HTTP ${execResponse!.status}`)
+      }
+
+      // Read SSE stream — status events update the UI in real-time; final event carries result
+      const reader = execResponse!.body!.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let execData: any = null
+      let resultArrivedAt = 0
+
+      outer: while (!execData) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        const parts = buffer.split('\n\n')
+        buffer = parts.pop() ?? ''
+        for (const part of parts) {
+          for (const line of part.split('\n')) {
+            if (!line.startsWith('data: ')) continue
+            const event = JSON.parse(line.slice(6))
+            if (event.type === 'status') {
+              applyPolledStatus({
+                phase: event.phase,
+                validate_step: event.validate_step,
+                calculate_step: event.calculate_step,
+                calculate_step_index: event.calculate_step_index,
+                sim_bar: event.sim_bar,
+                sim_total_bars: event.sim_total_bars,
+              })
+            } else if (event.type === 'result' || event.type === 'error') {
+              resultArrivedAt = Date.now()
+              execData = event
+              break outer
+            }
+          }
+        }
+      }
+      reader.releaseLock()
+
+      if (!execData || !execData.success) {
         const errNow = Date.now()
+        validateSubStepIds.forEach(id => updateLogEntry(id, { status: 'done', completedAt: errNow }))
         updateLogEntry(validateStepId, { status: 'done', completedAt: errNow })
         updateLogEntry(fetchStepId, { status: 'done', completedAt: errNow })
         updateLogEntry(simStepId, { status: 'done', completedAt: errNow })
         updateLogEntry(calcStepId, { status: 'error', completedAt: errNow })
         metricSubStepIds.forEach(id => updateLogEntry(id, { status: 'error', completedAt: errNow }))
-        const backendErrors: string[] = execData.errors || []
+        const backendErrors: string[] = execData?.errors || []
         const errMsg = backendErrors.length > 0
           ? backendErrors.join('; ')
           : `Backtest failed for ${timeframe}`
@@ -887,44 +954,62 @@ export function useBacktest(sessionId: string) {
         return null
       }
 
-      applyRealTimings(execData.timings, executionStartTime, stepIds)
+      applyRealTimings(execData.timings, executionStartTime, stepIds, resultArrivedAt)
       return {
         result: execData.result as BacktestResult,
         rating: (execData.rating as StrategyRating) || null,
       }
     } catch (err) {
-      pollFinished = true
-      clearInterval(pollId)
-      pollIntervalsRef.current = pollIntervalsRef.current.filter(id => id !== pollId)
       if (err instanceof DOMException && err.name === 'AbortError') {
         return null
       }
+
       const errNow = Date.now()
       updateLogEntry(validateStepId, { status: 'done', completedAt: errNow })
       updateLogEntry(fetchStepId, { status: 'done', completedAt: errNow })
       updateLogEntry(simStepId, { status: 'done', completedAt: errNow })
       updateLogEntry(calcStepId, { status: 'error', completedAt: errNow })
       metricSubStepIds.forEach(id => updateLogEntry(id, { status: 'error', completedAt: errNow }))
+
+      const errMsg = err instanceof Error ? err.message : 'Unknown network error'
+      addLogEntry({ type: 'error', content: `[${timeframe}] Fetch error: ${errMsg}`, iterationId })
       return null
     }
-  }, [backtestParams, addLogEntry, updateLogEntry, fetchJobStatus, applyRealTimings])
+  }, [backtestParams, addLogEntry, updateLogEntry, applyRealTimings])
 
   // ==========================================================================
   // validateSymbolExists
   // ==========================================================================
 
+  const validationCacheRef = useRef<Record<string, Promise<string | null> | undefined>>({})
+
   const validateSymbolExists = useCallback(async (symbol: string): Promise<string | null> => {
     if (!/^[A-Z]+\/USDT$/.test(symbol)) {
       return `Symbol must be in BASE/USDT format (e.g. PEPE/USDT)`
     }
-    try {
-      const baseUrl = import.meta.env.VITE_API_URL ?? ''
-      const resp = await fetch(`${baseUrl}/api/validate-symbol?symbol=${encodeURIComponent(symbol)}`)
-      const data = await resp.json()
-      return data.valid ? null : (data.error ?? `${symbol} not found on Binance`)
-    } catch {
-      return null // Network error: let backtest proceed, backend will catch
+
+    const cachedPromise = validationCacheRef.current[symbol]
+    if (cachedPromise) {
+      return cachedPromise
     }
+
+    const validatePromise = (async () => {
+      try {
+        const baseUrl = import.meta.env.VITE_API_URL ?? ''
+        const resp = await fetch(`${baseUrl}/api/validate-symbol?symbol=${encodeURIComponent(symbol)}`)
+        const data = await resp.json()
+        return data.valid ? null : (data.error ?? `${symbol} not found on Binance`)
+      } catch {
+        return null // Network error: let backtest proceed, backend will catch
+      } finally {
+        setTimeout(() => {
+          delete validationCacheRef.current[symbol]
+        }, 1000)
+      }
+    })()
+
+    validationCacheRef.current[symbol] = validatePromise
+    return validatePromise
   }, [])
 
   // ==========================================================================
@@ -940,9 +1025,10 @@ export function useBacktest(sessionId: string) {
     overrideTimeframes?: string[],
     skipInsights?: boolean,
     changeSummary?: string,
+    sharedSignal?: AbortSignal,
   ) => {
-    // Deduplicate: if already loading, abort the previous request first
-    if (abortControllerRef.current) {
+    // Deduplicate: if already loading, abort the previous request first (unless explicitly running concurrently)
+    if (!sharedSignal && abortControllerRef.current) {
       abortControllerRef.current.abort()
       abortControllerRef.current = null
     }
@@ -961,9 +1047,12 @@ export function useBacktest(sessionId: string) {
     setIsLoading(true)
     setError(null)
 
-    const abortController = new AbortController()
-    abortControllerRef.current = abortController
-    const { signal } = abortController
+    let signal = sharedSignal
+    if (!signal) {
+      const abortController = new AbortController()
+      abortControllerRef.current = abortController
+      signal = abortController.signal
+    }
 
     const iterationId = crypto.randomUUID()
     addLogEntry({
@@ -1294,7 +1383,6 @@ export function useBacktest(sessionId: string) {
         return null
       }
     } catch (err) {
-      clearAllPolls()
       if (err instanceof DOMException && err.name === 'AbortError') return null
       const errMsg = err instanceof Error ? err.message : 'Failed to run strategy'
       addLogEntry({ type: 'error', content: errMsg, iterationId })
@@ -1306,7 +1394,7 @@ export function useBacktest(sessionId: string) {
       setIsLoading(false)
       return null
     }
-  }, [backtestParams, addLogEntry, updateLogEntry, clearAllPolls, executeSingleTimeframe])
+  }, [backtestParams, addLogEntry, updateLogEntry, executeSingleTimeframe])
 
   // ==========================================================================
   // deleteIteration
@@ -1366,15 +1454,6 @@ export function useBacktest(sessionId: string) {
 
   const selectIteration = useCallback((id: string | null) => {
     setSelectedIterationId(id)
-  }, [])
-
-  // ==========================================================================
-  // resetToIdle
-  // ==========================================================================
-
-  const resetToIdle = useCallback(() => {
-    setPhase('idle')
-    setError(null)
   }, [])
 
   const generateInsightsForIteration = useCallback(async (
@@ -1694,7 +1773,6 @@ export function useBacktest(sessionId: string) {
         setIsLoading(false)
       }
     } catch (err) {
-      clearAllPolls()
       if (err instanceof DOMException && err.name === 'AbortError') return
       const errMsg = err instanceof Error ? err.message : 'Failed to execute backtest'
       addLogEntry({ type: 'error', content: errMsg, iterationId })
@@ -1705,7 +1783,7 @@ export function useBacktest(sessionId: string) {
       setPhase('idle')
       setIsLoading(false)
     }
-  }, [iterationHistory, backtestParams, addLogEntry, clearAllPolls, executeSingleTimeframe, generateInsightsForIteration, validateSymbolExists])
+  }, [iterationHistory, backtestParams, addLogEntry, executeSingleTimeframe, generateInsightsForIteration, validateSymbolExists])
 
   const startAutoRun = useCallback(async (maxAttempts: number, model: string) => {
     const baseline = [...iterationHistoryRef.current]
@@ -1717,8 +1795,11 @@ export function useBacktest(sessionId: string) {
     setIsAutoRunning(true)
     setAutoRunProgress({ current: 0, max: maxAttempts })
 
+    const abortController = new AbortController()
+    abortControllerRef.current = abortController
+    const { signal } = abortController
+
     let baselineId = baseline.id
-    let suggestionIndex = 0
     let attempt = 0
     let generatedNewBatch = false
 
@@ -1726,13 +1807,20 @@ export function useBacktest(sessionId: string) {
       const currentBaseline = iterationHistoryRef.current.find(n => n.id === baselineId)
       const suggestions = currentBaseline?.insights?.suggestions ?? []
 
-      // Skip suggestions that were already tried and discarded in a previous run
-      while (suggestionIndex < suggestions.length && suggestions[suggestionIndex]?.disabled) {
-        suggestionIndex++
-      }
+      // Identify all untried suggestions
+      const untriedSuggestions: Array<{
+        suggestion: InsightsSuggestion
+        index: number
+      }> = []
 
-      if (suggestionIndex >= suggestions.length) {
-        if (suggestions.length === 0) break  // No suggestions at all — nothing to do
+      suggestions.forEach((s, idx) => {
+        if (!s.disabled) {
+          untriedSuggestions.push({ suggestion: s, index: idx })
+        }
+      })
+
+      if (untriedSuggestions.length === 0) {
+        if (suggestions.length === 0) break // No suggestions at all
 
         // All suggestions tried. Generate a new batch once per baseline.
         if (!generatedNewBatch) {
@@ -1740,20 +1828,26 @@ export function useBacktest(sessionId: string) {
           await generateInsightsForIteration(baselineId, model, suggestions)
           generatedNewBatch = true
           const refreshed = iterationHistoryRef.current.find(n => n.id === baselineId)
-          const refreshedLen = refreshed?.insights?.suggestions?.length ?? 0
-          if (refreshedLen <= suggestions.length) break  // API failed to produce new suggestions
-          suggestionIndex = suggestions.length  // Start at first new suggestion
+          const refreshedSuggestions = refreshed?.insights?.suggestions ?? []
+
+          if (refreshedSuggestions.filter(s => !s.disabled).length === 0) break // API failed to produce new suggestions
           continue
         }
-        break  // New batch was already generated and also exhausted — stop
+        break // New batch was already generated and also exhausted — stop
       }
 
-      const suggestion = suggestions[suggestionIndex]
       const baselineScore = (currentBaseline?.numTrades ?? 0) > 0
         ? (currentBaseline?.totalReturn ?? -Infinity)
         : -Infinity
+      const fmt = (v: number) => `${v >= 0 ? '+' : ''}${(v * 100).toFixed(2)}%`
 
-      addLogEntry({ type: 'auto-run', content: `Trying "${suggestion.title}"...`, iterationId: baselineId })
+      const workers = workerCountRef.current
+      const concurrencyNote = workers === 1 ? '1 at a time' : `${workers} at a time`
+      addLogEntry({
+        type: 'auto-run',
+        content: `Running ${untriedSuggestions.length} suggestions (${concurrencyNote})...`,
+        iterationId: baselineId
+      })
 
       const baselineResult = currentBaseline?.result
       const metrics = baselineResult ? {
@@ -1765,62 +1859,88 @@ export function useBacktest(sessionId: string) {
         profit_factor: baselineResult.profit_factor,
       } : null
 
-      let newId: string | null = null
-      try {
-        newId = await generateAndExecute(
-          suggestion.prompt, model, currentBaseline?.scriptCode, metrics,
-          undefined, undefined, true, suggestion.title,
-        )
-      } catch {
-        // AbortError from stopAutoRun — fall through to stop-flag check
-      }
+      // Use a worker-pool semaphore so at most workerCount backtests run at once
+      autoRunIterationIdsRef.current = new Set()
+      const sem = createSemaphore(workers)
+      const executionPromises = untriedSuggestions.map(async ({ suggestion, index }) => {
+        await sem.acquire()
+        try {
+          const id = await generateAndExecute(
+            suggestion.prompt, model, currentBaseline?.scriptCode, metrics,
+            undefined, undefined, true, suggestion.title, signal
+          )
+          if (id) autoRunIterationIdsRef.current.add(id)
+          return { id, suggestion, index }
+        } catch {
+          return { id: null, suggestion, index }
+        } finally {
+          sem.release()
+        }
+      })
 
-      if (autoRunStopRef.current) {
-        if (newId) deleteIteration(newId)
+      const results = await Promise.all(executionPromises)
+
+      if (autoRunStopRef.current || signal.aborted) {
+        results.forEach(({ id }) => { if (id) deleteIteration(id) })
         break
       }
 
-      if (newId) {
-        const newIteration = iterationHistoryRef.current.find(n => n.id === newId)
-        const newScore = (newIteration?.numTrades ?? 0) > 0 ? (newIteration?.totalReturn ?? -Infinity) : -Infinity
-        const fmt = (v: number) => `${v >= 0 ? '+' : ''}${(v * 100).toFixed(2)}%`
+      let bestScore = -Infinity
+      let bestId: string | null = null
 
-        if (newIteration?.status === 'complete' && newScore > baselineScore) {
-          attempt++
-          setAutoRunProgress({ current: attempt, max: maxAttempts })
-          addLogEntry({ type: 'auto-run', content: `Kept (${attempt}/${maxAttempts}): ${fmt(newScore)} > ${fmt(baselineScore)} — generating suggestions...`, iterationId: newId })
-          baselineId = newId
-          suggestionIndex = 0
-          generatedNewBatch = false
-          await generateInsightsForIteration(newId, model)
-        } else {
-          const discardNumTrades = newIteration?.numTrades ?? 0
-          const discardRet = discardNumTrades === 0 ? '—' : fmt(newIteration?.totalReturn ?? 0)
-          const discardDd = `${((newIteration?.maxDrawdown ?? 0) * 100).toFixed(1)}%`
-          const discardSr = (newIteration?.sharpe ?? 0).toFixed(2)
-          const discardWr = `${((newIteration?.winRate ?? 0) * 100).toFixed(0)}%`
-          const discardReason = discardNumTrades === 0
-            ? 'no trades'
-            : newScore === baselineScore
-              ? `same return as baseline (${fmt(baselineScore)})`
-              : `return below baseline (${fmt(baselineScore)})`
-          addLogEntry({
-            type: 'auto-run',
-            content: `Discarded: Ret ${discardRet} | DD ${discardDd} | SR ${discardSr} | WR ${discardWr} — ${discardReason}, trying next`,
-            iterationId: baselineId,
-          })
-          markSuggestionDisabled(baselineId, suggestionIndex)
-          deleteIteration(newId)
-          suggestionIndex++
+      const finishedIds: string[] = []
+
+      // Evaluate results
+      results.forEach(({ id, index }) => {
+        if (!id) {
+          markSuggestionDisabled(baselineId, index)
+          return
         }
+        finishedIds.push(id)
+        const newIteration = iterationHistoryRef.current.find(n => n.id === id)
+        const newScore = (newIteration?.numTrades ?? 0) > 0 ? (newIteration?.totalReturn ?? -Infinity) : -Infinity
+
+        if (newIteration?.status === 'complete' && newScore > bestScore) {
+          bestScore = newScore
+          bestId = id
+        }
+      })
+
+      if (bestId && bestScore > baselineScore) {
+        attempt++
+        setAutoRunProgress({ current: attempt, max: maxAttempts })
+        addLogEntry({ type: 'auto-run', content: `Kept (${attempt}/${maxAttempts}): ${fmt(bestScore)} > ${fmt(baselineScore)} — generating suggestions...`, iterationId: bestId })
+
+        // Delete all others
+        finishedIds.forEach(id => {
+          if (id !== bestId) deleteIteration(id)
+        })
+
+        // Disable all suggestions on the old baseline since we're moving on
+        untriedSuggestions.forEach(({ index }) => markSuggestionDisabled(baselineId, index))
+
+        baselineId = bestId
+        generatedNewBatch = false
+        await generateInsightsForIteration(bestId, model)
       } else {
-        suggestionIndex++
+        addLogEntry({
+          type: 'auto-run',
+          content: `All ${untriedSuggestions.length} concurrent runs failed to beat baseline (${fmt(baselineScore)}). Generating new batch...`,
+          iterationId: baselineId,
+        })
+
+        // Delete all generated iterations since none beat the baseline
+        finishedIds.forEach(id => deleteIteration(id))
+
+        // Mark all as disabled
+        untriedSuggestions.forEach(({ index }) => markSuggestionDisabled(baselineId, index))
       }
     }
 
     setIsAutoRunning(false)
     setAutoRunProgress(null)
     autoRunStopRef.current = false
+    abortControllerRef.current = null
 
     const reason = attempt >= maxAttempts ? `${maxAttempts} improvements done` : 'no more suggestions'
     addLogEntry({ type: 'auto-run', content: `Auto Run finished — ${reason}`, iterationId: baselineId })
@@ -1830,16 +1950,17 @@ export function useBacktest(sessionId: string) {
     autoRunStopRef.current = true
     abortControllerRef.current?.abort()
     abortControllerRef.current = null
-    clearAllPolls()
     setPhase('idle')
     setIsLoading(false)
-    setIterationHistory(prev => prev.filter(n => n.status !== 'generating' && n.status !== 'executing'))
+    const toRemove = autoRunIterationIdsRef.current
+    setIterationHistory(prev => prev.filter(n => !toRemove.has(n.id)))
+    autoRunIterationIdsRef.current = new Set()
     setActivityLog(prev => prev.map(e =>
       (e.status === 'active' || e.status === 'pending')
         ? { ...e, status: 'done' as const, completedAt: Date.now() }
         : e
     ))
-  }, [clearAllPolls])
+  }, [])
 
   return {
     isHydrated,
@@ -1856,11 +1977,11 @@ export function useBacktest(sessionId: string) {
     cancelOperation,
     deleteIteration,
     selectIteration,
-    resetToIdle,
     isAutoRunning,
     autoRunProgress,
     startAutoRun,
     stopAutoRun,
     sessionStatus,
+    workerCount,
   }
 }

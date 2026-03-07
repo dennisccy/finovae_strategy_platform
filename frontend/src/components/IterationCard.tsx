@@ -1,4 +1,4 @@
-import { Trash2, Loader2 } from 'lucide-react'
+import { Trash2 } from 'lucide-react'
 import type { IterationNode } from '../hooks/useBacktest'
 
 interface IterationCardProps {
@@ -38,21 +38,29 @@ export function IterationCard({ iteration, onSelect, onDelete, isLatest = false 
     return value >= 0 ? `+${pct}%` : `${pct}%`
   }
 
-  // Compact view for past iterations
-  if (isPast) {
+  // Compact view for past or in-progress iterations
+  if (isPast || isInProgress) {
     return (
       <div
-        className="border border-slate-200 rounded-lg px-3 py-2 bg-white hover:bg-slate-50 transition-colors group cursor-pointer"
-        onClick={() => onSelect(iteration.id)}
+        className={`border rounded-lg px-3 py-2 transition-colors group ${isPast ? 'bg-white hover:bg-slate-50 cursor-pointer border-slate-200' : config.bgClass}`}
+        onClick={() => isPast ? onSelect(iteration.id) : undefined}
       >
         <div className="flex items-center justify-between">
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-0.5">
-              <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+              <div className={`w-1.5 h-1.5 rounded-full ${config.dotClass}`} />
               <h4 className="text-xs font-semibold text-slate-700 truncate">
-                {iteration.strategyName}
+                {iteration.strategyName || (iteration.status === 'generating' ? 'AI crafting strategy...' : 'Executing...')}
               </h4>
             </div>
+
+            {/* Show prompt snippet if still generating/executing and no strategyName yet */}
+            {isInProgress && !iteration.strategyName && iteration.prompt && (
+              <p className="text-[10px] text-slate-500 truncate mb-0.5 ml-3.5">
+                {iteration.prompt.length > 50 ? iteration.prompt.slice(0, 50) + '...' : iteration.prompt}
+              </p>
+            )}
+
             {iteration.changeSummary && (
               <p className="text-[10px] italic text-slate-400 truncate mb-0.5 ml-3.5">
                 {iteration.changeSummary}
@@ -75,14 +83,28 @@ export function IterationCard({ iteration, onSelect, onDelete, isLatest = false 
                   </span>
                 </>
               )}
-              <span className="text-slate-300">·</span>
-              <span>{iteration.numTrades} trades</span>
-              <span className="text-slate-300">·</span>
-              <span className="text-red-500">DD {(iteration.maxDrawdown * 100).toFixed(1)}%</span>
-              <span className="text-slate-300">·</span>
-              <span>WR {(iteration.winRate * 100).toFixed(0)}%</span>
-              <span className="text-slate-300">·</span>
-              <span>SR {iteration.sharpe.toFixed(2)}</span>
+              {isPast && (
+                <>
+                  <span className="text-slate-300">·</span>
+                  <span>{iteration.numTrades} trades</span>
+                  <span className="text-slate-300">·</span>
+                  <span className="text-red-500">DD {(iteration.maxDrawdown * 100).toFixed(1)}%</span>
+                  <span className="text-slate-300">·</span>
+                  <span>WR {(iteration.winRate * 100).toFixed(0)}%</span>
+                  <span className="text-slate-300">·</span>
+                  <span>SR {iteration.sharpe.toFixed(2)}</span>
+                </>
+              )}
+              {isInProgress && (
+                <>
+                  <span className="text-slate-300">·</span>
+                  <span className="text-slate-500 italic">
+                    {iteration.status === 'executing' && iteration.activeTimeframe && iteration.timeframeResults.length > 1
+                      ? `Running ${iteration.activeTimeframe}... (${iteration.timeframeResults.filter(r => r.status === 'complete' || r.status === 'running').length}/${iteration.timeframeResults.length})`
+                      : config.label}
+                  </span>
+                </>
+              )}
               <span className="text-slate-300">·</span>
               <span>{timeAgo(iteration.timestamp)}</span>
             </div>
@@ -192,19 +214,7 @@ export function IterationCard({ iteration, onSelect, onDelete, isLatest = false 
         </div>
       )}
 
-      {/* Loading indicator */}
-      {isInProgress && (
-        <div className="flex items-center gap-2 mt-2.5">
-          <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-400" />
-          <span className="text-xs text-slate-500">
-            {iteration.status === 'generating'
-              ? 'AI is crafting your strategy...'
-              : iteration.activeTimeframe && iteration.timeframeResults.length > 1
-                ? `Running ${iteration.activeTimeframe}... (${iteration.timeframeResults.filter(r => r.status === 'complete' || r.status === 'running').length}/${iteration.timeframeResults.length})`
-                : 'Running backtest...'}
-          </span>
-        </div>
-      )}
+      {/* Loading indicator is now handled entirely by the compact view, so we remove it from full view */}
 
       {/* Error message */}
       {iteration.status === 'error' && iteration.error && (

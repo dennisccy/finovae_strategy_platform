@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useMemo, FormEvent } from 'react'
 import { Send, Square, Sparkles } from 'lucide-react'
 import { ActivityLogEntry } from './ActivityLogEntry'
+import { ActivityLogGroup } from './ActivityLogGroup'
 import type { ActivityEntry } from '../hooks/useBacktest'
 import { getStrategyPrompts, getShortStrategyPrompts, type StrategyCard } from '../data/strategyPrompts'
 
@@ -180,18 +181,29 @@ export function ActivityLog({ entries, onSubmitPrompt, currentSymbol, currentTim
                 onSuggestionClick={onSuggestionClick}
               />
             ))}
-            {/* Iteration groups: all expanded, suggestions disabled for non-latest */}
+            {/* Iteration groups: wrapped in accordion components */}
             {groups.map((group) => {
               const isLatest = group.iterationId === latestIterationId
-              return group.entries.map((entry) => (
-                <ActivityLogEntry
-                  key={entry.id}
-                  entry={entry}
+              // If we have multiple groups and it's not the latest one, collapse it by default.
+              // Otherwise (e.g., standard sequential UX), keep it expanded.
+              const defaultExpanded = isLatest && groups.length < 5
+
+              return (
+                <ActivityLogGroup
+                  key={group.iterationId}
+                  iterationId={group.iterationId}
+                  entries={group.entries}
+                  isComplete={group.isComplete}
+                  isError={group.isError}
+                  summary={group.summary}
+                  prompt={group.prompt}
+                  strategyName={group.strategyName}
                   onEditAndRerun={onEditAndRerun}
                   onSuggestionClick={onSuggestionClick}
                   suggestionsDisabled={!isLatest}
+                  defaultExpanded={defaultExpanded}
                 />
-              ))
+              )
             })}
           </div>
         )}

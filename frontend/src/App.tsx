@@ -19,13 +19,6 @@ const OLD_SESSION_TABS_KEY = 'finovae_session_tabs'
 const OLD_ARCHIVE_KEY = 'finovae_sessions_archive'
 const MIGRATION_FLAG = 'finovae_migrated_v1'
 
-function getLatestSessionId(sessions: SessionTab[]): string {
-  if (sessions.length === 0) return ''
-  return sessions.reduce((latest, current) =>
-    current.lastAccessedAt > latest.lastAccessedAt ? current : latest
-  ).id
-}
-
 async function runMigration(): Promise<void> {
   if (localStorage.getItem(MIGRATION_FLAG)) return
 
@@ -100,7 +93,7 @@ function App() {
 
   // Load tabs + archive from backend on mount (with migration)
   useEffect(() => {
-    ;(async () => {
+    ; (async () => {
       await runMigration()
 
       const [tabs, archive] = await Promise.all([fetchSessionTabs(), fetchArchive()])
@@ -239,8 +232,8 @@ function App() {
         <button
           onClick={() => setMobileTab('activity')}
           className={`flex-1 flex items-center justify-center gap-2 py-2.5 text-sm font-medium transition-colors ${mobileTab === 'activity'
-              ? 'text-primary-600 border-b-2 border-primary-600'
-              : 'text-slate-500'
+            ? 'text-primary-600 border-b-2 border-primary-600'
+            : 'text-slate-500'
             }`}
         >
           <MessageSquare className="w-4 h-4" />
@@ -249,8 +242,8 @@ function App() {
         <button
           onClick={() => setMobileTab('iterations')}
           className={`flex-1 flex items-center justify-center gap-2 py-2.5 text-sm font-medium transition-colors ${mobileTab === 'iterations'
-              ? 'text-primary-600 border-b-2 border-primary-600'
-              : 'text-slate-500'
+            ? 'text-primary-600 border-b-2 border-primary-600'
+            : 'text-slate-500'
             }`}
         >
           <GitBranch className="w-4 h-4" />

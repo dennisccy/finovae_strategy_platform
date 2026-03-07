@@ -44,6 +44,7 @@ export function SessionContainer({
     startAutoRun,
     stopAutoRun,
     sessionStatus,
+    workerCount,
   } = useBacktest(sessionId)
 
   const [autoRunCount, setAutoRunCount] = useState(10)
@@ -129,6 +130,7 @@ export function SessionContainer({
         onAutoRunCountChange={setAutoRunCount}
         onStartAutoRun={() => startAutoRun(autoRunCount, lastUsedModel)}
         onStopAutoRun={stopAutoRun}
+        workerCount={workerCount}
       />
 
       {/* Main Content */}
