@@ -164,6 +164,76 @@ const strategies: StrategyGenerator[] = [
     tagline: `Expanding ATR + ${p.slowEma} EMA trend, 2×ATR stop`,
     prompt: `Build an ATR volatility trend strategy for ${p.assetName} on the ${p.tfLabel} timeframe. Enter long when: (1) price is above the ${p.slowEma}-period EMA — trend filter, (2) the current 14-period ATR is greater than its 10-bar average ATR (expanding volatility — trend is accelerating), and (3) RSI(14) is above 50 — momentum confirmation. Exit when price closes below the ${p.fastEma}-period EMA or RSI drops below 45. Place an initial stop-loss at 2×ATR below entry, capped at ${p.stop} maximum. Expanding volatility alongside trend alignment is a strong signal that a directional move is underway rather than random noise.`,
   }),
+
+  // 11. VWAP Reversion
+  (p) => ({
+    title: 'VWAP Reversion',
+    tagline: `Price dips below VWAP + RSI < ${p.rsiOS}, snap back to VWAP`,
+    prompt: `Build a VWAP mean reversion strategy for ${p.assetName} on the ${p.tfLabel} timeframe. Only trade in the direction of the ${p.trendP}-period EMA trend. Enter long when price closes below VWAP (Volume Weighted Average Price) and RSI(14) is below ${p.rsiOS} — a statistically oversold dip below the institutional fair value level. Exit when price returns to VWAP or gains ${p.target} from entry. Place a stop-loss ${p.stop} below entry. VWAP acts as the market's consensus fair value — oversold dips below it in an uptrend create high-probability reversion opportunities back to equilibrium.`,
+  }),
+
+  // 12. Ichimoku Cloud Breakout
+  (p) => ({
+    title: 'Ichimoku Breakout',
+    tagline: `Price breaks above Ichimoku Cloud with Tenkan/Kijun cross`,
+    prompt: `Build an Ichimoku Cloud breakout strategy for ${p.assetName} on the ${p.tfLabel} timeframe. Enter long when all three conditions hold: (1) price closes above both Senkou Span A and Senkou Span B (price is above the cloud), (2) Tenkan-sen (9-period) crosses above Kijun-sen (26-period) — the Ichimoku bullish cross, and (3) Chikou Span is above the price from 26 bars ago. Exit when price closes back inside or below the cloud. Place a stop-loss ${p.stop} below the top of the cloud at entry. This triple confirmation from Ichimoku ensures price, momentum, and lagging confirmation all align before entering.`,
+  }),
+
+  // 13. Supertrend Follow
+  (p) => ({
+    title: 'Supertrend Follow',
+    tagline: `Price above Supertrend (ATR×3 trailing) with ${p.trendP} EMA filter`,
+    prompt: `Build a Supertrend trend-following strategy for ${p.assetName} on the ${p.tfLabel} timeframe. The Supertrend indicator uses ATR(14) multiplied by 3.0 as a dynamic trailing stop line. Enter long when price closes above the Supertrend line AND price is above the ${p.trendP}-period EMA — double trend confirmation. Exit when price closes below the Supertrend line (the trailing stop triggers). Place a hard stop-loss ${p.stop} below entry as a maximum loss guard. Supertrend adapts to volatility automatically — in calm markets the line is tight, in volatile markets it widens, making it robust across conditions.`,
+  }),
+
+  // 14. Donchian Channel Breakout
+  (p) => ({
+    title: 'Donchian Breakout',
+    tagline: `${p.lookback}-bar channel breakout with ${p.holdBars}-bar hold`,
+    prompt: `Build a Donchian Channel breakout strategy for ${p.assetName} on the ${p.tfLabel} timeframe. Enter long when price closes above the upper Donchian Channel (the highest close of the past ${p.lookback} bars) — a new ${p.lookback}-bar high. This breakout signals that bears have been unable to stop price from making a new high, often the start of a directional move. Hold for ${p.holdBars} bars unless stopped out. Exit early if price falls below the midpoint of the Donchian Channel (average of upper and lower bands). Place a stop-loss ${p.stop} below entry. Targeting ${p.target}.`,
+  }),
+
+  // 15. OBV Divergence
+  (p) => ({
+    title: 'OBV Divergence',
+    tagline: `OBV uptrend + price ${p.lookback}-bar consolidation, volume-led entry`,
+    prompt: `Build an OBV divergence strategy for ${p.assetName} on the ${p.tfLabel} timeframe. Enter long when: (1) On-Balance Volume (OBV) is above its ${p.lookback}-bar moving average — showing consistent accumulation, and (2) price is trading within 1% of its ${p.lookback}-bar low — price consolidating while volume is bullish (bullish divergence). Exit when OBV drops back below its ${p.lookback}-bar moving average or price gains ${p.target}. Place a stop-loss ${p.stop} below entry. OBV leads price — when volume flows in (OBV rising) while price stagnates, a breakout to the upside often follows as the market catches up to the volume signal.`,
+  }),
+
+  // 16. Williams %R Oversold
+  (p) => ({
+    title: 'Williams %R Reversal',
+    tagline: `Williams %R crosses above -80 from oversold in uptrend`,
+    prompt: `Build a Williams %R reversal strategy for ${p.assetName} on the ${p.tfLabel} timeframe. Enter long when two conditions align: (1) Williams %R(14) crosses from below -80 to above -80 — exiting the oversold zone and signalling a momentum reversal, and (2) price is above the ${p.trendP}-period EMA — confirming the larger uptrend. Exit when Williams %R rises above -20 (overbought). Place a stop-loss ${p.stop} below the entry bar's low. Targeting ${p.target}. Williams %R is more sensitive than RSI at detecting short-term reversals from extreme oversold levels within established trends.`,
+  }),
+
+  // 17. Parabolic SAR Reversal
+  (p) => ({
+    title: 'Parabolic SAR Flip',
+    tagline: `SAR flips below price (start=0.02, max=0.2) + EMA uptrend`,
+    prompt: `Build a Parabolic SAR reversal strategy for ${p.assetName} on the ${p.tfLabel} timeframe. Enter long when the Parabolic SAR (step=0.02, maximum=0.2) flips from above price to below price — signalling a bullish reversal. Require that price is also above the ${p.trendP}-period EMA to ensure the flip occurs within an uptrend context. Exit when the SAR flips back above price. Use the SAR value itself as the trailing stop-loss (not a fixed percentage). Place a maximum hard stop at ${p.stop} below entry. The SAR accelerates as price extends, tightening the trail to capture more profit in fast moves.`,
+  }),
+
+  // 18. Keltner Channel Squeeze
+  (p) => ({
+    title: 'Keltner Squeeze',
+    tagline: `BB inside Keltner squeeze → breakout entry with momentum`,
+    prompt: `Build a Keltner Channel squeeze breakout strategy for ${p.assetName} on the ${p.tfLabel} timeframe. Detect a squeeze when the Bollinger Bands (${p.bbPeriod}-period, 2.0 std) are entirely inside the Keltner Channel (${p.bbPeriod}-period EMA ± 1.5×ATR). Enter long when the squeeze resolves upward: price closes above the upper Keltner Channel with RSI(14) above 50 confirming momentum. Exit after ${p.holdBars} bars or when price closes back inside the Keltner Channel. Place a stop-loss ${p.stop} below entry. A squeeze represents compressed volatility — the breakout direction after the squeeze often marks the start of a powerful directional move.`,
+  }),
+
+  // 19. ADX Trend Strength
+  (p) => ({
+    title: 'ADX Trend Strength',
+    tagline: `ADX > 25 with +DI above -DI, ${p.fastEma} EMA confirmation`,
+    prompt: `Build an ADX trend strength strategy for ${p.assetName} on the ${p.tfLabel} timeframe. Enter long when three conditions align: (1) ADX(14) is above 25 — confirming a strong trend is in place, (2) +DI is above -DI — the trend is bullish, and (3) price is above the ${p.fastEma}-period EMA. Exit when ADX drops below 20 (trend weakening) or -DI crosses above +DI (trend reversal). Place a stop-loss ${p.stop} below entry. Targeting ${p.target}. ADX filters out choppy, trendless markets where trend-following systems fail — only entering when momentum is measurably strong reduces false signals significantly.`,
+  }),
+
+  // 20. CCI Mean Reversion
+  (p) => ({
+    title: 'CCI Mean Reversion',
+    tagline: `CCI dips below -100 in uptrend, exit at zero crossing`,
+    prompt: `Build a CCI mean reversion strategy for ${p.assetName} on the ${p.tfLabel} timeframe. Only trade when price is above the ${p.trendP}-period EMA (uptrend filter). Enter long when the Commodity Channel Index CCI(20) drops below -100 — extreme oversold territory — and then crosses back above -100 on the following bar (reversal confirmed). Exit when CCI crosses above 0 (returned to equilibrium). Place a stop-loss ${p.stop} below the entry bar's low. Targeting ${p.target}. CCI measures how far price has deviated from its statistical mean — readings below -100 indicate a severe short-term dip within a larger uptrend, prime conditions for a snap-back.`,
+  }),
 ]
 
 // ── 10 SHORT-AWARE bidirectional strategy generators ──────────────────────────
@@ -238,6 +308,76 @@ const shortStrategies: StrategyGenerator[] = [
     title: 'ATR Trend L/S',
     tagline: `Expanding ATR + ${p.fastEma}/${p.slowEma} direction, 2×ATR stop both ways`,
     prompt: `Build a bidirectional ATR volatility trend strategy for ${p.assetName} on the ${p.tfLabel} timeframe. Measure expanding volatility as: 14-period ATR greater than its 10-bar average (trend accelerating). Return signal 1 (go long) when: ${p.fastEma} EMA is above ${p.slowEma} EMA AND ATR is expanding AND RSI(14) is above 50. Return signal -1 (go short) when: ${p.fastEma} EMA is below ${p.slowEma} EMA AND ATR is expanding AND RSI(14) is below 50. Return 0 otherwise. Place an initial stop at 2×ATR from entry, capped at ${p.stop}, for both directions. Both long and short trades must fire — the conditions are symmetric.`,
+  }),
+
+  // 11. VWAP Reversion — Bidirectional
+  (p) => ({
+    title: 'VWAP Reversion L/S',
+    tagline: `Long below VWAP oversold, short above VWAP overbought`,
+    prompt: `Build a bidirectional VWAP mean reversion strategy for ${p.assetName} on the ${p.tfLabel} timeframe. Return signal 1 (go long) when price closes below VWAP AND RSI(14) is below ${p.rsiOS} — oversold dip below fair value. Return signal -1 (go short) when price closes above VWAP AND RSI(14) is above ${p.rsiOB} — overbought rally above fair value. Return 0 otherwise. Exit by returning signal 2 (flatten) when price reaches VWAP from either side. Place a stop-loss ${p.stop} from entry in both directions. Both long and short trades must fire — the strategy is symmetric around VWAP as the mean.`,
+  }),
+
+  // 12. Ichimoku Cloud — Bidirectional
+  (p) => ({
+    title: 'Ichimoku Cloud L/S',
+    tagline: `Long above cloud with Tenkan/Kijun cross, short below cloud`,
+    prompt: `Build a bidirectional Ichimoku Cloud strategy for ${p.assetName} on the ${p.tfLabel} timeframe. Return signal 1 (go long) when: price is above both Senkou Span A and Span B (above cloud) AND Tenkan-sen crosses above Kijun-sen. Return signal -1 (go short) when: price is below both Senkou Span A and Span B (below cloud) AND Tenkan-sen crosses below Kijun-sen. Return 0 when price is inside the cloud (neutral zone). Exit when price re-enters the cloud. Place a stop-loss ${p.stop} from entry in both directions. Both long and short trades must be generated — the Ichimoku signals are symmetric for bearish and bullish breakouts.`,
+  }),
+
+  // 13. Supertrend — Bidirectional
+  (p) => ({
+    title: 'Supertrend L/S',
+    tagline: `Long above Supertrend (ATR×3), short below — always in market`,
+    prompt: `Build a bidirectional Supertrend strategy for ${p.assetName} on the ${p.tfLabel} timeframe. The Supertrend indicator uses ATR(14) multiplied by 3.0. Return signal 1 (go long) when price closes above the Supertrend line — bullish side. Return signal -1 (go short) when price closes below the Supertrend line — bearish side. This is an always-in-market strategy: when one position closes, the opposite opens immediately. Use the Supertrend value as the trailing stop for both directions. Place a maximum hard stop ${p.stop} from entry as a guard. Both long and short trades must fire — the strategy reverses direction on every Supertrend flip.`,
+  }),
+
+  // 14. Donchian Channel — Bidirectional
+  (p) => ({
+    title: 'Donchian Breakout L/S',
+    tagline: `Long on ${p.lookback}-bar high break, short on ${p.lookback}-bar low break`,
+    prompt: `Build a bidirectional Donchian Channel breakout strategy for ${p.assetName} on the ${p.tfLabel} timeframe. Return signal 1 (go long) when price closes above the upper Donchian Channel (highest close of past ${p.lookback} bars) — bullish breakout to new highs. Return signal -1 (go short) when price closes below the lower Donchian Channel (lowest close of past ${p.lookback} bars) — bearish breakout to new lows. Return 0 otherwise. Place a stop-loss ${p.stop} from entry in both directions. Targeting ${p.target}. Hold for ${p.holdBars} bars or until the midpoint of the channel is reached. Both long and short breakout trades must fire symmetrically.`,
+  }),
+
+  // 15. OBV Divergence — Bidirectional
+  (p) => ({
+    title: 'OBV Divergence L/S',
+    tagline: `Long: OBV up + price dip. Short: OBV down + price rally`,
+    prompt: `Build a bidirectional OBV divergence strategy for ${p.assetName} on the ${p.tfLabel} timeframe. Return signal 1 (go long) when OBV is above its ${p.lookback}-bar moving average (accumulation) AND price is within 1% of its ${p.lookback}-bar low — bullish divergence. Return signal -1 (go short) when OBV is below its ${p.lookback}-bar moving average (distribution) AND price is within 1% of its ${p.lookback}-bar high — bearish divergence. Return 0 otherwise. Exit when OBV crosses its moving average in the opposite direction, or price gains ${p.target}. Place a stop-loss ${p.stop} from entry. Both long and short OBV divergence trades must fire symmetrically.`,
+  }),
+
+  // 16. Williams %R — Bidirectional
+  (p) => ({
+    title: 'Williams %R L/S',
+    tagline: `Long above -80 cross, short below -20 cross`,
+    prompt: `Build a bidirectional Williams %R strategy for ${p.assetName} on the ${p.tfLabel} timeframe. Use Williams %R(14). Return signal 1 (go long) when Williams %R crosses from below -80 to above -80 — exiting oversold. Return signal -1 (go short) when Williams %R crosses from above -20 to below -20 — exiting overbought. Return 0 otherwise. Exit the long when %R rises above -20; exit the short when %R falls below -80. Place a stop-loss ${p.stop} from entry in both directions. Targeting ${p.target}. Both long and short reversal signals must fire — the strategy is symmetric around the Williams %R extremes.`,
+  }),
+
+  // 17. Parabolic SAR — Bidirectional
+  (p) => ({
+    title: 'Parabolic SAR L/S',
+    tagline: `Long on SAR flip below price, short on SAR flip above price`,
+    prompt: `Build a bidirectional Parabolic SAR strategy for ${p.assetName} on the ${p.tfLabel} timeframe. Use Parabolic SAR (step=0.02, maximum=0.2). Return signal 1 (go long) when SAR flips from above price to below price — bullish reversal signal. Return signal -1 (go short) when SAR flips from below price to above price — bearish reversal signal. This is a reversal strategy — when one side closes, the other opens. Use the SAR value as the trailing stop for both directions, with a maximum hard stop of ${p.stop} from entry. Both long and short trades must fire on every SAR direction change — the strategy is fully symmetric.`,
+  }),
+
+  // 18. Keltner Channel — Bidirectional
+  (p) => ({
+    title: 'Keltner Channel L/S',
+    tagline: `Long at lower Keltner touch + RSI < ${p.rsiOS}, short at upper touch`,
+    prompt: `Build a bidirectional Keltner Channel mean reversion strategy for ${p.assetName} on the ${p.tfLabel} timeframe. Use Keltner Channels (${p.bbPeriod}-period EMA ± 2.0×ATR). Return signal 1 (go long) when price touches or closes below the lower Keltner Channel AND RSI(14) is below ${p.rsiOS} — oversold at lower extreme. Return signal -1 (go short) when price touches or closes above the upper Keltner Channel AND RSI(14) is above ${p.rsiOB} — overbought at upper extreme. Exit when price returns to the middle band (${p.bbPeriod}-period EMA). Place a stop-loss ${p.stop} from entry. Both long and short trades must fire symmetrically.`,
+  }),
+
+  // 19. ADX Trend Strength — Bidirectional
+  (p) => ({
+    title: 'ADX Trend L/S',
+    tagline: `ADX > 25: long on +DI > -DI, short on -DI > +DI`,
+    prompt: `Build a bidirectional ADX trend strength strategy for ${p.assetName} on the ${p.tfLabel} timeframe. Use ADX(14) with +DI and -DI. Return signal 1 (go long) when ADX is above 25 (strong trend) AND +DI is above -DI (bullish) AND price is above the ${p.fastEma}-period EMA. Return signal -1 (go short) when ADX is above 25 AND -DI is above +DI (bearish) AND price is below the ${p.fastEma}-period EMA. Return 0 when ADX is below 20 (no trend — stay flat). Exit when ADX drops below 20 or the DI lines cross. Place a stop-loss ${p.stop} from entry in both directions. Both long and short trades must fire when the trend is strong enough — the conditions mirror each other exactly.`,
+  }),
+
+  // 20. CCI Mean Reversion — Bidirectional
+  (p) => ({
+    title: 'CCI Reversal L/S',
+    tagline: `Long: CCI crosses above -100. Short: CCI crosses below +100`,
+    prompt: `Build a bidirectional CCI mean reversion strategy for ${p.assetName} on the ${p.tfLabel} timeframe. Use CCI(20). Return signal 1 (go long) when CCI crosses from below -100 to above -100 — exiting oversold territory, reversal confirmed. Return signal -1 (go short) when CCI crosses from above +100 to below +100 — exiting overbought territory, reversal confirmed. Return 0 otherwise. Exit long when CCI reaches 0; exit short when CCI reaches 0. Place a stop-loss ${p.stop} from entry in both directions. Targeting ${p.target}. Both long and short reversal trades must fire — the CCI ±100 levels act as symmetric extreme zones in both directions.`,
   }),
 ]
 

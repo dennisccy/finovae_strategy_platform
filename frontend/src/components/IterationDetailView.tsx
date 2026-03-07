@@ -49,22 +49,13 @@ export function IterationDetailView({ iteration, previousIteration, onBack }: It
       setTimeout(() => setCopied(false), 2000)
     })
   }
-  const hasMultipleTf = iteration.timeframeResults && iteration.timeframeResults.filter(r => r.status === 'complete').length > 1
-  const [selectedTf, setSelectedTf] = useState<string>(
-    iteration.timeframeResults?.[0]?.timeframe ?? ''
-  )
-
   const canDiff = !!(previousIteration?.scriptCode && iteration.scriptCode)
   const diffResult = canDiff && showDiff
     ? diffLines(previousIteration!.scriptCode, iteration.scriptCode)
     : null
 
-  // Determine which result/rating to render based on selected TF tab
-  const activeTfResult = hasMultipleTf
-    ? iteration.timeframeResults.find(r => r.timeframe === selectedTf && r.status === 'complete')
-    : null
-  const result = activeTfResult?.result ?? iteration.result
-  const rating = activeTfResult?.rating ?? iteration.rating
+  const result = iteration.result
+  const rating = iteration.rating
 
   if (!result) return null
 
@@ -102,38 +93,6 @@ export function IterationDetailView({ iteration, previousIteration, onBack }: It
         </div>
       </div>
 
-      {/* Timeframe tab bar */}
-      {hasMultipleTf && (
-        <div className="px-4 lg:px-6 bg-white border-b border-slate-200">
-          <div className="flex gap-0.5 -mb-px">
-            {iteration.timeframeResults
-              .filter(r => r.status === 'complete')
-              .map(tfr => {
-                const isActive = selectedTf === tfr.timeframe
-                const ret = tfr.result?.total_return
-                return (
-                  <button
-                    key={tfr.timeframe}
-                    onClick={() => setSelectedTf(tfr.timeframe)}
-                    className={`px-3 py-2 text-xs font-medium border-b-2 transition-colors ${
-                      isActive
-                        ? 'border-primary-600 text-primary-700'
-                        : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
-                    }`}
-                  >
-                    {tfr.timeframe}
-                    {ret !== undefined && ret !== null && (
-                      <span className={`ml-1.5 ${ret >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-                        {ret >= 0 ? '+' : ''}{(ret * 100).toFixed(1)}%
-                      </span>
-                    )}
-                  </button>
-                )
-              })}
-          </div>
-        </div>
-      )}
-
       <div className="p-4 lg:p-6 space-y-4 lg:space-y-6">
         {/* Backtest parameters */}
         {iteration.params && (
@@ -145,7 +104,7 @@ export function IterationDetailView({ iteration, previousIteration, onBack }: It
               </div>
               <div>
                 <dt className="text-xs text-slate-400">Timeframe</dt>
-                <dd className="text-sm font-medium text-slate-700">{iteration.params.timeframes.join('/')}</dd>
+                <dd className="text-sm font-medium text-slate-700">{iteration.params.timeframe}</dd>
               </div>
               <div>
                 <dt className="text-xs text-slate-400">Date Range</dt>

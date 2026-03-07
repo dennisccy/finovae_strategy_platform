@@ -46,18 +46,15 @@ export interface ArchivedSession {
 }
 
 function migrateSession(data: SessionData): SessionData {
-  // Migrate old timeframe: string → timeframes: string[]
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const params = data.backtestParams as any
-  if ('timeframe' in params && !('timeframes' in params)) {
-    params.timeframes = [params.timeframe as string]
-    delete params.timeframe
+  // Migrate timeframes: string[] → timeframe: string (multi-timeframe removed)
+  if ('timeframes' in params && !('timeframe' in params)) {
+    params.timeframe = (Array.isArray(params.timeframes) ? params.timeframes[0] : params.timeframes) ?? '4h'
+    delete params.timeframes
   }
-  // Ensure timeframes is always a non-empty string[]
-  if (!Array.isArray(params.timeframes) || params.timeframes.length === 0) {
-    params.timeframes = typeof params.timeframes === 'string' && params.timeframes
-      ? [params.timeframes as string]
-      : ['4h']
+  if (!params.timeframe || typeof params.timeframe !== 'string') {
+    params.timeframe = '4h'
   }
   // Migrate old sessions without exchange field
   if (!('exchange' in params)) {
@@ -70,14 +67,12 @@ function migrateSession(data: SessionData): SessionData {
   if (!('leverage' in params)) {
     params.leverage = 1
   }
-  // Migrate old iterations: add timeframeResults + activeTimeframe
+  // Strip removed multi-timeframe fields from iteration nodes
   data.iterationHistory = data.iterationHistory.map(n => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const node = n as any
-    if (!('timeframeResults' in node)) {
-      node.timeframeResults = []
-      node.activeTimeframe = null
-    }
+    delete node.timeframeResults
+    delete node.activeTimeframe
     if (!('maxDrawdown' in node)) {
       node.maxDrawdown = node.result?.max_drawdown ?? 0
     }
@@ -316,7 +311,7 @@ const CALCULATE_STEP_KEYS = [
 
 export interface BacktestParams {
   symbol: string
-  timeframes: string[]
+  timeframe: string
   start_date: string
   end_date: string
   initial_capital: number
@@ -331,16 +326,6 @@ export const EXCHANGE_CONFIGS: Record<string, { label: string; commission: numbe
   okx: { label: 'OKX', commission: 0.001 },
   kraken: { label: 'Kraken', commission: 0.0026 },
   coinbase: { label: 'Coinbase', commission: 0.006 },
-}
-
-export type TimeframeStatus = 'pending' | 'running' | 'complete' | 'error'
-
-export interface TimeframeResult {
-  timeframe: string
-  status: TimeframeStatus
-  result: BacktestResult | null
-  rating: StrategyRating | null
-  error?: string
 }
 
 export type IterationStatus = 'generating' | 'executing' | 'complete' | 'error'
@@ -365,8 +350,6 @@ export interface IterationNode {
   error?: string
   modelUsed?: string
   params?: BacktestParams
-  timeframeResults: TimeframeResult[]
-  activeTimeframe: string | null
 }
 
 export type Phase = 'idle' | 'generating' | 'executing' | 'results'
@@ -393,7 +376,7 @@ export interface LiveSessionStatus {
 
 const DEFAULT_PARAMS: BacktestParams = {
   symbol: 'BNB/USDT',
-  timeframes: ['4h'],
+  timeframe: '4h',
   start_date: '2020-01-01',
   end_date: '2024-01-01',
   initial_capital: 1500,
@@ -475,7 +458,7 @@ export function useBacktest(sessionId: string) {
         // Fix up in-progress statuses that survived a page reload
         const restoredHistory = migrated.iterationHistory.flatMap((n: IterationNode) => {
           if (n.status === 'generating' || n.status === 'executing') {
-            if (n.result) return [{ ...n, status: 'complete' as const, activeTimeframe: null }]
+            if (n.result) return [{ ...n, status: 'complete' as const }]
             return []
           }
           return [n]
@@ -651,17 +634,7 @@ export function useBacktest(sessionId: string) {
 
     setIterationHistory(prev => prev.map(n => {
       if (n.status === 'generating' || n.status === 'executing') {
-        return {
-          ...n,
-          status: 'error' as const,
-          error: 'Cancelled by user',
-          activeTimeframe: null,
-          timeframeResults: n.timeframeResults.map(tf =>
-            tf.status === 'running' || tf.status === 'pending'
-              ? { ...tf, status: 'error' as TimeframeStatus, error: 'Cancelled by user' }
-              : tf
-          ),
-        }
+        return { ...n, status: 'error' as const, error: 'Cancelled by user' }
       }
       return n
     }))
@@ -749,6 +722,9 @@ export function useBacktest(sessionId: string) {
     iterationId: string,
     signal?: AbortSignal,
     symbolOverride?: string,
+    directionId?: string,
+    directionIndex?: number,
+    directionPrompt?: string,
   ): Promise<{ result: BacktestResult; rating: StrategyRating | null } | null> => {
     const validateStepId = addLogEntry({
       type: 'ai-step', content: `[${timeframe}] Validating code...`, status: 'active', startedAt: Date.now(), iterationId,
@@ -871,6 +847,12 @@ export function useBacktest(sessionId: string) {
         commission: EXCHANGE_CONFIGS[backtestParams.exchange]?.commission ?? 0.00075,
         allow_short: backtestParams.allow_short ?? false,
         leverage: backtestParams.leverage ?? 1,
+        ...(directionId ? {
+          exchange: backtestParams.exchange,
+          direction_id: directionId,
+          direction_index: directionIndex ?? 0,
+          direction_prompt: directionPrompt ?? '',
+        } : {}),
       })
 
       // Retry on transient "Failed to fetch" network errors (e.g. server busy during concurrent load)
@@ -1026,6 +1008,9 @@ export function useBacktest(sessionId: string) {
     skipInsights?: boolean,
     changeSummary?: string,
     sharedSignal?: AbortSignal,
+    directionId?: string,
+    directionIndex?: number,
+    directionPrompt?: string,
   ) => {
     // Deduplicate: if already loading, abort the previous request first (unless explicitly running concurrently)
     if (!sharedSignal && abortControllerRef.current) {
@@ -1033,7 +1018,6 @@ export function useBacktest(sessionId: string) {
       abortControllerRef.current = null
     }
 
-    const timeframes = overrideTimeframes ?? backtestParams.timeframes
     const symbolToCheck = overrideSymbol ?? backtestParams.symbol
     const symbolErr = await validateSymbolExists(symbolToCheck)
     if (symbolErr) {
@@ -1061,13 +1045,6 @@ export function useBacktest(sessionId: string) {
       iterationId,
     })
 
-    const initialTfResults: TimeframeResult[] = timeframes.map(tf => ({
-      timeframe: tf,
-      status: 'pending' as TimeframeStatus,
-      result: null,
-      rating: null,
-    }))
-
     const newIteration: IterationNode = {
       id: iterationId,
       prompt,
@@ -1086,8 +1063,6 @@ export function useBacktest(sessionId: string) {
       params: { ...backtestParams },
       timestamp: new Date().toISOString(),
       status: 'generating',
-      timeframeResults: initialTfResults,
-      activeTimeframe: null,
     }
     setIterationHistory(prev => [...prev, newIteration])
 
@@ -1104,7 +1079,7 @@ export function useBacktest(sessionId: string) {
         natural_language: prompt,
         model,
         symbol: overrideSymbol ?? backtestParams.symbol,
-        timeframe: timeframes[0],
+        timeframe: overrideTimeframes?.[0] ?? backtestParams.timeframe,
         start_date: backtestParams.start_date,
         end_date: backtestParams.end_date,
         allow_short: backtestParams.allow_short ?? false,
@@ -1161,82 +1136,28 @@ export function useBacktest(sessionId: string) {
 
       setPhase('executing')
 
-      const runningTfResults: TimeframeResult[] = timeframes.map(tf => ({
-        timeframe: tf,
-        status: 'running' as TimeframeStatus,
-        result: null,
-        rating: null,
-      }))
-      setIterationHistory(prev => prev.map(n =>
-        n.id === iterationId
-          ? { ...n, timeframeResults: [...runningTfResults], activeTimeframe: timeframes[0] }
-          : n
-      ))
-
-      const tfRunnerIds: string[] = []
-      timeframes.forEach((tf, i) => {
-        tfRunnerIds.push(addLogEntry({
-          type: 'ai-step',
-          content: `Running ${tf}... (${i + 1}/${timeframes.length})`,
-          status: 'active',
-          startedAt: Date.now(),
-          iterationId,
-        }))
+      const timeframe = overrideTimeframes?.[0] ?? backtestParams.timeframe
+      const tfRunnerId = addLogEntry({
+        type: 'ai-step',
+        content: `Running ${timeframe}...`,
+        status: 'active',
+        startedAt: Date.now(),
+        iterationId,
       })
 
-      const promises = timeframes.map((tf) =>
-        executeSingleTimeframe(scriptId, scriptCode, tf, iterationId, signal, overrideSymbol)
+      const outcome = await executeSingleTimeframe(
+        scriptId, scriptCode, timeframe, iterationId, signal, overrideSymbol,
+        directionId, directionIndex, directionPrompt,
       )
-      const settled = await Promise.allSettled(promises)
-      const doneNow = Date.now()
-      tfRunnerIds.forEach(id => updateLogEntry(id, { status: 'done', completedAt: doneNow }))
-
-      const tfResults: TimeframeResult[] = timeframes.map((tf, i) => {
-        const outcome = settled[i]
-        if (outcome.status === 'fulfilled' && outcome.value) {
-          return {
-            timeframe: tf,
-            status: 'complete' as TimeframeStatus,
-            result: outcome.value.result,
-            rating: outcome.value.rating,
-          }
-        } else {
-          if (signal.aborted) {
-            return {
-              timeframe: tf,
-              status: 'error' as TimeframeStatus,
-              result: null,
-              rating: null,
-              error: 'Cancelled by user',
-            }
-          }
-          const errMsg = outcome.status === 'rejected'
-            ? (outcome.reason?.message || `Backtest failed for ${tf}`)
-            : `Backtest failed for ${tf}`
-          return {
-            timeframe: tf,
-            status: 'error' as TimeframeStatus,
-            result: null,
-            rating: null,
-            error: errMsg,
-          }
-        }
-      })
-
-      setIterationHistory(prev => prev.map(n =>
-        n.id === iterationId ? { ...n, timeframeResults: [...tfResults] } : n
-      ))
+      updateLogEntry(tfRunnerId, { status: 'done', completedAt: Date.now() })
 
       if (signal.aborted) return null
 
-      const firstSuccess = tfResults.find(r => r.status === 'complete' && r.result)
-      const anySuccess = !!firstSuccess
-
-      if (anySuccess && firstSuccess?.result) {
-        const backtestResult = firstSuccess.result
+      if (outcome?.result) {
+        const backtestResult = outcome.result
 
         // Apply liquidity cache: use first iteration's liquidity for all subsequent ones
-        let finalRating = firstSuccess.rating
+        let finalRating = outcome.rating
         if (finalRating) {
           if (!cachedLiquidityRef.current) {
             cachedLiquidityRef.current = {
@@ -1254,15 +1175,9 @@ export function useBacktest(sessionId: string) {
 
         const returnPct = (backtestResult.total_return * 100).toFixed(2)
         const returnSign = backtestResult.total_return >= 0 ? '+' : ''
-        const tfSummaries = tfResults
-          .filter(r => r.status === 'complete' && r.result)
-          .map(r => `${r.timeframe}: ${r.result!.total_return >= 0 ? '+' : ''}${(r.result!.total_return * 100).toFixed(2)}%`)
-          .join(', ')
         addLogEntry({
           type: 'complete',
-          content: timeframes.length > 1
-            ? `Results: ${tfSummaries}`
-            : `${returnSign}${returnPct}% return, ${backtestResult.num_trades} trades, ${(backtestResult.win_rate * 100).toFixed(0)}% win rate, ${backtestResult.sharpe_ratio.toFixed(2)} sharpe`,
+          content: `${returnSign}${returnPct}% return, ${backtestResult.num_trades} trades, ${(backtestResult.win_rate * 100).toFixed(0)}% win rate, ${backtestResult.sharpe_ratio.toFixed(2)} sharpe`,
           iterationId,
         })
 
@@ -1315,7 +1230,7 @@ export function useBacktest(sessionId: string) {
                 model: model,
                 natural_language_prompt: prompt,
                 symbol: overrideSymbol ?? backtestParams.symbol,
-                timeframe: firstSuccess.timeframe,
+                timeframe: overrideTimeframes?.[0] ?? backtestParams.timeframe,
                 start_date: backtestParams.start_date,
                 end_date: backtestParams.end_date,
                 allow_short: backtestParams.allow_short ?? false,
@@ -1355,27 +1270,25 @@ export function useBacktest(sessionId: string) {
         // always captures both backtest results and any suggestions together.
         setIterationHistory(prev => prev.map(n =>
           n.id === iterationId
-            ? {
-              ...n, status: 'complete' as const, activeTimeframe: null,
-              ...(newInsights ? { insights: newInsights } : {})
-            }
+            ? { ...n, status: 'complete' as const, ...(newInsights ? { insights: newInsights } : {}) }
             : n
         ))
         iterationHistoryRef.current = iterationHistoryRef.current.map(n =>
           n.id === iterationId
-            ? {
-              ...n, status: 'complete' as const, activeTimeframe: null,
-              ...(newInsights ? { insights: newInsights } : {})
-            }
+            ? { ...n, status: 'complete' as const, ...(newInsights ? { insights: newInsights } : {}) }
             : n
         )
+        // Auto-select for regular runs; skip for direction cards running in parallel
+        if (!skipInsights) {
+          setSelectedIterationId(iterationId)
+        }
         setIsLoading(false)
-        return iterationId
+        return iterationHistoryRef.current.find(n => n.id === iterationId) ?? null
       } else {
-        const errMsg = 'All timeframe backtests failed'
+        const errMsg = 'Backtest failed'
         addLogEntry({ type: 'error', content: errMsg, iterationId })
         setIterationHistory(prev => prev.map(n =>
-          n.id === iterationId ? { ...n, status: 'error', error: errMsg, activeTimeframe: null } : n
+          n.id === iterationId ? { ...n, status: 'error', error: errMsg } : n
         ))
         setError(errMsg)
         setPhase('idle')
@@ -1456,6 +1369,43 @@ export function useBacktest(sessionId: string) {
     setSelectedIterationId(id)
   }, [])
 
+  // ==========================================================================
+  // loadCachedIteration — inject a pre-built node (from directions cache)
+  // ==========================================================================
+
+  const loadCachedIteration = useCallback((node: IterationNode) => {
+    setIterationHistory(prev => {
+      if (prev.some(n => n.id === node.id)) {
+        return prev.map(n => n.id === node.id ? node : n)
+      }
+      return [...prev, node]
+    })
+    setSelectedIterationId(node.id)
+    const idx = iterationHistoryRef.current.length + 1
+    upsertIteration(sessionId, idx, node)
+  }, [sessionId])
+
+  const loadCachedAsStartingPoint = useCallback((node: IterationNode) => {
+    addLogEntry({ type: 'user-prompt', content: node.prompt || `Loaded: ${node.strategyName}`, iterationId: node.id })
+    addLogEntry({ type: 'code-preview', content: node.strategyName, iterationId: node.id })
+    addLogEntry({ type: 'complete', content: `${node.strategyName} loaded from cache`, iterationId: node.id })
+    if (node.insights?.suggestions?.length) {
+      addLogEntry({
+        type: 'insights',
+        content: 'Suggestions from cached run:',
+        detail: JSON.stringify(node.insights.suggestions),
+        iterationId: node.id,
+      })
+    }
+    setIterationHistory(prev => {
+      if (prev.some(n => n.id === node.id)) return prev.map(n => n.id === node.id ? node : n)
+      return [...prev, node]
+    })
+    setSelectedIterationId(node.id)
+    const idx = iterationHistoryRef.current.length + 1
+    upsertIteration(sessionId, idx, node)
+  }, [sessionId, addLogEntry])
+
   const generateInsightsForIteration = useCallback(async (
     iterationId: string,
     model: string,
@@ -1464,8 +1414,7 @@ export function useBacktest(sessionId: string) {
     const iteration = iterationHistoryRef.current.find(n => n.id === iterationId)
     if (!iteration?.result) return
 
-    const firstSuccessfulTf = iteration.timeframeResults.find(r => r.status === 'complete')
-    const timeframe = firstSuccessfulTf?.timeframe ?? backtestParams.timeframes[0]
+    const timeframe = iteration.params?.timeframe ?? backtestParams.timeframe
 
     const insightsStepId = addLogEntry({
       type: 'ai-step',
@@ -1583,8 +1532,6 @@ export function useBacktest(sessionId: string) {
     const original = iterationHistory.find(n => n.id === originalIterationId)
     if (!original) return
 
-    const timeframes = backtestParams.timeframes
-
     setPhase('executing')
     setIsLoading(true)
     setError(null)
@@ -1608,13 +1555,6 @@ export function useBacktest(sessionId: string) {
       iterationId,
     })
 
-    const initialTfResults: TimeframeResult[] = timeframes.map(tf => ({
-      timeframe: tf,
-      status: 'pending' as TimeframeStatus,
-      result: null,
-      rating: null,
-    }))
-
     const newIteration: IterationNode = {
       id: iterationId,
       prompt: original.prompt + ' (edited)',
@@ -1632,84 +1572,29 @@ export function useBacktest(sessionId: string) {
       params: original.params ?? { ...backtestParams },
       timestamp: new Date().toISOString(),
       status: 'executing',
-      timeframeResults: initialTfResults,
-      activeTimeframe: null,
     }
     setIterationHistory(prev => [...prev, newIteration])
 
     try {
-      const runningTfResults: TimeframeResult[] = timeframes.map(tf => ({
-        timeframe: tf,
-        status: 'running' as TimeframeStatus,
-        result: null,
-        rating: null,
-      }))
-      setIterationHistory(prev => prev.map(n =>
-        n.id === iterationId
-          ? { ...n, timeframeResults: [...runningTfResults], activeTimeframe: timeframes[0] }
-          : n
-      ))
-
-      const tfRunnerIds: string[] = []
-      timeframes.forEach((tf, i) => {
-        tfRunnerIds.push(addLogEntry({
-          type: 'ai-step',
-          content: `Running ${tf}... (${i + 1}/${timeframes.length})`,
-          status: 'active',
-          startedAt: Date.now(),
-          iterationId,
-        }))
+      const timeframe = backtestParams.timeframe
+      const tfRunnerId = addLogEntry({
+        type: 'ai-step',
+        content: `Running ${timeframe}...`,
+        status: 'active',
+        startedAt: Date.now(),
+        iterationId,
       })
 
-      const promises = timeframes.map((tf) =>
-        executeSingleTimeframe(original.scriptId, editedCode, tf, iterationId, signal)
-      )
-      const settled = await Promise.allSettled(promises)
-      const doneNow = Date.now()
-      tfRunnerIds.forEach(id => updateLogEntry(id, { status: 'done', completedAt: doneNow }))
-
-      const tfResults: TimeframeResult[] = timeframes.map((tf, i) => {
-        const outcome = settled[i]
-        if (outcome.status === 'fulfilled' && outcome.value) {
-          return {
-            timeframe: tf,
-            status: 'complete' as TimeframeStatus,
-            result: outcome.value.result,
-            rating: outcome.value.rating,
-          }
-        } else {
-          if (signal.aborted) {
-            return {
-              timeframe: tf,
-              status: 'error' as TimeframeStatus,
-              result: null,
-              rating: null,
-              error: 'Cancelled by user',
-            }
-          }
-          return {
-            timeframe: tf,
-            status: 'error' as TimeframeStatus,
-            result: null,
-            rating: null,
-            error: `Backtest failed for ${tf}`,
-          }
-        }
-      })
-
-      setIterationHistory(prev => prev.map(n =>
-        n.id === iterationId ? { ...n, timeframeResults: [...tfResults] } : n
-      ))
+      const outcome = await executeSingleTimeframe(original.scriptId, editedCode, timeframe, iterationId, signal)
+      updateLogEntry(tfRunnerId, { status: 'done', completedAt: Date.now() })
 
       if (signal.aborted) return
 
-      const firstSuccess = tfResults.find(r => r.status === 'complete' && r.result)
-
-      if (firstSuccess?.result) {
-        const backtestResult = firstSuccess.result
+      if (outcome?.result) {
+        const backtestResult = outcome.result
 
         // Apply liquidity cache
-        let finalRating = firstSuccess.rating
+        let finalRating = outcome.rating
         if (finalRating && cachedLiquidityRef.current) {
           finalRating = {
             ...finalRating,
@@ -1720,15 +1605,9 @@ export function useBacktest(sessionId: string) {
 
         const returnPct = (backtestResult.total_return * 100).toFixed(2)
         const returnSign = backtestResult.total_return >= 0 ? '+' : ''
-        const tfSummaries = tfResults
-          .filter(r => r.status === 'complete' && r.result)
-          .map(r => `${r.timeframe}: ${r.result!.total_return >= 0 ? '+' : ''}${(r.result!.total_return * 100).toFixed(2)}%`)
-          .join(', ')
         addLogEntry({
           type: 'complete',
-          content: timeframes.length > 1
-            ? `Results: ${tfSummaries}`
-            : `${returnSign}${returnPct}% return, ${backtestResult.num_trades} trades, ${(backtestResult.win_rate * 100).toFixed(0)}% win rate, ${backtestResult.sharpe_ratio.toFixed(2)} sharpe`,
+          content: `${returnSign}${returnPct}% return, ${backtestResult.num_trades} trades, ${(backtestResult.win_rate * 100).toFixed(0)}% win rate, ${backtestResult.sharpe_ratio.toFixed(2)} sharpe`,
           iterationId,
         })
 
@@ -1744,7 +1623,6 @@ export function useBacktest(sessionId: string) {
               sharpe: backtestResult.sharpe_ratio,
               maxDrawdown: backtestResult.max_drawdown,
               status: 'complete',
-              activeTimeframe: null,
             }
             : n
         ))
@@ -1763,10 +1641,10 @@ export function useBacktest(sessionId: string) {
         // Generate summary and suggestions (mirrors generateAndExecute flow)
         await generateInsightsForIteration(iterationId, model)
       } else {
-        const errMsg = 'All timeframe backtests failed'
+        const errMsg = 'Backtest failed'
         addLogEntry({ type: 'error', content: errMsg, iterationId })
         setIterationHistory(prev => prev.map(n =>
-          n.id === iterationId ? { ...n, status: 'error', error: errMsg, activeTimeframe: null } : n
+          n.id === iterationId ? { ...n, status: 'error', error: errMsg } : n
         ))
         setError(errMsg)
         setPhase('idle')
@@ -1865,10 +1743,11 @@ export function useBacktest(sessionId: string) {
       const executionPromises = untriedSuggestions.map(async ({ suggestion, index }) => {
         await sem.acquire()
         try {
-          const id = await generateAndExecute(
+          const node = await generateAndExecute(
             suggestion.prompt, model, currentBaseline?.scriptCode, metrics,
             undefined, undefined, true, suggestion.title, signal
           )
+          const id = node?.id ?? null
           if (id) autoRunIterationIdsRef.current.add(id)
           return { id, suggestion, index }
         } catch {
@@ -1977,6 +1856,8 @@ export function useBacktest(sessionId: string) {
     cancelOperation,
     deleteIteration,
     selectIteration,
+    loadCachedIteration,
+    loadCachedAsStartingPoint,
     isAutoRunning,
     autoRunProgress,
     startAutoRun,

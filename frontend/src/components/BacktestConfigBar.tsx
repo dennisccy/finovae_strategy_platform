@@ -58,21 +58,16 @@ export function BacktestConfigBar({ params, onChange, disabled, onRerun, canReru
         </div>
 
         <div className="flex items-center gap-1.5">
-          <label className="text-xs font-medium text-slate-500">Timeframes</label>
+          <label className="text-xs font-medium text-slate-500">Timeframe</label>
           <div className="flex gap-0.5">
             {(['1m', '5m', '15m', '1h', '4h', '1d'] as const).map(tf => {
-              const current: string[] = Array.isArray(params.timeframes) ? params.timeframes : ['4h']
-              const selected = current[0] === tf
+              const selected = params.timeframe === tf
               return (
                 <button
                   key={tf}
                   type="button"
                   disabled={disabled}
-                  onClick={() => {
-                    if (!selected) {
-                      onChange({ ...params, timeframes: [tf] })
-                    }
-                  }}
+                  onClick={() => { if (!selected) onChange({ ...params, timeframe: tf }) }}
                   className={`px-2 py-1 text-xs font-medium rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
                     selected
                       ? 'bg-primary-600 text-white'

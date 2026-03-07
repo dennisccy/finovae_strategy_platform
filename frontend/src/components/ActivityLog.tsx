@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef, useMemo, FormEvent } from 'react'
-import { Send, Square, Sparkles } from 'lucide-react'
+import { Send, Square, Sparkles, Play, StopCircle } from 'lucide-react'
 import { ActivityLogEntry } from './ActivityLogEntry'
 import { ActivityLogGroup } from './ActivityLogGroup'
 import type { ActivityEntry } from '../hooks/useBacktest'
 import { getStrategyPrompts, getShortStrategyPrompts, type StrategyCard } from '../data/strategyPrompts'
+import type { DirectionCacheSummary, DirectionsCacheResult } from '../lib/directionsApi'
 
 interface IterationGroup {
   iterationId: string
@@ -61,9 +62,18 @@ interface ActivityLogProps {
   onSuggestionClick?: (prompt: string, title?: string) => void
   onCancel?: () => void
   allowShort?: boolean
+  // Directions cache (v1.0)
+  cacheResult?: DirectionsCacheResult | null
+  isRunningAll?: boolean
+  runAllProgress?: { current: number; total: number } | null
+  concurrency?: number
+  onConcurrencyChange?: (n: number) => void
+  onRunAll?: (cards: StrategyCard[]) => void
+  onStopRunAll?: () => void
+  onCachedDirectionClick?: (card: StrategyCard, summary: DirectionCacheSummary) => void
 }
 
-export function ActivityLog({ entries, onSubmitPrompt, currentSymbol, currentTimeframe, isLoading, onEditAndRerun, onSuggestionClick, onCancel, allowShort }: ActivityLogProps) {
+export function ActivityLog({ entries, onSubmitPrompt, currentSymbol, currentTimeframe, isLoading, onEditAndRerun, onSuggestionClick, onCancel, allowShort, cacheResult, isRunningAll, runAllProgress, concurrency = 10, onConcurrencyChange, onRunAll, onStopRunAll, onCachedDirectionClick }: ActivityLogProps) {
   const [prompt, setPrompt] = useState('')
   const [model, setModel] = useState('gpt-5-mini')
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -120,6 +130,15 @@ export function ActivityLog({ entries, onSubmitPrompt, currentSymbol, currentTim
     onSubmitPrompt(card.prompt, model)
   }
 
+  const handleCardClick = (card: StrategyCard) => {
+    const summary = cacheResult?.directions.find(d => d.directionId === card.id)
+    if (summary && summary.status === 'complete' && onCachedDirectionClick) {
+      onCachedDirectionClick(card, summary)
+    } else {
+      handleRecommendClick(card)
+    }
+  }
+
   const cards = useMemo(
     () => allowShort
       ? getShortStrategyPrompts(currentSymbol, currentTimeframe)
@@ -139,35 +158,114 @@ export function ActivityLog({ entries, onSubmitPrompt, currentSymbol, currentTim
       <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 lg:p-6">
         {isEmpty ? (
           <div className="h-full flex flex-col justify-center">
-            <div className="text-center mb-6">
+            <div className="text-center mb-4">
               <div className="w-12 h-12 bg-primary-100 rounded-full flex items-center justify-center mx-auto mb-3">
                 <Sparkles className="w-6 h-6 text-primary-500" />
               </div>
               <h3 className="text-base font-semibold text-slate-800">Strategy Builder</h3>
               <p className="text-sm text-slate-500 mt-1">
-                {allowShort ? '10 long/short strategies for' : '10 strategies for'}{' '}
+                {allowShort ? '20 long/short strategies for' : '20 strategies for'}{' '}
                 <span className="font-medium text-slate-700">
                   {currentSymbol.replace('USDT', '')}/USDT · {currentTimeframe}
                 </span>
               </p>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 lg:gap-3">
-              {cards.map((card) => (
-                <button
-                  key={card.id}
-                  type="button"
-                  disabled={isLoading}
-                  onClick={() => handleRecommendClick(card)}
-                  className="text-left p-3 border border-slate-200 rounded-xl hover:border-primary-300 hover:bg-primary-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                >
-                  <div className="mb-1.5">
-                    <span className="text-xs px-1.5 py-0.5 bg-primary-50 text-primary-600 border border-primary-100 rounded font-medium">
-                      {card.title}
+
+            {/* Run All controls */}
+            <div className="flex items-center gap-2 mb-4 flex-wrap">
+              {isRunningAll ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={onStopRunAll}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600 text-white text-xs font-medium rounded-lg hover:bg-red-700 transition-colors flex-shrink-0"
+                  >
+                    <StopCircle className="w-3.5 h-3.5" />
+                    Stop
+                  </button>
+                  {runAllProgress && (
+                    <span className="text-xs text-slate-500 font-medium">
+                      {runAllProgress.current}/{runAllProgress.total} complete
                     </span>
-                  </div>
-                  <span className="block mt-1.5 text-xs text-slate-500 leading-relaxed">{card.tagline}</span>
-                </button>
-              ))}
+                  )}
+                </>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    disabled={isLoading}
+                    onClick={() => onRunAll?.(cards)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-primary-600 text-white text-xs font-medium rounded-lg hover:bg-primary-700 disabled:bg-slate-300 disabled:cursor-not-allowed transition-colors flex-shrink-0"
+                  >
+                    <Play className="w-3.5 h-3.5" />
+                    Run All
+                  </button>
+                  <label className="flex items-center gap-1.5 text-xs text-slate-500 flex-shrink-0">
+                    <span>Parallel</span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={20}
+                      value={concurrency}
+                      onChange={e => onConcurrencyChange?.(Math.max(1, Math.min(20, Number(e.target.value))))}
+                      className="w-12 px-1.5 py-0.5 text-xs border border-slate-200 rounded text-center focus:ring-1 focus:ring-primary-500 focus:border-transparent"
+                    />
+                  </label>
+                  {cacheResult?.cached && (
+                    <span className="text-xs text-emerald-600 font-medium">
+                      {cacheResult.directions.filter(d => d.status === 'complete').length}/{cards.length} cached
+                    </span>
+                  )}
+                </>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 lg:gap-3">
+              {cards.map((card) => {
+                const cached = cacheResult?.directions.find(d => d.directionId === card.id)
+                const isCachedComplete = cached?.status === 'complete'
+                const isCachedError = cached?.status === 'error'
+                return (
+                  <button
+                    key={card.id}
+                    type="button"
+                    disabled={isLoading && !isCachedComplete}
+                    onClick={() => handleCardClick(card)}
+                    className={`text-left p-3 border rounded-xl transition-colors ${
+                      isCachedComplete
+                        ? 'border-emerald-200 hover:border-emerald-400 hover:bg-emerald-50'
+                        : isCachedError
+                          ? 'border-red-200 hover:border-red-300 hover:bg-red-50'
+                          : 'border-slate-200 hover:border-primary-300 hover:bg-primary-50'
+                    } disabled:opacity-50 disabled:cursor-not-allowed`}
+                  >
+                    <div className="mb-1.5 flex items-center gap-1.5 flex-wrap">
+                      <span className={`text-xs px-1.5 py-0.5 border rounded font-medium ${
+                        isCachedComplete
+                          ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                          : isCachedError
+                            ? 'bg-red-50 text-red-600 border-red-200'
+                            : 'bg-primary-50 text-primary-600 border-primary-100'
+                      }`}>
+                        {card.title}
+                      </span>
+                      {isCachedComplete && cached && (
+                        <>
+                          <span className={`text-xs font-semibold ${cached.totalReturn >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                            {cached.totalReturn >= 0 ? '+' : ''}{(cached.totalReturn * 100).toFixed(1)}%
+                          </span>
+                          <span className="text-xs text-slate-400">{cached.numTrades}T</span>
+                          <span className="text-xs text-slate-400">SR {cached.sharpe.toFixed(2)}</span>
+                        </>
+                      )}
+                      {isCachedError && (
+                        <span className="text-xs text-red-500 font-medium">Error</span>
+                      )}
+                    </div>
+                    <span className="block mt-1 text-xs text-slate-500 leading-relaxed">{card.tagline}</span>
+                  </button>
+                )
+              })}
             </div>
           </div>
         ) : (
