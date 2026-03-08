@@ -88,7 +88,7 @@ export function IterationDetailView({ iteration, previousIteration, onBack }: It
             }`}
           >
             {result.total_return >= 0 ? '+' : ''}
-            {(result.total_return * 100).toFixed(2)}%
+            {((result.total_return ?? 0) * 100).toFixed(2)}%
           </div>
         </div>
       </div>
@@ -179,7 +179,7 @@ export function IterationDetailView({ iteration, previousIteration, onBack }: It
           <div className="grid grid-cols-1 gap-3">
             <MetricsCard
               label="vs Benchmark (Alpha)"
-              value={`${((result.total_return - rating.benchmark_total_return) * 100) >= 0 ? '+' : ''}${((result.total_return - rating.benchmark_total_return) * 100).toFixed(2)}%`}
+              value={`${(((result.total_return ?? 0) - rating.benchmark_total_return) * 100) >= 0 ? '+' : ''}${(((result.total_return ?? 0) - rating.benchmark_total_return) * 100).toFixed(2)}%`}
               variant={(result.total_return - rating.benchmark_total_return) >= 0 ? 'positive' : 'negative'}
             />
           </div>
@@ -192,17 +192,17 @@ export function IterationDetailView({ iteration, previousIteration, onBack }: It
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3 lg:gap-4">
             <MetricsCard
               label="Total Return"
-              value={`${result.total_return >= 0 ? '+' : ''}${(result.total_return * 100).toFixed(2)}%`}
+              value={`${(result.total_return ?? 0) >= 0 ? '+' : ''}${((result.total_return ?? 0) * 100).toFixed(2)}%`}
               variant={result.total_return >= 0 ? 'positive' : 'negative'}
             />
             <MetricsCard
               label="Max Drawdown"
-              value={`-${(result.max_drawdown * 100).toFixed(2)}%`}
+              value={`-${((result.max_drawdown ?? 0) * 100).toFixed(2)}%`}
               variant="negative"
             />
             <MetricsCard
               label="Win Rate"
-              value={`${(result.win_rate * 100).toFixed(1)}%`}
+              value={`${((result.win_rate ?? 0) * 100).toFixed(1)}%`}
               variant={result.win_rate >= 0.5 ? 'positive' : 'neutral'}
             />
             <MetricsCard
@@ -212,12 +212,12 @@ export function IterationDetailView({ iteration, previousIteration, onBack }: It
             />
             <MetricsCard
               label="Sharpe Ratio"
-              value={result.sharpe_ratio.toFixed(2)}
+              value={(result.sharpe_ratio ?? 0).toFixed(2)}
               variant={result.sharpe_ratio >= 1 ? 'positive' : 'neutral'}
             />
             <MetricsCard
               label="Profit Factor"
-              value={result.profit_factor === Infinity ? 'N/A' : result.profit_factor.toFixed(2)}
+              value={result.profit_factor === Infinity ? 'N/A' : (result.profit_factor ?? 0).toFixed(2)}
               variant={result.profit_factor >= 1.5 ? 'positive' : 'neutral'}
             />
           </div>

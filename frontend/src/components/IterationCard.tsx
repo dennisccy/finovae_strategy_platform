@@ -72,27 +72,27 @@ export function IterationCard({ iteration, onSelect, onDelete, isLatest = false 
               </p>
             )}
             <div className="flex items-center gap-2 text-xs text-slate-500 flex-wrap">
-              <span className={`font-medium ${iteration.totalReturn >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-                {formatReturn(iteration.totalReturn)}
+              <span className={`font-medium ${(iteration.totalReturn ?? 0) >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                {formatReturn(iteration.totalReturn ?? 0)}
               </span>
               {iteration.rating && (
                 <>
                   <span className="text-slate-300">·</span>
-                  <span className={`font-medium ${(iteration.totalReturn - iteration.rating.benchmark_total_return) >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-                    {(iteration.totalReturn - iteration.rating.benchmark_total_return) >= 0 ? '+' : ''}{((iteration.totalReturn - iteration.rating.benchmark_total_return) * 100).toFixed(2)}% vs BM
+                  <span className={`font-medium ${((iteration.totalReturn ?? 0) - iteration.rating.benchmark_total_return) >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                    {((iteration.totalReturn ?? 0) - iteration.rating.benchmark_total_return) >= 0 ? '+' : ''}{(((iteration.totalReturn ?? 0) - iteration.rating.benchmark_total_return) * 100).toFixed(2)}% vs BM
                   </span>
                 </>
               )}
               {isPast && (
                 <>
                   <span className="text-slate-300">·</span>
-                  <span>{iteration.numTrades} trades</span>
+                  <span>{iteration.numTrades ?? 0} trades</span>
                   <span className="text-slate-300">·</span>
-                  <span className="text-red-500">DD {(iteration.maxDrawdown * 100).toFixed(1)}%</span>
+                  <span className="text-red-500">DD {((iteration.maxDrawdown ?? 0) * 100).toFixed(1)}%</span>
                   <span className="text-slate-300">·</span>
-                  <span>WR {(iteration.winRate * 100).toFixed(0)}%</span>
+                  <span>WR {((iteration.winRate ?? 0) * 100).toFixed(0)}%</span>
                   <span className="text-slate-300">·</span>
-                  <span>SR {iteration.sharpe.toFixed(2)}</span>
+                  <span>SR {(iteration.sharpe ?? 0).toFixed(2)}</span>
                 </>
               )}
               {isInProgress && (
@@ -163,25 +163,25 @@ export function IterationCard({ iteration, onSelect, onDelete, isLatest = false 
       {/* Metrics row (when complete) */}
       {iteration.status === 'complete' && iteration.result && (
         <div className="flex items-center gap-2 mt-2.5 text-xs flex-wrap">
-          <span className={`font-semibold ${iteration.totalReturn >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-            {formatReturn(iteration.totalReturn)}
+          <span className={`font-semibold ${(iteration.totalReturn ?? 0) >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+            {formatReturn(iteration.totalReturn ?? 0)}
           </span>
           {iteration.rating && (
             <>
               <span className="text-slate-400">|</span>
-              <span className={`font-semibold ${(iteration.totalReturn - iteration.rating.benchmark_total_return) >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-                {(iteration.totalReturn - iteration.rating.benchmark_total_return) >= 0 ? '+' : ''}{((iteration.totalReturn - iteration.rating.benchmark_total_return) * 100).toFixed(2)}% vs BM
+              <span className={`font-semibold ${((iteration.totalReturn ?? 0) - iteration.rating.benchmark_total_return) >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                {((iteration.totalReturn ?? 0) - iteration.rating.benchmark_total_return) >= 0 ? '+' : ''}{(((iteration.totalReturn ?? 0) - iteration.rating.benchmark_total_return) * 100).toFixed(2)}% vs BM
               </span>
             </>
           )}
           <span className="text-slate-400">|</span>
-          <span className="text-slate-600">{iteration.numTrades} trades</span>
+          <span className="text-slate-600">{iteration.numTrades ?? 0} trades</span>
           <span className="text-slate-400">|</span>
-          <span className="text-red-500">DD -{(iteration.maxDrawdown * 100).toFixed(1)}%</span>
+          <span className="text-red-500">DD -{((iteration.maxDrawdown ?? 0) * 100).toFixed(1)}%</span>
           <span className="text-slate-400">|</span>
-          <span className="text-slate-600">WR {(iteration.winRate * 100).toFixed(0)}%</span>
+          <span className="text-slate-600">WR {((iteration.winRate ?? 0) * 100).toFixed(0)}%</span>
           <span className="text-slate-400">|</span>
-          <span className="text-slate-600">SR {iteration.sharpe.toFixed(2)}</span>
+          <span className="text-slate-600">SR {(iteration.sharpe ?? 0).toFixed(2)}</span>
         </div>
       )}
 

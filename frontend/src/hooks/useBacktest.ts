@@ -853,6 +853,7 @@ export function useBacktest(sessionId: string) {
           direction_index: directionIndex ?? 0,
           direction_prompt: directionPrompt ?? '',
         } : {}),
+        strategy_name: directionPrompt ?? undefined,
       })
 
       // Retry on transient "Failed to fetch" network errors (e.g. server busy during concurrent load)
@@ -1385,27 +1386,6 @@ export function useBacktest(sessionId: string) {
     upsertIteration(sessionId, idx, node)
   }, [sessionId])
 
-  const loadCachedAsStartingPoint = useCallback((node: IterationNode) => {
-    addLogEntry({ type: 'user-prompt', content: node.prompt || `Loaded: ${node.strategyName}`, iterationId: node.id })
-    addLogEntry({ type: 'code-preview', content: node.strategyName, iterationId: node.id })
-    addLogEntry({ type: 'complete', content: `${node.strategyName} loaded from cache`, iterationId: node.id })
-    if (node.insights?.suggestions?.length) {
-      addLogEntry({
-        type: 'insights',
-        content: 'Suggestions from cached run:',
-        detail: JSON.stringify(node.insights.suggestions),
-        iterationId: node.id,
-      })
-    }
-    setIterationHistory(prev => {
-      if (prev.some(n => n.id === node.id)) return prev.map(n => n.id === node.id ? node : n)
-      return [...prev, node]
-    })
-    setSelectedIterationId(node.id)
-    const idx = iterationHistoryRef.current.length + 1
-    upsertIteration(sessionId, idx, node)
-  }, [sessionId, addLogEntry])
-
   const generateInsightsForIteration = useCallback(async (
     iterationId: string,
     model: string,
@@ -1511,6 +1491,35 @@ export function useBacktest(sessionId: string) {
       }
     }
   }, [backtestParams, addLogEntry, updateLogEntry])
+
+  const loadCachedAsStartingPoint = useCallback((node: IterationNode) => {
+    addLogEntry({ type: 'user-prompt', content: node.prompt || `Loaded: ${node.strategyName}`, iterationId: node.id })
+    addLogEntry({ type: 'code-preview', content: node.strategyName, iterationId: node.id })
+    addLogEntry({ type: 'complete', content: `${node.strategyName} loaded from cache`, iterationId: node.id })
+    if (node.insights?.suggestions?.length) {
+      addLogEntry({
+        type: 'insights',
+        content: 'Suggestions from cached run:',
+        detail: JSON.stringify(node.insights.suggestions),
+        iterationId: node.id,
+      })
+    }
+    setIterationHistory(prev => {
+      if (prev.some(n => n.id === node.id)) return prev.map(n => n.id === node.id ? node : n)
+      return [...prev, node]
+    })
+    setSelectedIterationId(node.id)
+    const idx = iterationHistoryRef.current.length + 1
+    upsertIteration(sessionId, idx, node)
+    
+    // Auto-generate insights if the cached run didn't have any
+    if (!node.insights?.suggestions?.length) {
+      // Need a small timeout to let the state settle so generateInsightsForIteration finds it
+      setTimeout(() => {
+        generateInsightsForIteration(node.id, node.modelUsed ?? 'gpt-5-mini')
+      }, 50)
+    }
+  }, [sessionId, addLogEntry, generateInsightsForIteration])
 
   const didAutoGenerateInsightsRef = useRef(false)
   useEffect(() => {

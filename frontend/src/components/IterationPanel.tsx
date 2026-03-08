@@ -102,7 +102,7 @@ export function IterationPanel({ iterations, selectedId, onSelect, onDelete }: I
       <div className="space-y-2">
         {iterations.map((iteration, index) => (
           <IterationCard
-            key={iteration.id}
+            key={iteration.id || `iter-${index}`}
             iteration={iteration}
             onSelect={() => onSelect(iteration.id)}
             onDelete={() => onDelete(iteration.id)}

@@ -251,11 +251,11 @@ export function ActivityLog({ entries, onSubmitPrompt, currentSymbol, currentTim
                       </span>
                       {isCachedComplete && cached && (
                         <>
-                          <span className={`text-xs font-semibold ${cached.totalReturn >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
-                            {cached.totalReturn >= 0 ? '+' : ''}{(cached.totalReturn * 100).toFixed(1)}%
+                          <span className={`text-xs font-semibold ${(cached.totalReturn ?? 0) >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                            {(cached.totalReturn ?? 0) >= 0 ? '+' : ''}{((cached.totalReturn ?? 0) * 100).toFixed(1)}%
                           </span>
-                          <span className="text-xs text-slate-400">{cached.numTrades}T</span>
-                          <span className="text-xs text-slate-400">SR {cached.sharpe.toFixed(2)}</span>
+                          <span className="text-xs text-slate-400">{cached.numTrades ?? 0}T</span>
+                          <span className="text-xs text-slate-400">SR {(cached.sharpe ?? 0).toFixed(2)}</span>
                         </>
                       )}
                       {isCachedError && (

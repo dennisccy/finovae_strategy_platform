@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { useBacktest, type LiveSessionStatus, type IterationNode } from '../hooks/useBacktest'
 import { useDirectionsCache, type RunOneCard } from '../hooks/useDirectionsCache'
 import { fetchCachedDirection } from '../lib/directionsApi'
@@ -74,14 +74,24 @@ export function SessionContainer({
   } | null>(null)
 
   // Propagate status changes to App.tsx
+  // Use a ref to track the last reported status to avoid infinite loops
+  // since sessionStatus is a new object reference on many renders
+  const lastReportedStatusRef = useRef<string>('')
+  
   useEffect(() => {
-    onStatusChange(sessionStatus)
+    const statusKey = `${sessionStatus.isLoading}-${sessionStatus.isAutoRunning}-${sessionStatus.iterationCount}-${sessionStatus.bestReturn}-${sessionStatus.hasError}`
+    if (lastReportedStatusRef.current !== statusKey) {
+      lastReportedStatusRef.current = statusKey
+      onStatusChange(sessionStatus)
+    }
   }, [sessionStatus, onStatusChange])
 
   // Propagate name changes when first complete iteration arrives
+  const lastReportedNameRef = useRef<string>('')
   useEffect(() => {
     const firstComplete = iterationHistory.find(n => n.status === 'complete' && n.strategyName)
-    if (firstComplete?.strategyName) {
+    if (firstComplete?.strategyName && lastReportedNameRef.current !== firstComplete.strategyName) {
+      lastReportedNameRef.current = firstComplete.strategyName
       onNameChange(firstComplete.strategyName)
     }
   }, [iterationHistory, onNameChange])
