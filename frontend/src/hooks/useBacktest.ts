@@ -99,6 +99,7 @@ export interface Trade {
   commission_paid: number
   direction?: string   // "long" | "short" — v0.7 additive
   leverage?: number    // leverage multiplier — v0.7 additive
+  margin?: number      // cash collateral posted — v0.8 additive
 }
 
 export interface EquityPoint {
@@ -117,6 +118,8 @@ export interface BacktestResult {
   profit_factor: number
   equity_curve: EquityPoint[]
   trades: Trade[]
+  margin_called?: boolean        // v0.8 additive
+  unleveraged_return?: number    // v0.8 additive; null/undefined when leverage == 1
 }
 
 export interface Condition {
