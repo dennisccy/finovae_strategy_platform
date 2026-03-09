@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { Trash2 } from 'lucide-react'
 import type { IterationNode } from '../hooks/useBacktest'
 
@@ -32,6 +33,7 @@ const statusConfig = {
 }
 
 export function IterationCard({ iteration, onSelect, onDelete, isLatest = false }: IterationCardProps) {
+  const [pendingDelete, setPendingDelete] = useState(false)
   const config = statusConfig[iteration.status]
   const isInProgress = iteration.status === 'generating' || iteration.status === 'executing'
   const isComplete = iteration.status === 'complete'
@@ -46,9 +48,31 @@ export function IterationCard({ iteration, onSelect, onDelete, isLatest = false 
   if (isPast || isInProgress) {
     return (
       <div
-        className={`border rounded-lg px-3 py-2 transition-colors group ${isPast ? 'bg-white hover:bg-slate-50 cursor-pointer border-slate-200' : config.bgClass}`}
+        className={`relative border rounded-lg px-3 py-2 transition-colors group ${isPast ? 'bg-white hover:bg-slate-50 cursor-pointer border-slate-200' : config.bgClass}`}
         onClick={() => isPast ? onSelect(iteration.id) : undefined}
       >
+        {pendingDelete && (
+          <div
+            className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-white/95 rounded-lg backdrop-blur-sm"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p className="text-sm font-medium text-slate-700">Delete this iteration?</p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setPendingDelete(false)}
+                className="px-3 py-1.5 text-xs font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => onDelete(iteration.id)}
+                className="px-3 py-1.5 text-xs font-medium text-white bg-red-500 hover:bg-red-600 rounded-lg transition-colors"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        )}
         <div className="flex items-center justify-between">
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-0.5">
@@ -111,7 +135,7 @@ export function IterationCard({ iteration, onSelect, onDelete, isLatest = false 
           </div>
           <div className="flex items-center gap-1 ml-2 opacity-0 group-hover:opacity-100 transition-opacity">
             <button
-              onClick={(e) => { e.stopPropagation(); onDelete(iteration.id) }}
+              onClick={(e) => { e.stopPropagation(); setPendingDelete(true) }}
               className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
               title="Delete"
             >
@@ -126,9 +150,31 @@ export function IterationCard({ iteration, onSelect, onDelete, isLatest = false 
   // Full view for latest/active iteration
   return (
     <div
-      className={`border rounded-xl p-4 transition-colors ${config.bgClass} ${isComplete ? 'cursor-pointer hover:shadow-md' : ''}`}
+      className={`relative border rounded-xl p-4 transition-colors ${config.bgClass} ${isComplete ? 'cursor-pointer hover:shadow-md' : ''}`}
       onClick={isComplete ? () => onSelect(iteration.id) : undefined}
     >
+      {pendingDelete && (
+        <div
+          className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-white/95 rounded-xl backdrop-blur-sm"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <p className="text-sm font-medium text-slate-700">Delete this iteration?</p>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setPendingDelete(false)}
+              className="px-3 py-1.5 text-xs font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => onDelete(iteration.id)}
+              className="px-3 py-1.5 text-xs font-medium text-white bg-red-500 hover:bg-red-600 rounded-lg transition-colors"
+            >
+              Delete
+            </button>
+          </div>
+        </div>
+      )}
       {/* Status badge + timestamp */}
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2">
@@ -199,7 +245,7 @@ export function IterationCard({ iteration, onSelect, onDelete, isLatest = false 
       {/* Actions */}
       <div className="flex items-center gap-2 mt-3 pt-2.5 border-t border-slate-100">
         <button
-          onClick={(e) => { e.stopPropagation(); onDelete(iteration.id) }}
+          onClick={(e) => { e.stopPropagation(); setPendingDelete(true) }}
           className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors ml-auto"
         >
           <Trash2 className="w-3.5 h-3.5" />
