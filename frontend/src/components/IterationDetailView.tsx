@@ -37,6 +37,22 @@ function DiffView({ lines }: { lines: DiffLine[] }) {
   )
 }
 
+function formatLondonTime(timestamp: string): string {
+  const d = new Date(timestamp)
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).formatToParts(d)
+  const get = (type: string) => parts.find(p => p.type === type)?.value ?? '00'
+  return `${get('year')}-${get('month')}-${get('day')} ${get('hour')}:${get('minute')}:${get('second')}`
+}
+
 export function IterationDetailView({ iteration, previousIteration, onBack }: IterationDetailViewProps) {
   const [codeExpanded, setCodeExpanded] = useState(false)
   const [showDiff, setShowDiff] = useState(true)
@@ -78,6 +94,7 @@ export function IterationDetailView({ iteration, previousIteration, onBack }: It
               <p className="text-xs text-slate-500 truncate">
                 {iteration.prompt.length > 50 ? iteration.prompt.slice(0, 50) + '...' : iteration.prompt}
               </p>
+              <p className="text-xs text-slate-400">{formatLondonTime(iteration.timestamp)}</p>
             </div>
           </div>
           <div

@@ -464,6 +464,7 @@ export function useBacktest(sessionId: string) {
             if (n.result) return [{ ...n, status: 'complete' as const }]
             return []
           }
+          if (n.status !== 'complete') return []  // drop error/cancelled/unknown on reload
           return [n]
         })
 
@@ -1581,7 +1582,7 @@ export function useBacktest(sessionId: string) {
       numTrades: 0,
       sharpe: 0,
       maxDrawdown: 0,
-      params: original.params ?? { ...backtestParams },
+      params: { ...backtestParams },
       timestamp: new Date().toISOString(),
       status: 'executing',
     }

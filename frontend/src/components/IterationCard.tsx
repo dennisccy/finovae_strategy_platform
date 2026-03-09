@@ -8,16 +8,20 @@ interface IterationCardProps {
   isLatest?: boolean
 }
 
-function timeAgo(timestamp: string): string {
-  const diff = Date.now() - new Date(timestamp).getTime()
-  const seconds = Math.floor(diff / 1000)
-  if (seconds < 60) return 'just now'
-  const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return `${minutes} min ago`
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours}h ago`
-  const days = Math.floor(hours / 24)
-  return `${days}d ago`
+function formatLondonTime(timestamp: string): string {
+  const d = new Date(timestamp)
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).formatToParts(d)
+  const get = (type: string) => parts.find(p => p.type === type)?.value ?? '00'
+  return `${get('year')}-${get('month')}-${get('day')} ${get('hour')}:${get('minute')}:${get('second')}`
 }
 
 const statusConfig = {
@@ -102,7 +106,7 @@ export function IterationCard({ iteration, onSelect, onDelete, isLatest = false 
                 </>
               )}
               <span className="text-slate-300">·</span>
-              <span>{timeAgo(iteration.timestamp)}</span>
+              <span>{formatLondonTime(iteration.timestamp)}</span>
             </div>
           </div>
           <div className="flex items-center gap-1 ml-2 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -131,7 +135,7 @@ export function IterationCard({ iteration, onSelect, onDelete, isLatest = false 
           <div className={`w-2.5 h-2.5 rounded-full ${config.dotClass}`} />
           <span className="text-xs font-medium text-slate-600">{config.label}</span>
         </div>
-        <span className="text-xs text-slate-400">{timeAgo(iteration.timestamp)}</span>
+        <span className="text-xs text-slate-400">{formatLondonTime(iteration.timestamp)}</span>
       </div>
 
       {/* Strategy name */}

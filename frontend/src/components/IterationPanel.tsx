@@ -53,13 +53,15 @@ export function IterationPanel({ iterations, selectedId, onSelect, onDelete }: I
     return () => element.removeEventListener('scroll', handleScroll)
   }, [])
 
+  const sortedIterations = [...iterations].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+
   // Detail view for selected iteration
   if (selectedId) {
-    const selected = iterations.find(n => n.id === selectedId)
+    const selected = sortedIterations.find(n => n.id === selectedId)
     if (selected && selected.result) {
       // Find the most recent complete iteration before the selected one
-      const selectedIdx = iterations.findIndex(n => n.id === selectedId)
-      const prevComplete = iterations.slice(0, selectedIdx).filter(n => n.status === 'complete')
+      const selectedIdx = sortedIterations.findIndex(n => n.id === selectedId)
+      const prevComplete = sortedIterations.slice(0, selectedIdx).filter(n => n.status === 'complete')
       const previousIteration = prevComplete.length > 0 ? prevComplete[prevComplete.length - 1] : undefined
 
       return (
@@ -73,7 +75,7 @@ export function IterationPanel({ iterations, selectedId, onSelect, onDelete }: I
   }
 
   // Empty state
-  if (iterations.length === 0) {
+  if (sortedIterations.length === 0) {
     return (
       <div className="flex-1 flex items-center justify-center bg-slate-50 p-4">
         <div className="text-center">
@@ -96,17 +98,17 @@ export function IterationPanel({ iterations, selectedId, onSelect, onDelete }: I
     <div ref={scrollRef} className="flex-1 overflow-y-auto bg-slate-50 p-4 lg:p-6">
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-sm font-semibold text-slate-700">
-          Iterations ({iterations.length})
+          Iterations ({sortedIterations.length})
         </h2>
       </div>
       <div className="space-y-2">
-        {iterations.map((iteration, index) => (
+        {sortedIterations.map((iteration, index) => (
           <IterationCard
             key={iteration.id || `iter-${index}`}
             iteration={iteration}
             onSelect={() => onSelect(iteration.id)}
             onDelete={() => onDelete(iteration.id)}
-            isLatest={index === iterations.length - 1}
+            isLatest={index === sortedIterations.length - 1}
           />
         ))}
       </div>
