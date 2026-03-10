@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useMemo } from 'react'
 import { GitBranch } from 'lucide-react'
 import type { IterationNode } from '../hooks/useBacktest'
 import { IterationCard } from './IterationCard'
@@ -9,13 +9,98 @@ interface IterationPanelProps {
   selectedId: string | null
   onSelect: (id: string | null) => void
   onDelete: (id: string) => void
+  onRerun: (id: string) => void
+  onStartAutoRun: (id: string) => void
   isLoading: boolean
 }
 
-export function IterationPanel({ iterations, selectedId, onSelect, onDelete }: IterationPanelProps) {
+// =============================================================================
+// Tree building
+// =============================================================================
+
+interface TreeNode {
+  iteration: IterationNode
+  children: TreeNode[]
+  depth: number
+}
+
+function buildIterationTree(iterations: IterationNode[]): TreeNode[] {
+  const byParent = new Map<string | null, IterationNode[]>()
+  for (const iter of iterations) {
+    const key = iter.parentId ?? null
+    if (!byParent.has(key)) byParent.set(key, [])
+    byParent.get(key)!.push(iter)
+  }
+  function makeNode(iter: IterationNode, depth: number): TreeNode {
+    return {
+      iteration: iter,
+      children: (byParent.get(iter.id) ?? []).map(c => makeNode(c, depth + 1)),
+      depth,
+    }
+  }
+  return (byParent.get(null) ?? []).map(r => makeNode(r, 0))
+}
+
+// =============================================================================
+// IterationTreeItem
+// =============================================================================
+
+interface IterationTreeItemProps {
+  node: TreeNode
+  latestId: string | null
+  onSelect: (id: string) => void
+  onDelete: (id: string) => void
+  onRerun: (id: string) => void
+  onStartAutoRun: (id: string) => void
+}
+
+function IterationTreeItem({ node, latestId, onSelect, onDelete, onRerun, onStartAutoRun }: IterationTreeItemProps) {
+  return (
+    <div className="relative">
+      <IterationCard
+        iteration={node.iteration}
+        isLatest={node.iteration.id === latestId}
+        onSelect={onSelect}
+        onDelete={onDelete}
+        onRerun={onRerun}
+        onStartAutoRun={onStartAutoRun}
+      />
+      {node.children.length > 0 && (
+        <div className="ml-4 mt-1.5 pl-3 border-l-2 border-slate-200 space-y-1.5">
+          {node.children.map(child => (
+            <IterationTreeItem
+              key={child.iteration.id}
+              node={child}
+              latestId={latestId}
+              onSelect={onSelect}
+              onDelete={onDelete}
+              onRerun={onRerun}
+              onStartAutoRun={onStartAutoRun}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// =============================================================================
+// IterationPanel
+// =============================================================================
+
+export function IterationPanel({ iterations, selectedId, onSelect, onDelete, onRerun, onStartAutoRun }: IterationPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const isUserScrolledUp = useRef(false)
   const lastScrollHeight = useRef(0)
+
+  const sortedIterations = useMemo(
+    () => [...iterations].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()),
+    [iterations]
+  )
+
+  const tree = useMemo(() => buildIterationTree(sortedIterations), [sortedIterations])
+
+  const latestId = sortedIterations[sortedIterations.length - 1]?.id ?? null
 
   // Auto-scroll to bottom when iterations change
   useEffect(() => {
@@ -53,16 +138,14 @@ export function IterationPanel({ iterations, selectedId, onSelect, onDelete }: I
     return () => element.removeEventListener('scroll', handleScroll)
   }, [])
 
-  const sortedIterations = [...iterations].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
-
   // Detail view for selected iteration
   if (selectedId) {
     const selected = sortedIterations.find(n => n.id === selectedId)
     if (selected && selected.result) {
-      // Find the most recent complete iteration before the selected one
-      const selectedIdx = sortedIterations.findIndex(n => n.id === selectedId)
-      const prevComplete = sortedIterations.slice(0, selectedIdx).filter(n => n.status === 'complete')
-      const previousIteration = prevComplete.length > 0 ? prevComplete[prevComplete.length - 1] : undefined
+      // Use parent node's code as the "before" snapshot for diff view
+      const previousIteration = selected.parentId
+        ? sortedIterations.find(n => n.id === selected.parentId) ?? undefined
+        : undefined
 
       return (
         <IterationDetailView
@@ -93,7 +176,6 @@ export function IterationPanel({ iterations, selectedId, onSelect, onDelete }: I
     )
   }
 
-  // Iteration list (oldest first, latest at bottom)
   return (
     <div ref={scrollRef} className="flex-1 overflow-y-auto bg-slate-50 p-4 lg:p-6">
       <div className="flex items-center justify-between mb-4">
@@ -102,13 +184,15 @@ export function IterationPanel({ iterations, selectedId, onSelect, onDelete }: I
         </h2>
       </div>
       <div className="space-y-2">
-        {sortedIterations.map((iteration, index) => (
-          <IterationCard
-            key={iteration.id || `iter-${index}`}
-            iteration={iteration}
-            onSelect={() => onSelect(iteration.id)}
-            onDelete={() => onDelete(iteration.id)}
-            isLatest={index === sortedIterations.length - 1}
+        {tree.map(root => (
+          <IterationTreeItem
+            key={root.iteration.id}
+            node={root}
+            latestId={latestId}
+            onSelect={onSelect}
+            onDelete={onDelete}
+            onRerun={onRerun}
+            onStartAutoRun={onStartAutoRun}
           />
         ))}
       </div>

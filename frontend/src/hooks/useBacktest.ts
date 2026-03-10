@@ -353,6 +353,7 @@ export interface IterationNode {
   error?: string
   modelUsed?: string
   params?: BacktestParams
+  parentId?: string | null  // null/undefined = root; string = child of that iteration ID
 }
 
 export type Phase = 'idle' | 'generating' | 'executing' | 'results'
@@ -468,11 +469,14 @@ export function useBacktest(sessionId: string) {
           return [n]
         })
 
-        const restoredActivity = migrated.activityLog.map((e: ActivityEntry) =>
-          (e.status === 'active' || e.status === 'pending')
-            ? { ...e, status: 'done' as const, completedAt: e.completedAt ?? Date.now() }
-            : e
-        )
+        const restoredIds = new Set(restoredHistory.map((n: IterationNode) => n.id))
+        const restoredActivity = migrated.activityLog
+          .filter((e: ActivityEntry) => !e.iterationId || restoredIds.has(e.iterationId))
+          .map((e: ActivityEntry) =>
+            (e.status === 'active' || e.status === 'pending')
+              ? { ...e, status: 'done' as const, completedAt: e.completedAt ?? Date.now() }
+              : e
+          )
 
         // Determine selected iteration (validate it still exists after filter)
         const savedId = migrated.selectedIterationId
@@ -498,9 +502,14 @@ export function useBacktest(sessionId: string) {
           }
         })
 
+        const latestComplete = restoredHistory
+          .filter((n: IterationNode) => n.status === 'complete' && n.params)
+          .sort((a: IterationNode, b: IterationNode) =>
+            new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+          )[0] ?? null
         setIterationHistory(restoredHistory)
         setActivityLog(restoredActivity)
-        setBacktestParams(migrated.backtestParams)
+        setBacktestParams(latestComplete?.params ?? migrated.backtestParams)
         setSelectedIterationId(resolvedId)
         if (restoredHistory.some((n: IterationNode) =>
           n.status === 'complete' || ((n.status === 'generating' || n.status === 'executing') && !!n.result)
@@ -1016,6 +1025,8 @@ export function useBacktest(sessionId: string) {
     directionId?: string,
     directionIndex?: number,
     directionPrompt?: string,
+    parentId?: string | null,
+    overrideParams?: Partial<typeof backtestParams>,
   ) => {
     // Deduplicate: if already loading, abort the previous request first (unless explicitly running concurrently)
     if (!sharedSignal && abortControllerRef.current) {
@@ -1065,9 +1076,10 @@ export function useBacktest(sessionId: string) {
       sharpe: 0,
       maxDrawdown: 0,
       changeSummary,
-      params: { ...backtestParams },
+      params: { ...backtestParams, ...overrideParams },
       timestamp: new Date().toISOString(),
       status: 'generating',
+      parentId: parentId ?? null,
     }
     setIterationHistory(prev => [...prev, newIteration])
 
@@ -1319,15 +1331,22 @@ export function useBacktest(sessionId: string) {
   // ==========================================================================
 
   const deleteIteration = useCallback((id: string) => {
+    const getDescendants = (nodeId: string): string[] => {
+      const children = iterationHistoryRef.current.filter(n => n.parentId === nodeId)
+      return [nodeId, ...children.flatMap(c => getDescendants(c.id))]
+    }
+    const idsToDelete = getDescendants(id)
     setIterationHistory(prev => {
-      const next = prev.filter(n => n.id !== id)
+      const next = prev.filter(n => !idsToDelete.includes(n.id))
       if (next.length === 0) setPhase('idle')
       return next
     })
-    setActivityLog(prev => prev.filter(e => e.iterationId !== id))
-    if (selectedIterationId === id) setSelectedIterationId(null)
-    savedIterationVersionRef.current.delete(id)
-    deleteIterationFromStore(sessionId, id)
+    setActivityLog(prev => prev.filter(e => !idsToDelete.includes(e.iterationId ?? '')))
+    if (idsToDelete.includes(selectedIterationId ?? '')) setSelectedIterationId(null)
+    idsToDelete.forEach(nodeId => {
+      savedIterationVersionRef.current.delete(nodeId)
+      deleteIterationFromStore(sessionId, nodeId)
+    })
   }, [sessionId, selectedIterationId])
 
   // ==========================================================================
@@ -1582,9 +1601,11 @@ export function useBacktest(sessionId: string) {
       numTrades: 0,
       sharpe: 0,
       maxDrawdown: 0,
+      changeSummary: 'Re-run',
       params: { ...backtestParams },
       timestamp: new Date().toISOString(),
       status: 'executing',
+      parentId: originalIterationId,
     }
     setIterationHistory(prev => [...prev, newIteration])
 
@@ -1676,10 +1697,8 @@ export function useBacktest(sessionId: string) {
     }
   }, [iterationHistory, backtestParams, addLogEntry, executeSingleTimeframe, generateInsightsForIteration, validateSymbolExists])
 
-  const startAutoRun = useCallback(async (maxAttempts: number, model: string) => {
-    const baseline = [...iterationHistoryRef.current]
-      .reverse()
-      .find(n => n.status === 'complete' && (n.insights?.suggestions?.length ?? 0) > 0)
+  const startAutoRun = useCallback(async (maxAttempts: number, model: string, fromIterationId: string) => {
+    const baseline = iterationHistoryRef.current.find(n => n.id === fromIterationId)
     if (!baseline) return
 
     autoRunStopRef.current = false
@@ -1689,6 +1708,10 @@ export function useBacktest(sessionId: string) {
     const abortController = new AbortController()
     abortControllerRef.current = abortController
     const { signal } = abortController
+
+    if (baseline.params) {
+      setBacktestParams(baseline.params)
+    }
 
     let baselineId = baseline.id
     let attempt = 0
@@ -1727,9 +1750,17 @@ export function useBacktest(sessionId: string) {
         break // New batch was already generated and also exhausted — stop
       }
 
-      const baselineScore = (currentBaseline?.numTrades ?? 0) > 0
-        ? (currentBaseline?.totalReturn ?? -Infinity)
-        : -Infinity
+      const scoreIteration = (node: IterationNode): number => {
+        const trades = node.numTrades ?? 0
+        if (trades === 0) return -Infinity
+        // Ramps from 0.5× at 1 trade → 1.0× at 50+ trades
+        const freqMultiplier = Math.min(1, 0.5 + (trades / 100))
+        const base = node.totalReturn ?? -Infinity
+        const sharpeBonus = (node.sharpe ?? 0) > 0 ? (node.sharpe ?? 0) * 0.05 : 0
+        return (base + sharpeBonus) * freqMultiplier
+      }
+
+      const baselineScore = scoreIteration(currentBaseline ?? {} as IterationNode)
       const fmt = (v: number) => `${v >= 0 ? '+' : ''}${(v * 100).toFixed(2)}%`
 
       const workers = workerCountRef.current
@@ -1758,7 +1789,9 @@ export function useBacktest(sessionId: string) {
         try {
           const node = await generateAndExecute(
             suggestion.prompt, model, currentBaseline?.scriptCode, metrics,
-            undefined, undefined, true, suggestion.title, signal
+            undefined, undefined, true, suggestion.title, signal,
+            undefined, undefined, undefined, baselineId,
+            currentBaseline?.params ?? undefined
           )
           const id = node?.id ?? null
           if (id) autoRunIterationIdsRef.current.add(id)
@@ -1790,7 +1823,7 @@ export function useBacktest(sessionId: string) {
         }
         finishedIds.push(id)
         const newIteration = iterationHistoryRef.current.find(n => n.id === id)
-        const newScore = (newIteration?.numTrades ?? 0) > 0 ? (newIteration?.totalReturn ?? -Infinity) : -Infinity
+        const newScore = newIteration ? scoreIteration(newIteration) : -Infinity
 
         if (newIteration?.status === 'complete' && newScore > bestScore) {
           bestScore = newScore

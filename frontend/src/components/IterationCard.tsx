@@ -1,11 +1,13 @@
 import { useState } from 'react'
-import { Trash2 } from 'lucide-react'
+import { Trash2, RotateCw, Zap } from 'lucide-react'
 import type { IterationNode } from '../hooks/useBacktest'
 
 interface IterationCardProps {
   iteration: IterationNode
   onSelect: (id: string) => void
   onDelete: (id: string) => void
+  onRerun?: (id: string) => void
+  onStartAutoRun?: (id: string) => void
   isLatest?: boolean
 }
 
@@ -32,7 +34,7 @@ const statusConfig = {
   error: { label: 'Error', dotClass: 'bg-red-500', bgClass: 'bg-red-50 border-red-200' },
 }
 
-export function IterationCard({ iteration, onSelect, onDelete, isLatest = false }: IterationCardProps) {
+export function IterationCard({ iteration, onSelect, onDelete, onRerun, onStartAutoRun, isLatest = false }: IterationCardProps) {
   const [pendingDelete, setPendingDelete] = useState(false)
   const config = statusConfig[iteration.status]
   const isInProgress = iteration.status === 'generating' || iteration.status === 'executing'
@@ -115,6 +117,9 @@ export function IterationCard({ iteration, onSelect, onDelete, isLatest = false 
                 <>
                   <span className="text-slate-300">·</span>
                   <span>{iteration.numTrades ?? 0} trades</span>
+                  {(iteration.numTrades ?? 0) < 50 && (
+                    <span className="text-amber-500" title="Low sample size — fewer than 50 trades">⚠</span>
+                  )}
                   <span className="text-slate-300">·</span>
                   <span className="text-red-500">DD {((iteration.maxDrawdown ?? 0) * 100).toFixed(1)}%</span>
                   <span className="text-slate-300">·</span>
@@ -134,6 +139,24 @@ export function IterationCard({ iteration, onSelect, onDelete, isLatest = false 
             </div>
           </div>
           <div className="flex items-center gap-1 ml-2 opacity-0 group-hover:opacity-100 transition-opacity">
+            {(iteration.status === 'complete' || iteration.status === 'error') && onRerun && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onRerun(iteration.id) }}
+                className="p-1.5 text-slate-400 hover:text-primary-600 hover:bg-primary-50 rounded transition-colors"
+                title="Rerun"
+              >
+                <RotateCw className="w-3.5 h-3.5" />
+              </button>
+            )}
+            {iteration.status === 'complete' && onStartAutoRun && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onStartAutoRun(iteration.id) }}
+                className="p-1.5 text-slate-400 hover:text-violet-600 hover:bg-violet-50 rounded transition-colors"
+                title="Auto Run"
+              >
+                <Zap className="w-3.5 h-3.5" />
+              </button>
+            )}
             <button
               onClick={(e) => { e.stopPropagation(); setPendingDelete(true) }}
               className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
@@ -226,6 +249,9 @@ export function IterationCard({ iteration, onSelect, onDelete, isLatest = false 
           )}
           <span className="text-slate-400">|</span>
           <span className="text-slate-600">{iteration.numTrades ?? 0} trades</span>
+          {(iteration.numTrades ?? 0) < 50 && (
+            <span className="text-amber-500" title="Low sample size — fewer than 50 trades">⚠</span>
+          )}
           <span className="text-slate-400">|</span>
           <span className="text-red-500">DD -{((iteration.maxDrawdown ?? 0) * 100).toFixed(1)}%</span>
           <span className="text-slate-400">|</span>
@@ -244,6 +270,24 @@ export function IterationCard({ iteration, onSelect, onDelete, isLatest = false 
 
       {/* Actions */}
       <div className="flex items-center gap-2 mt-3 pt-2.5 border-t border-slate-100">
+        {iteration.status === 'complete' && onStartAutoRun && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onStartAutoRun(iteration.id) }}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-500 hover:text-violet-600 hover:bg-violet-50 rounded-lg transition-colors"
+          >
+            <Zap className="w-3.5 h-3.5" />
+            Auto Run
+          </button>
+        )}
+        {(iteration.status === 'complete' || iteration.status === 'error') && onRerun && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onRerun(iteration.id) }}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-500 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-colors"
+          >
+            <RotateCw className="w-3.5 h-3.5" />
+            Rerun
+          </button>
+        )}
         <button
           onClick={(e) => { e.stopPropagation(); setPendingDelete(true) }}
           className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors ml-auto"

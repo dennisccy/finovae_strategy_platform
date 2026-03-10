@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { RotateCw, Square, Zap } from 'lucide-react'
+import { Square, Zap } from 'lucide-react'
 import type { BacktestParams } from '../hooks/useBacktest'
 import { EXCHANGE_CONFIGS } from '../hooks/useBacktest'
 
@@ -7,8 +7,6 @@ interface BacktestConfigBarProps {
   params: BacktestParams
   onChange: (params: BacktestParams) => void
   disabled: boolean
-  onRerun?: () => void
-  canRerun?: boolean
   isAutoRunning?: boolean
   autoRunProgress?: { current: number; max: number } | null
   canAutoRun?: boolean
@@ -19,7 +17,7 @@ interface BacktestConfigBarProps {
   workerCount?: number
 }
 
-export function BacktestConfigBar({ params, onChange, disabled, onRerun, canRerun, isAutoRunning, autoRunProgress, canAutoRun, onStartAutoRun, onStopAutoRun, autoRunCount, onAutoRunCountChange, workerCount }: BacktestConfigBarProps) {
+export function BacktestConfigBar({ params, onChange, disabled, isAutoRunning, autoRunProgress, canAutoRun, onStartAutoRun, onStopAutoRun, autoRunCount, onAutoRunCountChange, workerCount }: BacktestConfigBarProps) {
   const [symbolError, setSymbolError] = useState<string | null>(null)
 
   const update = (key: keyof BacktestParams, value: string | number) => {
@@ -171,27 +169,17 @@ export function BacktestConfigBar({ params, onChange, disabled, onRerun, canReru
           )}
         </div>
 
-        {canRerun && (
-          <button
-            onClick={onRerun}
-            disabled={disabled}
-            className="ml-auto flex items-center gap-1.5 px-3 py-1 text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <RotateCw className="w-3.5 h-3.5" />
-            Rerun
-          </button>
-        )}
         {isAutoRunning ? (
           <button
             onClick={onStopAutoRun}
-            className="flex items-center gap-1.5 px-3 py-1 text-sm font-medium text-white bg-amber-500 hover:bg-amber-600 rounded-md transition-colors"
+            className="ml-auto flex items-center gap-1.5 px-3 py-1 text-sm font-medium text-white bg-amber-500 hover:bg-amber-600 rounded-md transition-colors"
           >
             <Square className="w-3.5 h-3.5" />
             Stop ({autoRunProgress?.current ?? 0}/{autoRunProgress?.max ?? 10})
           </button>
         ) : (
           canAutoRun && (
-            <div className="flex items-center gap-1">
+            <div className="ml-auto flex items-center gap-1">
               <button
                 onClick={onStartAutoRun}
                 disabled={disabled}

@@ -64,7 +64,7 @@ export function SessionContainer({
     stopRunAll,
   } = useDirectionsCache(backtestParams)
 
-  const [autoRunCount, setAutoRunCount] = useState(10)
+  const [autoRunCount, setAutoRunCount] = useState(1)
   const [pendingCachedNode, setPendingCachedNode] = useState<IterationNode | null>(null)
   const [pendingCardTitle, setPendingCardTitle] = useState<string>('')
   const [editorModal, setEditorModal] = useState<{
@@ -153,14 +153,22 @@ export function SessionContainer({
   }, [generateAndExecute, lastUsedModel, runAllDirections])
 
   const configDisabled = phase === 'generating' || phase === 'executing'
-  const latestComplete = [...iterationHistory].reverse().find(n => n.status === 'complete')
 
-  const handleRerun = useCallback(() => {
-    if (!latestComplete?.scriptCode) return
-    editAndRerun(latestComplete.id, latestComplete.scriptCode, lastUsedModel)
-  }, [latestComplete, editAndRerun, lastUsedModel])
+  // Rerun from any card — re-executes same code as a child of that iteration
+  const handleRerunFromCard = useCallback((iterationId: string) => {
+    const iteration = iterationHistory.find(n => n.id === iterationId)
+    if (!iteration || !iteration.scriptCode) return
+    editAndRerun(iterationId, iteration.scriptCode, lastUsedModel)
+  }, [iterationHistory, editAndRerun, lastUsedModel])
 
-  const canAutoRun = !!latestComplete?.insights?.suggestions?.length && !isAutoRunning && !isLoading
+  // Auto run from any card — starts auto-run loop from that specific node
+  const handleStartAutoRunFromCard = useCallback((iterationId: string) => {
+    startAutoRun(autoRunCount, lastUsedModel, iterationId)
+  }, [autoRunCount, lastUsedModel, startAutoRun])
+
+  const canAutoRun = iterationHistory.some(
+    n => n.status === 'complete' && (n.insights?.suggestions?.length ?? 0) > 0
+  ) && !isAutoRunning && !isLoading
 
   return (
     <div style={{ display: isActive ? 'contents' : 'none' }}>
@@ -169,14 +177,16 @@ export function SessionContainer({
         params={backtestParams}
         onChange={setBacktestParams}
         disabled={configDisabled}
-        onRerun={handleRerun}
-        canRerun={!!latestComplete}
         isAutoRunning={isAutoRunning}
         autoRunProgress={autoRunProgress}
         canAutoRun={canAutoRun}
         autoRunCount={autoRunCount}
         onAutoRunCountChange={setAutoRunCount}
-        onStartAutoRun={() => startAutoRun(autoRunCount, lastUsedModel)}
+        onStartAutoRun={() => {
+          const baseline = [...iterationHistory].reverse()
+            .find(n => n.status === 'complete' && (n.insights?.suggestions?.length ?? 0) > 0)
+          if (baseline) startAutoRun(autoRunCount, lastUsedModel, baseline.id)
+        }}
         onStopAutoRun={stopAutoRun}
         workerCount={workerCount}
       />
@@ -213,6 +223,8 @@ export function SessionContainer({
             selectedId={selectedIterationId}
             onSelect={selectIteration}
             onDelete={deleteIteration}
+            onRerun={handleRerunFromCard}
+            onStartAutoRun={handleStartAutoRunFromCard}
             isLoading={isLoading}
           />
         </div>

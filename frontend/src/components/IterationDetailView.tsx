@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ArrowLeft, Check, ChevronDown, ChevronRight, Code, Copy, GitCompare } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, Check, ChevronDown, ChevronRight, Code, Copy, GitCompare } from 'lucide-react'
 import type { IterationNode } from '../hooks/useBacktest'
 import { RatingPanel } from './RatingPanel'
 import { MetricsCard } from './MetricsCard'
@@ -270,6 +270,19 @@ export function IterationDetailView({ iteration, previousIteration, onBack }: It
               value={result.num_trades.toString()}
               variant="neutral"
             />
+            {(() => {
+              const months = iteration.params
+                ? (new Date(iteration.params.end_date).getTime() - new Date(iteration.params.start_date).getTime())
+                  / (1000 * 60 * 60 * 24 * 30.44)
+                : null
+              return months && months > 0 ? (
+                <MetricsCard
+                  label="Trades/Month"
+                  value={(result.num_trades / months).toFixed(1)}
+                  variant={result.num_trades / months >= 2 ? 'neutral' : 'negative'}
+                />
+              ) : null
+            })()}
             <MetricsCard
               label="Sharpe Ratio"
               value={(result.sharpe_ratio ?? 0).toFixed(2)}
@@ -280,6 +293,14 @@ export function IterationDetailView({ iteration, previousIteration, onBack }: It
               value={result.profit_factor === Infinity ? 'N/A' : (result.profit_factor ?? 0).toFixed(2)}
               variant={result.profit_factor >= 1.5 ? 'positive' : 'neutral'}
             />
+          </div>
+        )}
+
+        {/* Low trade count warning */}
+        {result.num_trades < 50 && (
+          <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-700">
+            <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+            Only {result.num_trades} trades — metrics may not be statistically reliable. Aim for 50+ trades.
           </div>
         )}
 
