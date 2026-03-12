@@ -319,8 +319,10 @@ export interface BacktestParams {
   end_date: string
   initial_capital: number
   exchange: string
-  allow_short?: boolean  // v0.7 additive
-  leverage?: number      // v0.7 additive
+  allow_short?: boolean          // v0.7 additive
+  leverage?: number              // v0.7 additive
+  max_order_size_pct?: number    // v0.9 additive — undefined = disabled
+  max_daily_loss_pct?: number    // v0.9 additive — undefined = disabled
 }
 
 export const EXCHANGE_CONFIGS: Record<string, { label: string; commission: number }> = {
@@ -860,6 +862,10 @@ export function useBacktest(sessionId: string) {
         commission: EXCHANGE_CONFIGS[backtestParams.exchange]?.commission ?? 0.00075,
         allow_short: backtestParams.allow_short ?? false,
         leverage: backtestParams.leverage ?? 1,
+        ...(backtestParams.max_order_size_pct !== undefined
+          ? { max_order_size_pct: backtestParams.max_order_size_pct } : {}),
+        ...(backtestParams.max_daily_loss_pct !== undefined
+          ? { max_daily_loss_pct: backtestParams.max_daily_loss_pct } : {}),
         ...(directionId ? {
           exchange: backtestParams.exchange,
           direction_id: directionId,

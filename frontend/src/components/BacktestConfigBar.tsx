@@ -169,6 +169,56 @@ export function BacktestConfigBar({ params, onChange, disabled, isAutoRunning, a
           )}
         </div>
 
+        <div className="flex items-center gap-1.5">
+          <label className="flex items-center gap-1 text-xs font-medium text-slate-500 cursor-pointer select-none">
+            <input type="checkbox"
+              checked={params.max_order_size_pct !== undefined}
+              onChange={(e) => onChange({ ...params,
+                max_order_size_pct: e.target.checked ? 0.10 : undefined })}
+              disabled={disabled}
+              className="rounded border-slate-300 text-primary-600 focus:ring-primary-500 disabled:opacity-50 disabled:cursor-not-allowed"
+            />
+            Max Order
+          </label>
+          {params.max_order_size_pct !== undefined && (
+            <div className="flex items-center gap-0.5">
+              <input type="number"
+                value={Math.round(params.max_order_size_pct * 100)}
+                onChange={(e) => onChange({ ...params,
+                  max_order_size_pct: Math.min(100, Math.max(1, Number(e.target.value))) / 100 })}
+                min={1} max={100} step={1} disabled={disabled}
+                className="w-12 px-1 py-1 text-sm border border-slate-200 rounded-md focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white disabled:opacity-50 disabled:cursor-not-allowed text-center"
+              />
+              <span className="text-xs text-slate-400">%</span>
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center gap-1.5">
+          <label className="flex items-center gap-1 text-xs font-medium text-slate-500 cursor-pointer select-none">
+            <input type="checkbox"
+              checked={params.max_daily_loss_pct !== undefined}
+              onChange={(e) => onChange({ ...params,
+                max_daily_loss_pct: e.target.checked ? 0.05 : undefined })}
+              disabled={disabled}
+              className="rounded border-slate-300 text-primary-600 focus:ring-primary-500 disabled:opacity-50 disabled:cursor-not-allowed"
+            />
+            Max Loss/Day
+          </label>
+          {params.max_daily_loss_pct !== undefined && (
+            <div className="flex items-center gap-0.5">
+              <input type="number"
+                value={Math.round(params.max_daily_loss_pct * 100)}
+                onChange={(e) => onChange({ ...params,
+                  max_daily_loss_pct: Math.min(100, Math.max(1, Number(e.target.value))) / 100 })}
+                min={1} max={100} step={1} disabled={disabled}
+                className="w-12 px-1 py-1 text-sm border border-slate-200 rounded-md focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white disabled:opacity-50 disabled:cursor-not-allowed text-center"
+              />
+              <span className="text-xs text-slate-400">%</span>
+            </div>
+          )}
+        </div>
+
         {isAutoRunning ? (
           <button
             onClick={onStopAutoRun}
