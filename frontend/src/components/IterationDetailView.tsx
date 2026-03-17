@@ -1,16 +1,18 @@
-import { useState } from 'react'
+import { useState, useCallback } from 'react'
 import { AlertTriangle, ArrowLeft, Check, ChevronDown, ChevronRight, Code, Copy, GitCompare } from 'lucide-react'
-import type { IterationNode } from '../hooks/useBacktest'
+import type { IterationNode, WalkForwardConfig } from '../hooks/useBacktest'
 import { RatingPanel } from './RatingPanel'
 import { MetricsCard } from './MetricsCard'
 import { EquityChart } from './EquityChart'
 import { TradesTable } from './TradesTable'
+import { WalkForwardPanel } from './WalkForwardPanel'
 import { diffLines, type DiffLine } from '../utils/scriptDiff'
 
 interface IterationDetailViewProps {
   iteration: IterationNode
   previousIteration?: IterationNode
   onBack: () => void
+  onRunWalkForward?: (iterationId: string, config: WalkForwardConfig, onProgress?: (w: number, t: number) => void) => void
 }
 
 function DiffView({ lines }: { lines: DiffLine[] }) {
@@ -53,10 +55,24 @@ function formatLondonTime(timestamp: string): string {
   return `${get('year')}-${get('month')}-${get('day')} ${get('hour')}:${get('minute')}:${get('second')}`
 }
 
-export function IterationDetailView({ iteration, previousIteration, onBack }: IterationDetailViewProps) {
+export function IterationDetailView({ iteration, previousIteration, onBack, onRunWalkForward }: IterationDetailViewProps) {
   const [codeExpanded, setCodeExpanded] = useState(false)
   const [showDiff, setShowDiff] = useState(true)
   const [copied, setCopied] = useState(false)
+  const [wfExpanded, setWfExpanded] = useState(true)
+  const [wfIsMonths, setWfIsMonths] = useState(6)
+  const [wfOosMonths, setWfOosMonths] = useState(3)
+  const [wfProgress, setWfProgress] = useState<{ window: number; total: number } | null>(null)
+
+  const handleRunWalkForward = useCallback(() => {
+    if (!onRunWalkForward) return
+    setWfProgress(null)
+    onRunWalkForward(
+      iteration.id,
+      { isMonths: wfIsMonths, oosMonths: wfOosMonths },
+      (window, total) => setWfProgress({ window, total }),
+    )
+  }, [onRunWalkForward, iteration.id, wfIsMonths, wfOosMonths])
 
   function copyScript() {
     if (!iteration.scriptCode) return
@@ -245,6 +261,105 @@ export function IterationDetailView({ iteration, previousIteration, onBack }: It
           </div>
         )}
 
+        {/* Equity Curve */}
+        <div className="bg-white rounded-xl border border-slate-200 p-3 lg:p-4">
+          <h3 className="text-sm font-semibold text-slate-700 mb-3 lg:mb-4">Equity Curve</h3>
+          <EquityChart data={result.equity_curve} />
+        </div>
+
+        {/* Walk-Forward Analysis */}
+        {onRunWalkForward && iteration.status === 'complete' && (
+          <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+            <button
+              onClick={() => setWfExpanded(!wfExpanded)}
+              className="w-full flex items-center justify-between px-4 py-3 hover:bg-slate-50 transition-colors text-left"
+            >
+              <div className="flex items-center gap-2">
+                {wfExpanded ? (
+                  <ChevronDown className="w-4 h-4 text-slate-400" />
+                ) : (
+                  <ChevronRight className="w-4 h-4 text-slate-400" />
+                )}
+                <span className="text-sm font-medium text-slate-700">Walk-Forward Analysis</span>
+                {iteration.walkForwardStatus === 'complete' && (
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">
+                    WFE {(iteration.walkForwardResult?.wfe ?? 0).toFixed(2)}
+                  </span>
+                )}
+                {iteration.walkForwardStatus === 'error' && (
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-red-100 text-red-600">Error</span>
+                )}
+              </div>
+              {iteration.walkForwardStatus !== 'running' && (
+                <button
+                  onClick={e => { e.stopPropagation(); setWfExpanded(true); handleRunWalkForward() }}
+                  className="flex-shrink-0 px-3 py-1 text-xs font-medium rounded-lg bg-primary-50 text-primary-700 hover:bg-primary-100 border border-primary-200 transition-colors"
+                >
+                  {iteration.walkForwardStatus === 'complete' ? 'Re-run' : 'Run Walk-Forward'}
+                </button>
+              )}
+            </button>
+
+            {wfExpanded && (
+              <div className="border-t border-slate-200 p-4 space-y-4">
+                {/* Config inputs */}
+                <div className="flex flex-wrap items-center gap-4">
+                  <label className="flex items-center gap-2 text-xs text-slate-600">
+                    IS months:
+                    <input
+                      type="number"
+                      min={1}
+                      max={60}
+                      value={wfIsMonths}
+                      onChange={e => setWfIsMonths(Math.max(1, parseInt(e.target.value) || 6))}
+                      className="w-16 px-2 py-1 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-primary-400"
+                    />
+                  </label>
+                  <label className="flex items-center gap-2 text-xs text-slate-600">
+                    OOS months:
+                    <input
+                      type="number"
+                      min={1}
+                      max={60}
+                      value={wfOosMonths}
+                      onChange={e => setWfOosMonths(Math.max(1, parseInt(e.target.value) || 3))}
+                      className="w-16 px-2 py-1 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-primary-400"
+                    />
+                  </label>
+                  {iteration.walkForwardStatus !== 'running' && (
+                    <button
+                      onClick={handleRunWalkForward}
+                      className="px-3 py-1.5 text-xs font-medium rounded-lg bg-primary-600 text-white hover:bg-primary-700 transition-colors"
+                    >
+                      {iteration.walkForwardStatus === 'complete' ? 'Re-run' : 'Run'}
+                    </button>
+                  )}
+                </div>
+
+                {/* Progress */}
+                {iteration.walkForwardStatus === 'running' && (
+                  <div className="text-xs text-slate-500">
+                    {wfProgress
+                      ? `Running window ${wfProgress.window} / ${wfProgress.total}…`
+                      : 'Fetching data…'}
+                  </div>
+                )}
+
+                {/* Results */}
+                {iteration.walkForwardStatus === 'complete' && iteration.walkForwardResult && (
+                  <WalkForwardPanel result={iteration.walkForwardResult} />
+                )}
+
+                {iteration.walkForwardStatus === 'error' && (
+                  <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                    Walk-forward validation failed. Check parameters and try again.
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Rating Panel or Metrics Grid */}
         {rating ? (
           <RatingPanel rating={rating} />
@@ -303,12 +418,6 @@ export function IterationDetailView({ iteration, previousIteration, onBack }: It
             Only {result.num_trades} trades — metrics may not be statistically reliable. Aim for 50+ trades.
           </div>
         )}
-
-        {/* Equity Curve */}
-        <div className="bg-white rounded-xl border border-slate-200 p-3 lg:p-4">
-          <h3 className="text-sm font-semibold text-slate-700 mb-3 lg:mb-4">Equity Curve</h3>
-          <EquityChart data={result.equity_curve} />
-        </div>
 
         {/* Trades Table */}
         <div className="bg-white rounded-xl border border-slate-200 p-3 lg:p-4">

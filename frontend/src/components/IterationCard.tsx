@@ -126,6 +126,20 @@ export function IterationCard({ iteration, onSelect, onDelete, onRerun, onStartA
                   <span>WR {((iteration.winRate ?? 0) * 100).toFixed(0)}%</span>
                   <span className="text-slate-300">·</span>
                   <span>SR {(iteration.sharpe ?? 0).toFixed(2)}</span>
+                  {iteration.walkForwardStatus === 'complete' && iteration.walkForwardResult && (
+                    <>
+                      <span className="text-slate-300">·</span>
+                      <span className={
+                        iteration.walkForwardResult.wfe >= 0.5
+                          ? 'text-emerald-600'
+                          : iteration.walkForwardResult.wfe >= 0.3
+                          ? 'text-amber-500'
+                          : 'text-red-500'
+                      }>
+                        WFE {iteration.walkForwardResult.wfe.toFixed(2)}
+                      </span>
+                    </>
+                  )}
                 </>
               )}
               {isInProgress && (
@@ -258,6 +272,20 @@ export function IterationCard({ iteration, onSelect, onDelete, onRerun, onStartA
           <span className="text-slate-600">WR {((iteration.winRate ?? 0) * 100).toFixed(0)}%</span>
           <span className="text-slate-400">|</span>
           <span className="text-slate-600">SR {(iteration.sharpe ?? 0).toFixed(2)}</span>
+          {iteration.walkForwardStatus === 'complete' && iteration.walkForwardResult && (
+            <>
+              <span className="text-slate-400">|</span>
+              <span className={
+                iteration.walkForwardResult.wfe >= 0.5
+                  ? 'text-emerald-600'
+                  : iteration.walkForwardResult.wfe >= 0.3
+                  ? 'text-amber-500'
+                  : 'text-red-500'
+              }>
+                WFE {iteration.walkForwardResult.wfe.toFixed(2)}
+              </span>
+            </>
+          )}
         </div>
       )}
 

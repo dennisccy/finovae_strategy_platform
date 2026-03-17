@@ -11,6 +11,7 @@ Finovae enables traders to:
 - Visualize equity curves and drawdown overlays
 - Review detailed trade execution logs
 - Compare multiple strategy runs
+- Run walk-forward validation to detect overfitting (rolling IS/OOS windows, WFE score, combined OOS equity curve)
 
 ## Tech Stack
 
@@ -127,12 +128,34 @@ The `useBacktest.ts` hook manages API communication with the backend:
 ## Key Features
 
 - ✅ Natural language strategy input
-- ✅ Real-time backtest execution
+- ✅ Real-time backtest execution with SSE streaming
 - ✅ Interactive equity curve visualization
-- ✅ Comprehensive performance metrics
+- ✅ Comprehensive performance metrics with 5-category rating system
 - ✅ Detailed trade history
-- ✅ Run history & comparison
+- ✅ Multi-session tabs with persistent state
+- ✅ Auto-run and parallel worker support
+- ✅ Walk-forward validation (overfitting detection)
 - ✅ Responsive mobile-friendly design
+
+## Walk-Forward Validation (v0.10)
+
+After running a backtest, open any completed iteration's detail view. The **Walk-Forward Analysis** section appears above the rating panel and is expanded by default. Configure IS and OOS window lengths (default: 6 months IS / 3 months OOS) and click **Run Walk-Forward**.
+
+Results include:
+- **Aggregate metrics**: Combined OOS return, OOS Sharpe, OOS win rate, max drawdown
+- **WFE badge**: Walk-Forward Efficiency (OOS Sharpe / IS Sharpe) — shown on the iteration card and in the detail header. Green ≥ 0.5, yellow 0.3–0.5, red < 0.3
+- **Per-window table**: IS/OOS periods, returns, Sharpe ratios, and trade counts for each window
+- **Combined OOS equity curve**: All OOS windows chained and compounded into a single curve
+
+Walk-forward results are persisted with the session (OOS equity curves downsampled for storage efficiency).
+
+### Auto-run WF gate
+
+When Auto Run promotes a candidate that beats the baseline score, it first runs walk-forward validation on that candidate. If the WFE is below 0.3 (likely overfit), the candidate is discarded and the baseline is kept. This prevents Auto Run from locking onto in-sample overfit strategies.
+
+### AI suggestions with OOS context
+
+When walk-forward results are available for an iteration, they are included in the insights generation request. The AI factors in OOS performance when ranking suggestions — strategies with low WFE receive suggestions that prioritise reducing parameter sensitivity and improving robustness.
 
 ## Related Repositories
 

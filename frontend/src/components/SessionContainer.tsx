@@ -49,6 +49,7 @@ export function SessionContainer({
     autoRunProgress,
     startAutoRun,
     stopAutoRun,
+    runWalkForward,
     sessionStatus,
     workerCount,
   } = useBacktest(sessionId)
@@ -226,6 +227,7 @@ export function SessionContainer({
             onRerun={handleRerunFromCard}
             onStartAutoRun={handleStartAutoRunFromCard}
             isLoading={isLoading}
+            onRunWalkForward={runWalkForward}
           />
         </div>
       </main>

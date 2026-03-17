@@ -1,6 +1,6 @@
 import { useEffect, useRef, useMemo } from 'react'
 import { GitBranch } from 'lucide-react'
-import type { IterationNode } from '../hooks/useBacktest'
+import type { IterationNode, WalkForwardConfig } from '../hooks/useBacktest'
 import { IterationCard } from './IterationCard'
 import { IterationDetailView } from './IterationDetailView'
 
@@ -12,6 +12,7 @@ interface IterationPanelProps {
   onRerun: (id: string) => void
   onStartAutoRun: (id: string) => void
   isLoading: boolean
+  onRunWalkForward?: (iterationId: string, config: WalkForwardConfig, onProgress?: (w: number, t: number) => void) => void
 }
 
 // =============================================================================
@@ -88,7 +89,7 @@ function IterationTreeItem({ node, latestId, onSelect, onDelete, onRerun, onStar
 // IterationPanel
 // =============================================================================
 
-export function IterationPanel({ iterations, selectedId, onSelect, onDelete, onRerun, onStartAutoRun }: IterationPanelProps) {
+export function IterationPanel({ iterations, selectedId, onSelect, onDelete, onRerun, onStartAutoRun, onRunWalkForward }: IterationPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const isUserScrolledUp = useRef(false)
   const lastScrollHeight = useRef(0)
@@ -152,6 +153,7 @@ export function IterationPanel({ iterations, selectedId, onSelect, onDelete, onR
           iteration={selected}
           previousIteration={previousIteration}
           onBack={() => onSelect(null)}
+          onRunWalkForward={onRunWalkForward}
         />
       )
     }

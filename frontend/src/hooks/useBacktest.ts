@@ -253,6 +253,45 @@ export interface StrategyRating {
   annual_short_returns: Record<number, number>
 }
 
+// =============================================================================
+// Walk-Forward Validation Types (v0.10 additive)
+// =============================================================================
+
+export interface WalkForwardWindow {
+  window_index: number
+  is_start: string
+  is_end: string
+  oos_start: string
+  oos_end: string
+  is_total_return: number
+  oos_total_return: number
+  is_sharpe: number
+  oos_sharpe: number
+  is_num_trades: number
+  oos_num_trades: number
+  oos_equity_curve: EquityPoint[]
+}
+
+export interface WalkForwardResult {
+  windows: WalkForwardWindow[]
+  num_windows: number
+  is_months: number
+  oos_months: number
+  combined_oos_return: number
+  combined_oos_sharpe: number
+  combined_oos_win_rate: number
+  combined_oos_max_drawdown: number
+  wfe: number
+  combined_oos_equity: EquityPoint[]
+  errors: string[]
+}
+
+export interface WalkForwardConfig {
+  isMonths: number
+  oosMonths: number
+  maxWindows?: number
+}
+
 export interface InsightsSuggestion {
   title: string
   description: string
@@ -356,6 +395,8 @@ export interface IterationNode {
   modelUsed?: string
   params?: BacktestParams
   parentId?: string | null  // null/undefined = root; string = child of that iteration ID
+  walkForwardResult?: WalkForwardResult | null   // v0.10 additive
+  walkForwardStatus?: 'idle' | 'running' | 'complete' | 'error'  // v0.10 additive
 }
 
 export type Phase = 'idle' | 'generating' | 'executing' | 'results'
@@ -1434,6 +1475,17 @@ export function useBacktest(sessionId: string) {
     })
 
     try {
+      const wfSummary = iteration.walkForwardStatus === 'complete' && iteration.walkForwardResult
+        ? {
+            wfe: iteration.walkForwardResult.wfe,
+            num_windows: iteration.walkForwardResult.num_windows,
+            combined_oos_return: iteration.walkForwardResult.combined_oos_return,
+            combined_oos_sharpe: iteration.walkForwardResult.combined_oos_sharpe,
+            combined_oos_win_rate: iteration.walkForwardResult.combined_oos_win_rate,
+            combined_oos_max_drawdown: iteration.walkForwardResult.combined_oos_max_drawdown,
+          }
+        : undefined
+
       const insResponse = await fetch(`${API_BASE_URL}/api/generate-insights`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1454,6 +1506,7 @@ export function useBacktest(sessionId: string) {
           ...(previousSuggestions && {
             previous_suggestions: previousSuggestions.map(s => s.title),
           }),
+          ...(wfSummary && { walk_forward_result: wfSummary }),
         }),
       })
       const insData = await insResponse.json()
@@ -1703,6 +1756,139 @@ export function useBacktest(sessionId: string) {
     }
   }, [iterationHistory, backtestParams, addLogEntry, executeSingleTimeframe, generateInsightsForIteration, validateSymbolExists])
 
+  // ==========================================================================
+  // runWalkForward
+  // ==========================================================================
+
+  function _wfDownsample<T>(arr: T[], maxPoints: number): T[] {
+    if (arr.length <= maxPoints) return arr
+    const step = Math.ceil(arr.length / maxPoints)
+    return arr.filter((_, i) => i % step === 0 || i === arr.length - 1)
+  }
+
+  function _trimWalkForwardForStorage(result: WalkForwardResult): WalkForwardResult {
+    return {
+      ...result,
+      windows: result.windows.map(w => ({
+        ...w,
+        oos_equity_curve: _wfDownsample(w.oos_equity_curve, 100),
+      })),
+      combined_oos_equity: _wfDownsample(result.combined_oos_equity, 200),
+    }
+  }
+
+  const runWalkForward = useCallback(async (
+    iterationId: string,
+    config: WalkForwardConfig,
+    onProgress?: (window: number, total: number) => void,
+  ): Promise<WalkForwardResult | null> => {
+    const iteration = iterationHistoryRef.current.find(n => n.id === iterationId)
+    if (!iteration || !iteration.params) return null
+
+    // Set status to 'running'
+    const markRunning = (prev: IterationNode[]) =>
+      prev.map(n => n.id === iterationId
+        ? { ...n, walkForwardStatus: 'running' as const, walkForwardResult: null }
+        : n
+      )
+    setIterationHistory(markRunning)
+    iterationHistoryRef.current = markRunning(iterationHistoryRef.current)
+
+    try {
+      const body = JSON.stringify({
+        script_id: iteration.scriptId,
+        script_code: iteration.scriptCode,
+        symbol: iteration.params.symbol,
+        timeframe: iteration.params.timeframe,
+        start_date: iteration.params.start_date,
+        end_date: iteration.params.end_date,
+        initial_capital: iteration.params.initial_capital,
+        commission: EXCHANGE_CONFIGS[iteration.params.exchange]?.commission ?? 0.00075,
+        allow_short: iteration.params.allow_short ?? false,
+        leverage: iteration.params.leverage ?? 1,
+        is_months: config.isMonths,
+        oos_months: config.oosMonths,
+        ...(config.maxWindows !== undefined ? { max_windows: config.maxWindows } : {}),
+      })
+
+      const response = await fetch(`${API_BASE_URL}/api/execute-walk-forward`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body,
+      })
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`)
+      }
+
+      // Read SSE stream
+      const reader = response.body!.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let finalData: any = null
+
+      outer: while (!finalData) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        const parts = buffer.split('\n\n')
+        buffer = parts.pop() ?? ''
+        for (const part of parts) {
+          for (const line of part.split('\n')) {
+            if (!line.startsWith('data: ')) continue
+            const event = JSON.parse(line.slice(6))
+            if (event.type === 'status' && event.phase === 'walk_forward') {
+              onProgress?.(event.wf_window ?? 0, event.wf_total ?? 0)
+            } else if (event.type === 'result' || event.type === 'error') {
+              finalData = event
+              break outer
+            }
+          }
+        }
+      }
+      reader.releaseLock()
+
+      if (finalData?.type === 'result' && finalData.success) {
+        const wfResult = _trimWalkForwardForStorage(finalData.result as WalkForwardResult)
+        const markComplete = (prev: IterationNode[]) =>
+          prev.map(n => n.id === iterationId
+            ? { ...n, walkForwardStatus: 'complete' as const, walkForwardResult: wfResult }
+            : n
+          )
+        setIterationHistory(markComplete)
+        iterationHistoryRef.current = markComplete(iterationHistoryRef.current)
+
+        // Persist the updated node
+        const updatedNode = iterationHistoryRef.current.find(n => n.id === iterationId)
+        const nodeIdx = iterationHistoryRef.current.findIndex(n => n.id === iterationId)
+        if (updatedNode && nodeIdx >= 0) {
+          upsertIteration(sessionId, nodeIdx + 1, updatedNode)
+        }
+        return wfResult
+      } else {
+        const markError = (prev: IterationNode[]) =>
+          prev.map(n => n.id === iterationId
+            ? { ...n, walkForwardStatus: 'error' as const }
+            : n
+          )
+        setIterationHistory(markError)
+        iterationHistoryRef.current = markError(iterationHistoryRef.current)
+        return null
+      }
+    } catch (e) {
+      if (e instanceof DOMException && e.name === 'AbortError') return null
+      const markError = (prev: IterationNode[]) =>
+        prev.map(n => n.id === iterationId
+          ? { ...n, walkForwardStatus: 'error' as const }
+          : n
+        )
+      setIterationHistory(markError)
+      iterationHistoryRef.current = markError(iterationHistoryRef.current)
+      return null
+    }
+  }, [sessionId])
+
   const startAutoRun = useCallback(async (maxAttempts: number, model: string, fromIterationId: string) => {
     const baseline = iterationHistoryRef.current.find(n => n.id === fromIterationId)
     if (!baseline) return
@@ -1837,7 +2023,30 @@ export function useBacktest(sessionId: string) {
         }
       })
 
+      const WF_ACCEPT_THRESHOLD = 0.3
+
       if (bestId && bestScore > baselineScore) {
+        // Run walk-forward on candidate before promoting
+        const baselineWf = iterationHistoryRef.current.find(n => n.id === baselineId)?.walkForwardResult
+        const wfConfig: WalkForwardConfig = {
+          isMonths: baselineWf?.is_months ?? 6,
+          oosMonths: baselineWf?.oos_months ?? 3,
+        }
+
+        addLogEntry({ type: 'auto-run', content: 'Running walk-forward on candidate...', iterationId: bestId })
+        const wfResult = await runWalkForward(bestId, wfConfig)
+
+        if (wfResult && wfResult.wfe < WF_ACCEPT_THRESHOLD) {
+          addLogEntry({
+            type: 'auto-run',
+            content: `Walk-forward rejected candidate (WFE ${wfResult.wfe.toFixed(2)} < ${WF_ACCEPT_THRESHOLD}) — discarding.`,
+            iterationId: baselineId,
+          })
+          deleteIteration(bestId)
+          untriedSuggestions.forEach(({ index }) => markSuggestionDisabled(baselineId, index))
+          continue
+        }
+
         attempt++
         setAutoRunProgress({ current: attempt, max: maxAttempts })
         addLogEntry({ type: 'auto-run', content: `Kept (${attempt}/${maxAttempts}): ${fmt(bestScore)} > ${fmt(baselineScore)} — generating suggestions...`, iterationId: bestId })
@@ -1875,7 +2084,7 @@ export function useBacktest(sessionId: string) {
 
     const reason = attempt >= maxAttempts ? `${maxAttempts} improvements done` : 'no more suggestions'
     addLogEntry({ type: 'auto-run', content: `Auto Run finished — ${reason}`, iterationId: baselineId })
-  }, [generateAndExecute, deleteIteration, markSuggestionDisabled, addLogEntry, generateInsightsForIteration])
+  }, [generateAndExecute, deleteIteration, markSuggestionDisabled, addLogEntry, generateInsightsForIteration, runWalkForward])
 
   const stopAutoRun = useCallback(() => {
     autoRunStopRef.current = true
@@ -1914,6 +2123,7 @@ export function useBacktest(sessionId: string) {
     autoRunProgress,
     startAutoRun,
     stopAutoRun,
+    runWalkForward,
     sessionStatus,
     workerCount,
   }
