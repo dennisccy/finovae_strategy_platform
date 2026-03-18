@@ -1616,147 +1616,6 @@ export function useBacktest(sessionId: string) {
   }, [generateInsightsForIteration])
 
   // ==========================================================================
-  // editAndRerun
-  // ==========================================================================
-
-  const editAndRerun = useCallback(async (originalIterationId: string, editedCode: string, model: string = 'gpt-5-mini') => {
-    const original = iterationHistory.find(n => n.id === originalIterationId)
-    if (!original) return
-
-    setPhase('executing')
-    setIsLoading(true)
-    setError(null)
-
-    const abortController = new AbortController()
-    abortControllerRef.current = abortController
-    const { signal } = abortController
-
-    const iterationId = crypto.randomUUID()
-
-    addLogEntry({
-      type: 'user-prompt',
-      content: `Re-running "${original.strategyName}" with edited code`,
-      iterationId,
-    })
-
-    addLogEntry({
-      type: 'code-preview',
-      content: original.strategyName + ' (edited)',
-      detail: editedCode,
-      iterationId,
-    })
-
-    const newIteration: IterationNode = {
-      id: iterationId,
-      prompt: original.prompt + ' (edited)',
-      scriptCode: editedCode,
-      scriptId: original.scriptId,
-      strategyName: original.strategyName + ' (edited)',
-      result: null,
-      rating: null,
-      insights: null,
-      totalReturn: 0,
-      winRate: 0,
-      numTrades: 0,
-      sharpe: 0,
-      maxDrawdown: 0,
-      changeSummary: 'Re-run',
-      params: { ...backtestParams },
-      timestamp: new Date().toISOString(),
-      status: 'executing',
-      parentId: originalIterationId,
-    }
-    setIterationHistory(prev => [...prev, newIteration])
-
-    try {
-      const timeframe = backtestParams.timeframe
-      const tfRunnerId = addLogEntry({
-        type: 'ai-step',
-        content: `Running ${timeframe}...`,
-        status: 'active',
-        startedAt: Date.now(),
-        iterationId,
-      })
-
-      const outcome = await executeSingleTimeframe(original.scriptId, editedCode, timeframe, iterationId, signal)
-      updateLogEntry(tfRunnerId, { status: 'done', completedAt: Date.now() })
-
-      if (signal.aborted) return
-
-      if (outcome?.result) {
-        const backtestResult = outcome.result
-
-        // Apply liquidity cache
-        let finalRating = outcome.rating
-        if (finalRating && cachedLiquidityRef.current) {
-          finalRating = {
-            ...finalRating,
-            liquidity: cachedLiquidityRef.current.liquidity,
-            capacity_levels: cachedLiquidityRef.current.capacity_levels,
-          }
-        }
-
-        const returnPct = (backtestResult.total_return * 100).toFixed(2)
-        const returnSign = backtestResult.total_return >= 0 ? '+' : ''
-        addLogEntry({
-          type: 'complete',
-          content: `${returnSign}${returnPct}% return, ${backtestResult.num_trades} trades, ${(backtestResult.win_rate * 100).toFixed(0)}% win rate, ${backtestResult.sharpe_ratio.toFixed(2)} sharpe`,
-          iterationId,
-        })
-
-        setIterationHistory(prev => prev.map(n =>
-          n.id === iterationId
-            ? {
-              ...n,
-              result: backtestResult,
-              rating: finalRating,
-              totalReturn: backtestResult.total_return,
-              winRate: backtestResult.win_rate,
-              numTrades: backtestResult.num_trades,
-              sharpe: backtestResult.sharpe_ratio,
-              maxDrawdown: backtestResult.max_drawdown,
-              status: 'complete',
-            }
-            : n
-        ))
-
-        // Sync the ref immediately so generateInsightsForIteration can read
-        // iteration.result before the useEffect re-syncs after re-render.
-        iterationHistoryRef.current = iterationHistoryRef.current.map(n =>
-          n.id === iterationId
-            ? { ...n, result: backtestResult, rating: finalRating, status: 'complete' }
-            : n
-        )
-
-        setPhase('results')
-        setIsLoading(false)
-
-        // Generate summary and suggestions (mirrors generateAndExecute flow)
-        await generateInsightsForIteration(iterationId, model)
-      } else {
-        const errMsg = 'Backtest failed'
-        addLogEntry({ type: 'error', content: errMsg, iterationId })
-        setIterationHistory(prev => prev.map(n =>
-          n.id === iterationId ? { ...n, status: 'error', error: errMsg } : n
-        ))
-        setError(errMsg)
-        setPhase('idle')
-        setIsLoading(false)
-      }
-    } catch (err) {
-      if (err instanceof DOMException && err.name === 'AbortError') return
-      const errMsg = err instanceof Error ? err.message : 'Failed to execute backtest'
-      addLogEntry({ type: 'error', content: errMsg, iterationId })
-      setIterationHistory(prev => prev.map(n =>
-        n.id === iterationId ? { ...n, status: 'error', error: errMsg } : n
-      ))
-      setError(errMsg)
-      setPhase('idle')
-      setIsLoading(false)
-    }
-  }, [iterationHistory, backtestParams, addLogEntry, executeSingleTimeframe, generateInsightsForIteration, validateSymbolExists])
-
-  // ==========================================================================
   // runWalkForward
   // ==========================================================================
 
@@ -1888,6 +1747,155 @@ export function useBacktest(sessionId: string) {
       return null
     }
   }, [sessionId])
+
+  // ==========================================================================
+  // editAndRerun
+  // ==========================================================================
+
+  const editAndRerun = useCallback(async (originalIterationId: string, editedCode: string, model: string = 'gpt-5-mini') => {
+    const original = iterationHistory.find(n => n.id === originalIterationId)
+    if (!original) return
+
+    setPhase('executing')
+    setIsLoading(true)
+    setError(null)
+
+    const abortController = new AbortController()
+    abortControllerRef.current = abortController
+    const { signal } = abortController
+
+    const iterationId = crypto.randomUUID()
+
+    addLogEntry({
+      type: 'user-prompt',
+      content: `Re-running "${original.strategyName}" with edited code`,
+      iterationId,
+    })
+
+    addLogEntry({
+      type: 'code-preview',
+      content: original.strategyName + ' (edited)',
+      detail: editedCode,
+      iterationId,
+    })
+
+    const newIteration: IterationNode = {
+      id: iterationId,
+      prompt: original.prompt + ' (edited)',
+      scriptCode: editedCode,
+      scriptId: original.scriptId,
+      strategyName: original.strategyName + ' (edited)',
+      result: null,
+      rating: null,
+      insights: null,
+      totalReturn: 0,
+      winRate: 0,
+      numTrades: 0,
+      sharpe: 0,
+      maxDrawdown: 0,
+      changeSummary: 'Re-run',
+      params: { ...backtestParams },
+      timestamp: new Date().toISOString(),
+      status: 'executing',
+      parentId: originalIterationId,
+    }
+    setIterationHistory(prev => [...prev, newIteration])
+
+    try {
+      const timeframe = backtestParams.timeframe
+      const tfRunnerId = addLogEntry({
+        type: 'ai-step',
+        content: `Running ${timeframe}...`,
+        status: 'active',
+        startedAt: Date.now(),
+        iterationId,
+      })
+
+      const outcome = await executeSingleTimeframe(original.scriptId, editedCode, timeframe, iterationId, signal)
+      updateLogEntry(tfRunnerId, { status: 'done', completedAt: Date.now() })
+
+      if (signal.aborted) return
+
+      if (outcome?.result) {
+        const backtestResult = outcome.result
+
+        // Apply liquidity cache
+        let finalRating = outcome.rating
+        if (finalRating && cachedLiquidityRef.current) {
+          finalRating = {
+            ...finalRating,
+            liquidity: cachedLiquidityRef.current.liquidity,
+            capacity_levels: cachedLiquidityRef.current.capacity_levels,
+          }
+        }
+
+        const returnPct = (backtestResult.total_return * 100).toFixed(2)
+        const returnSign = backtestResult.total_return >= 0 ? '+' : ''
+        addLogEntry({
+          type: 'complete',
+          content: `${returnSign}${returnPct}% return, ${backtestResult.num_trades} trades, ${(backtestResult.win_rate * 100).toFixed(0)}% win rate, ${backtestResult.sharpe_ratio.toFixed(2)} sharpe`,
+          iterationId,
+        })
+
+        setIterationHistory(prev => prev.map(n =>
+          n.id === iterationId
+            ? {
+              ...n,
+              result: backtestResult,
+              rating: finalRating,
+              totalReturn: backtestResult.total_return,
+              winRate: backtestResult.win_rate,
+              numTrades: backtestResult.num_trades,
+              sharpe: backtestResult.sharpe_ratio,
+              maxDrawdown: backtestResult.max_drawdown,
+              status: 'complete',
+            }
+            : n
+        ))
+
+        // Sync the ref immediately so generateInsightsForIteration can read
+        // iteration.result before the useEffect re-syncs after re-render.
+        iterationHistoryRef.current = iterationHistoryRef.current.map(n =>
+          n.id === iterationId
+            ? { ...n, result: backtestResult, rating: finalRating, status: 'complete' }
+            : n
+        )
+
+        setPhase('results')
+        setIsLoading(false)
+
+        // Auto-run walk-forward validation (must run before insights so WFE data informs suggestions)
+        const wfConfig: WalkForwardConfig = {
+          isMonths: original.walkForwardResult?.is_months ?? 6,
+          oosMonths: original.walkForwardResult?.oos_months ?? 3,
+        }
+        addLogEntry({ type: 'auto-run', content: 'Running walk-forward validation...', iterationId })
+        await runWalkForward(iterationId, wfConfig)
+
+        // Generate summary and suggestions — reads walkForwardResult from ref if WFV completed
+        await generateInsightsForIteration(iterationId, model)
+      } else {
+        const errMsg = 'Backtest failed'
+        addLogEntry({ type: 'error', content: errMsg, iterationId })
+        setIterationHistory(prev => prev.map(n =>
+          n.id === iterationId ? { ...n, status: 'error', error: errMsg } : n
+        ))
+        setError(errMsg)
+        setPhase('idle')
+        setIsLoading(false)
+      }
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') return
+      const errMsg = err instanceof Error ? err.message : 'Failed to execute backtest'
+      addLogEntry({ type: 'error', content: errMsg, iterationId })
+      setIterationHistory(prev => prev.map(n =>
+        n.id === iterationId ? { ...n, status: 'error', error: errMsg } : n
+      ))
+      setError(errMsg)
+      setPhase('idle')
+      setIsLoading(false)
+    }
+  }, [iterationHistory, backtestParams, addLogEntry, executeSingleTimeframe, generateInsightsForIteration, runWalkForward, validateSymbolExists])
 
   const startAutoRun = useCallback(async (maxAttempts: number, model: string, fromIterationId: string) => {
     const baseline = iterationHistoryRef.current.find(n => n.id === fromIterationId)
