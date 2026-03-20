@@ -713,9 +713,9 @@ export function useBacktest(sessionId: string) {
 
   /** Apply real backend timings to step entries. */
   const applyRealTimings = useCallback((
-    timings: { validate_ms: number; fetch_ms: number; simulate_ms: number; calculate_ms: number; total_ms?: number; calculate_steps?: Record<string, number> | null } | undefined,
+    timings: { validate_ms: number; fetch_ms: number; simulate_ms: number; calculate_ms: number; walk_forward_ms?: number | null; total_ms?: number; calculate_steps?: Record<string, number> | null } | undefined,
     base: number,
-    stepIds: { validate: string; fetch: string; sim: string; calc: string; metrics: string[] },
+    stepIds: { validate: string; fetch: string; sim: string; calc: string; metrics: string[]; wf?: string | null },
     resultArrivedAt?: number,
   ) => {
     if (timings) {
@@ -757,6 +757,12 @@ export function useBacktest(sessionId: string) {
           })
         })
       }
+
+      if (stepIds.wf && timings.walk_forward_ms != null) {
+        const wfStart = calcEnd
+        const wfEnd = wfStart + timings.walk_forward_ms
+        updateLogEntry(stepIds.wf, { status: 'done', startedAt: wfStart, completedAt: wfEnd })
+      }
     } else {
       const now = Date.now()
       updateLogEntry(stepIds.validate, { status: 'done', completedAt: now })
@@ -764,6 +770,7 @@ export function useBacktest(sessionId: string) {
       updateLogEntry(stepIds.sim, { status: 'done', completedAt: now })
       updateLogEntry(stepIds.calc, { status: 'done', completedAt: now })
       stepIds.metrics.forEach(id => updateLogEntry(id, { status: 'done', completedAt: now }))
+      if (stepIds.wf) updateLogEntry(stepIds.wf, { status: 'done', completedAt: now })
     }
   }, [updateLogEntry])
 
@@ -781,7 +788,8 @@ export function useBacktest(sessionId: string) {
     directionId?: string,
     directionIndex?: number,
     directionPrompt?: string,
-  ): Promise<{ result: BacktestResult; rating: StrategyRating | null } | null> => {
+    wfvConfig?: WalkForwardConfig | null,
+  ): Promise<{ result: BacktestResult; rating: StrategyRating | null; walkForwardResult: WalkForwardResult | null } | null> => {
     const validateStepId = addLogEntry({
       type: 'ai-step', content: `[${timeframe}] Validating code...`, status: 'active', startedAt: Date.now(), iterationId,
     })
@@ -806,19 +814,24 @@ export function useBacktest(sessionId: string) {
       })
     )
 
-    const stepIds = { validate: validateStepId, fetch: fetchStepId, sim: simStepId, calc: calcStepId, metrics: metricSubStepIds }
+    const wfStepId = wfvConfig ? addLogEntry({
+      type: 'ai-step', content: `[${timeframe}] Walk-Forward Validation...`, status: 'pending', iterationId,
+    }) : null
+
+    const stepIds = { validate: validateStepId, fetch: fetchStepId, sim: simStepId, calc: calcStepId, metrics: metricSubStepIds, wf: wfStepId }
     const executionStartTime = Date.now()
 
     const donePhases = new Set<string>()
     const startedPhases = new Set<string>()
     const startedSubstepIds = new Set<number>()
 
-    const phaseOrder = ['validate', 'fetch', 'simulate', 'calculate'] as const
+    const phaseOrder = ['validate', 'fetch', 'simulate', 'calculate', 'walk_forward'] as const
     const phaseToStepId: Record<string, string> = {
       validate: validateStepId,
       fetch: fetchStepId,
       simulate: simStepId,
       calculate: calcStepId,
+      ...(wfStepId ? { walk_forward: wfStepId } : {}),
     }
 
     const applyPolledStatus = (status: {
@@ -889,6 +902,21 @@ export function useBacktest(sessionId: string) {
           }
         }
       }
+
+      if (status.phase === 'walk_forward' && wfStepId) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const wfWindow = (status as any).wf_window ?? 0
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const wfTotal = (status as any).wf_total ?? 0
+        if (wfTotal > 0) {
+          updateLogEntry(wfStepId, {
+            status: 'active',
+            content: `[${timeframe}] Walk-Forward window ${wfWindow} / ${wfTotal}`,
+          })
+        } else {
+          updateLogEntry(wfStepId, { status: 'active' })
+        }
+      }
     }
 
     try {
@@ -914,6 +942,12 @@ export function useBacktest(sessionId: string) {
           direction_prompt: directionPrompt ?? '',
         } : {}),
         strategy_name: directionPrompt ?? undefined,
+        ...(wfvConfig ? {
+          wfv_enabled: true,
+          wfv_is_months: wfvConfig.isMonths,
+          wfv_oos_months: wfvConfig.oosMonths,
+          ...(wfvConfig.maxWindows !== undefined ? { wfv_max_windows: wfvConfig.maxWindows } : {}),
+        } : {}),
       })
 
       // Retry on transient "Failed to fetch" network errors (e.g. server busy during concurrent load)
@@ -1001,6 +1035,9 @@ export function useBacktest(sessionId: string) {
       return {
         result: execData.result as BacktestResult,
         rating: (execData.rating as StrategyRating) || null,
+        walkForwardResult: execData.walk_forward_result
+          ? _trimWalkForwardForStorage(execData.walk_forward_result as WalkForwardResult)
+          : null,
       }
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') {
@@ -1074,6 +1111,7 @@ export function useBacktest(sessionId: string) {
     directionPrompt?: string,
     parentId?: string | null,
     overrideParams?: Partial<typeof backtestParams>,
+    wfvConfig?: WalkForwardConfig | null,
   ) => {
     // Deduplicate: if already loading, abort the previous request first (unless explicitly running concurrently)
     if (!sharedSignal && abortControllerRef.current) {
@@ -1211,7 +1249,7 @@ export function useBacktest(sessionId: string) {
 
       const outcome = await executeSingleTimeframe(
         scriptId, scriptCode, timeframe, iterationId, signal, overrideSymbol,
-        directionId, directionIndex, directionPrompt,
+        directionId, directionIndex, directionPrompt, wfvConfig,
       )
       updateLogEntry(tfRunnerId, { status: 'done', completedAt: Date.now() })
 
@@ -1245,6 +1283,7 @@ export function useBacktest(sessionId: string) {
           iterationId,
         })
 
+        const wfResult = outcome.walkForwardResult ?? null
         const metricsFields = {
           result: backtestResult,
           rating: finalRating,
@@ -1253,6 +1292,7 @@ export function useBacktest(sessionId: string) {
           numTrades: backtestResult.num_trades,
           sharpe: backtestResult.sharpe_ratio,
           maxDrawdown: backtestResult.max_drawdown,
+          ...(wfResult ? { walkForwardStatus: 'complete' as const, walkForwardResult: wfResult } : {}),
         }
         setIterationHistory(prev => prev.map(n =>
           n.id === iterationId ? { ...n, ...metricsFields } : n
@@ -1811,7 +1851,15 @@ export function useBacktest(sessionId: string) {
         iterationId,
       })
 
-      const outcome = await executeSingleTimeframe(original.scriptId, editedCode, timeframe, iterationId, signal)
+      const wfvConfig: WalkForwardConfig = {
+        isMonths: original.walkForwardResult?.is_months ?? 6,
+        oosMonths: original.walkForwardResult?.oos_months ?? 3,
+      }
+
+      const outcome = await executeSingleTimeframe(
+        original.scriptId, editedCode, timeframe, iterationId, signal,
+        undefined, undefined, undefined, undefined, wfvConfig,
+      )
       updateLogEntry(tfRunnerId, { status: 'done', completedAt: Date.now() })
 
       if (signal.aborted) return
@@ -1828,6 +1876,8 @@ export function useBacktest(sessionId: string) {
             capacity_levels: cachedLiquidityRef.current.capacity_levels,
           }
         }
+
+        const wfResult = outcome.walkForwardResult ?? null
 
         const returnPct = (backtestResult.total_return * 100).toFixed(2)
         const returnSign = backtestResult.total_return >= 0 ? '+' : ''
@@ -1849,6 +1899,8 @@ export function useBacktest(sessionId: string) {
               sharpe: backtestResult.sharpe_ratio,
               maxDrawdown: backtestResult.max_drawdown,
               status: 'complete',
+              walkForwardStatus: wfResult ? 'complete' as const : undefined,
+              walkForwardResult: wfResult ?? undefined,
             }
             : n
         ))
@@ -1857,20 +1909,12 @@ export function useBacktest(sessionId: string) {
         // iteration.result before the useEffect re-syncs after re-render.
         iterationHistoryRef.current = iterationHistoryRef.current.map(n =>
           n.id === iterationId
-            ? { ...n, result: backtestResult, rating: finalRating, status: 'complete' }
+            ? { ...n, result: backtestResult, rating: finalRating, status: 'complete', walkForwardStatus: wfResult ? 'complete' as const : undefined, walkForwardResult: wfResult ?? undefined }
             : n
         )
 
         setPhase('results')
         setIsLoading(false)
-
-        // Auto-run walk-forward validation (must run before insights so WFE data informs suggestions)
-        const wfConfig: WalkForwardConfig = {
-          isMonths: original.walkForwardResult?.is_months ?? 6,
-          oosMonths: original.walkForwardResult?.oos_months ?? 3,
-        }
-        addLogEntry({ type: 'auto-run', content: 'Running walk-forward validation...', iterationId })
-        await runWalkForward(iterationId, wfConfig)
 
         // Generate summary and suggestions — reads walkForwardResult from ref if WFV completed
         await generateInsightsForIteration(iterationId, model)
@@ -1895,7 +1939,7 @@ export function useBacktest(sessionId: string) {
       setPhase('idle')
       setIsLoading(false)
     }
-  }, [iterationHistory, backtestParams, addLogEntry, executeSingleTimeframe, generateInsightsForIteration, runWalkForward, validateSymbolExists])
+  }, [iterationHistory, backtestParams, addLogEntry, executeSingleTimeframe, generateInsightsForIteration, validateSymbolExists])
 
   const startAutoRun = useCallback(async (maxAttempts: number, model: string, fromIterationId: string) => {
     const baseline = iterationHistoryRef.current.find(n => n.id === fromIterationId)
@@ -1983,6 +2027,12 @@ export function useBacktest(sessionId: string) {
 
       // Use a worker-pool semaphore so at most workerCount backtests run at once
       autoRunIterationIdsRef.current = new Set()
+      const baselineWf = iterationHistoryRef.current.find(n => n.id === baselineId)?.walkForwardResult
+      const wfvConfigForRun: WalkForwardConfig = {
+        isMonths: baselineWf?.is_months ?? 6,
+        oosMonths: baselineWf?.oos_months ?? 3,
+      }
+
       const sem = createSemaphore(workers)
       const executionPromises = untriedSuggestions.map(async ({ suggestion, index }) => {
         await sem.acquire()
@@ -1991,7 +2041,8 @@ export function useBacktest(sessionId: string) {
             suggestion.prompt, model, currentBaseline?.scriptCode, metrics,
             undefined, undefined, true, suggestion.title, signal,
             undefined, undefined, undefined, baselineId,
-            currentBaseline?.params ?? undefined
+            currentBaseline?.params ?? undefined,
+            wfvConfigForRun,
           )
           const id = node?.id ?? null
           if (id) autoRunIterationIdsRef.current.add(id)
@@ -2034,15 +2085,9 @@ export function useBacktest(sessionId: string) {
       const WF_ACCEPT_THRESHOLD = 0.3
 
       if (bestId && bestScore > baselineScore) {
-        // Run walk-forward on candidate before promoting
-        const baselineWf = iterationHistoryRef.current.find(n => n.id === baselineId)?.walkForwardResult
-        const wfConfig: WalkForwardConfig = {
-          isMonths: baselineWf?.is_months ?? 6,
-          oosMonths: baselineWf?.oos_months ?? 3,
-        }
-
-        addLogEntry({ type: 'auto-run', content: 'Running walk-forward on candidate...', iterationId: bestId })
-        const wfResult = await runWalkForward(bestId, wfConfig)
+        // Read walk-forward result from inline WFV (ran as phase 5 of backtest)
+        const bestIteration = iterationHistoryRef.current.find(n => n.id === bestId)
+        const wfResult = bestIteration?.walkForwardResult ?? null
 
         if (wfResult && wfResult.wfe < WF_ACCEPT_THRESHOLD) {
           addLogEntry({
@@ -2092,7 +2137,7 @@ export function useBacktest(sessionId: string) {
 
     const reason = attempt >= maxAttempts ? `${maxAttempts} improvements done` : 'no more suggestions'
     addLogEntry({ type: 'auto-run', content: `Auto Run finished — ${reason}`, iterationId: baselineId })
-  }, [generateAndExecute, deleteIteration, markSuggestionDisabled, addLogEntry, generateInsightsForIteration, runWalkForward])
+  }, [generateAndExecute, deleteIteration, markSuggestionDisabled, addLogEntry, generateInsightsForIteration])
 
   const stopAutoRun = useCallback(() => {
     autoRunStopRef.current = true
