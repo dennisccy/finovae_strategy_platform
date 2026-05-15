@@ -1,5 +1,26 @@
 # AGENTS.md — Finovae Strategy API Agent Team Definition
 
+## Monorepo Context
+
+This roster scopes the **backend package only**, which now lives at `apps/backend/`
+inside the **finovae_strategy_platform monorepo** (previously a standalone repo).
+**Every `/...` path in the tables below is relative to `apps/backend/`** — e.g.
+`/backend/**` means `apps/backend/backend/**`, `/shared/contracts.py` means
+`apps/backend/shared/contracts.py`.
+
+- The Vite/React frontend is a sibling package at `apps/frontend/` (its own
+  `AGENTS.md`); this team does not own it.
+- Backend run/test commands are in `apps/backend/CLAUDE.md`; the stack is started
+  from the repo root via `./scripts/dev.sh` / `./scripts/start-backend.sh`.
+- `apps/backend/docs/` now contains only `plans/`; the detailed architecture doc
+  was relocated to the repo-level `docs/architecture/backend-internals.md`.
+- Repo-level governance (root `README.md`, `docs/goal.md`,
+  `docs/architecture/overview.md`, the `incredible_auto_dev` subtree and the root
+  `CLAUDE.md/config/scripts/templates/tests` symlinks) is handled by the
+  `incredible_auto_dev` dev-chain, **not** by this roster. There is no
+  `apps/backend/CODEOWNERS` (removed — GitHub does not honor CODEOWNERS outside
+  `/`, `/.github/`, `/docs/`); ownership intent is captured by this file.
+
 ## Team Roster
 
 | ID | Role | Owned Paths | Skills |

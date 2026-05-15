@@ -1,5 +1,25 @@
 # AGENTS.md — Finovae Strategy Platform Frontend Agent Team Definition
 
+## Monorepo Context
+
+This roster scopes the **frontend package only**, which now lives at
+`apps/frontend/` inside the **finovae_strategy_platform monorepo** (previously a
+standalone repo). **Path notes for the tables below:**
+
+- `/frontend/**` → `apps/frontend/**` (the Vite/React app).
+- `CLAUDE.md`, `AGENTS.md`, `CODEOWNERS` are at `apps/frontend/`. `apps/frontend/CODEOWNERS`
+  is informational only — GitHub honors CODEOWNERS solely at `/`, `/.github/`, `/docs/`.
+- `vercel.json` is at the **repo root**, not in `apps/frontend/`; `.gitignore` is the
+  repo-root file; `apps/frontend/.env.example` is the per-app env template.
+- The FastAPI backend is a sibling package at `apps/backend/` (its own `AGENTS.md`);
+  this team does not own it.
+- The stack is started from the repo root via `./scripts/dev.sh` /
+  `./scripts/start-frontend.sh`; the shared scripts drive Vite through
+  `apps/frontend/tools/next-shim/` (see `apps/frontend/CLAUDE.md`).
+- Repo-level governance (root `README.md`, `docs/goal.md`, the
+  `incredible_auto_dev` subtree and root symlinks) is handled by the
+  `incredible_auto_dev` dev-chain, **not** by this roster.
+
 ## Team Roster
 
 | ID | Role | Owned Paths | Skills |

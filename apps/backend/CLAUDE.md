@@ -6,39 +6,53 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Finovae Strategy API is the backend service for the Finovae crypto backtesting platform. It compiles natural language trading strategy descriptions into executable Python code using Claude API, then backtests them against historical Binance data.
 
+This is the `apps/backend/` package of the **finovae_strategy_platform monorepo** (no longer a standalone repo). The Vite/React frontend is in the *same* repo at `apps/frontend/`. All module paths below are relative to `apps/backend/`. The `incredible_auto_dev` dev-chain is a git subtree; repo-level project context for agents lives in the root `.claude/project-template.md`, `docs/goal.md`, and `docs/architecture/overview.md` (with deep backend internals in `docs/architecture/backend-internals.md`).
+
 **Tech Stack:**
 - Python 3.11+, FastAPI, RestrictedPython, Anthropic SDK
 - Data: Binance REST API, pandas, numpy
 
 ## Development Commands
 
-### Backend (Python)
+### Run the whole stack (recommended — from the repo root)
 ```bash
-# Install dependencies
-pip install -e .
-pip install -e ".[dev]"  # Include dev dependencies
+./scripts/dev.sh            # starts apps/backend (uvicorn) + apps/frontend (Vite)
+./scripts/start-backend.sh  # backend only
+```
+These use a venv at `apps/backend/.venv` and launch `uvicorn main:app` on a
+deterministic offset port (not 8000). `main.py` is a thin entry shim that
+re-exports `app` from `backend.api` so the shared scripts work unchanged.
 
-# Run API server (from root)
-uvicorn backend.api:app --reload --host 0.0.0.0 --port 8000
+### Backend only (from this package — `apps/backend/`)
+```bash
+cd apps/backend
 
-# Run tests
-pytest                           # All tests
-pytest tests/test_lookahead.py   # Specific test file
-pytest -v                        # Verbose output
-pytest --cov=. --cov-report=html # Coverage report
+# One-time setup (gitignored venv; Python 3.11+)
+python3 -m venv .venv
+.venv/bin/pip install -e .            # core deps (pyproject.toml)
+.venv/bin/pip install -e ".[dev]"     # + pytest/ruff/mypy
+.venv/bin/pip install -r requirements.txt   # adds pyarrow (Parquet cache)
 
-# Linting and type checking
-ruff check .                     # Lint
-ruff format .                    # Format
-mypy .                           # Type check
+# Run API server
+.venv/bin/uvicorn main:app --reload --host 0.0.0.0 --port 8000
+
+# Tests / lint / types (run from apps/backend)
+.venv/bin/python -m pytest                       # all tests
+.venv/bin/python -m pytest tests/test_lookahead.py
+.venv/bin/ruff check .
+.venv/bin/mypy .
 ```
 
 ### Environment Setup
-Copy `.env.example` to `.env` and set:
+Copy `apps/backend/.env.example` → `apps/backend/.env` and set:
 ```
 ANTHROPIC_API_KEY=your_api_key_here
 CORS_ORIGINS=https://your-frontend.vercel.app,http://localhost:5173
 ```
+`./scripts/dev.sh` and `./scripts/start-backend.sh` export `CORS_ORIGINS` for the
+offset frontend port automatically; the backend boots without keys, but
+`/api/run-backtest`, `/api/generate-strategy`, and `/api/generate-insights`
+require `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`.
 
 ## Architecture Overview
 
@@ -56,7 +70,12 @@ The `BacktestPipeline` orchestrates the complete workflow:
 
 ### Module Structure
 
+All paths are relative to `apps/backend/`.
+
 ```
+main.py             # uvicorn entry shim — re-exports `app` from backend.api (used by ../../scripts/*)
+api/index.py        # legacy serverless ASGI shim (inert: root vercel.json deploys the frontend only)
+
 shared/
   contracts.py      # FROZEN data contracts (see below) - DO NOT MODIFY
   schemas.py        # Pydantic schemas for API responses
@@ -127,7 +146,7 @@ When adding features, maintain these guarantees.
 
 ## API Endpoints
 
-**Base URL**: `http://localhost:8000`
+**Base URL**: `http://localhost:8000` (a deterministic offset port when launched via `./scripts/dev.sh` / `./scripts/start-backend.sh` — the script prints the actual URL)
 
 - `POST /api/run-backtest`: Main endpoint - accepts NL strategy + params, returns backtest results
 - `GET /api/runs`: List all backtest run history
