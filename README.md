@@ -56,7 +56,7 @@ full component and endpoint list.
 ### One-time backend setup
 
 ```bash
-python3.11 -m venv apps/backend/.venv
+python3 -m venv apps/backend/.venv      # Python 3.11+
 apps/backend/.venv/bin/pip install -U pip
 apps/backend/.venv/bin/pip install -e apps/backend
 apps/backend/.venv/bin/pip install -r apps/backend/requirements.txt
