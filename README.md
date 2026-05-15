@@ -1,167 +1,115 @@
 # Finovae Strategy Platform
 
-A React + TypeScript application for the Finovae crypto backtesting platform. Provides a chat-based interface for entering natural language trading strategies and displays comprehensive backtest results including equity curves, performance metrics, and trade lists.
+An AI-assisted crypto strategy lab. Describe a trading strategy in plain English; Finovae
+compiles it to a structured spec, generates and sandboxes the signal code, backtests it
+against real Binance data, and returns an institutional-grade report — with optional
+walk-forward validation and AI improvement insights.
 
-## Overview
+It is not a bot runner. It is a strategy lab with a strong, skeptical evaluation loop and
+a UI that makes every step of the workflow visible.
 
-Finovae enables traders to:
-- Write trading strategies in natural language
-- Backtest strategies against historical market data
-- Analyze performance with key metrics (Sharpe ratio, Sortino ratio, max drawdown, etc.)
-- Visualize equity curves and drawdown overlays
-- Review detailed trade execution logs
-- Compare multiple strategy runs
-- Run walk-forward validation to detect overfitting (rolling IS/OOS windows, WFE score, combined OOS equity curve)
+## Who it is for
 
-## Tech Stack
+- A solo systematic / retail-quant trader who wants to go from idea to a validated
+  backtest fast, without writing backtest-engine code.
+- An AI tinkerer who wants a UI over LLM strategy compilation plus an honest critique loop
+  (walk-forward, overfit detection, AI insights).
 
-- **Frontend**: React 18, TypeScript, Vite
-- **Styling**: Tailwind CSS
-- **Charts**: Recharts for equity curves and performance visualization
-- **API Communication**: Fetch API with custom hooks
+## What you can do
 
-## Quick Start
+Enter a natural-language strategy and parameters (symbol, timeframe, date range, initial
+capital). Finovae:
+
+1. Compiles the description into a structured `StrategySpec` (Anthropic/OpenAI).
+2. Generates a `signal(df, i) -> int` function and runs it inside a RestrictedPython
+   sandbox.
+3. Fetches Binance OHLCV (Parquet-cached) and backtests with a next-bar-open fill model
+   (commission + slippage).
+4. Returns metrics (Sharpe, Sortino, max drawdown, profit factor, win rate), an equity
+   curve, a trade log, and a 5-category rating.
+5. On request, runs walk-forward validation (rolling IS/OOS windows, WFE) and generates
+   ranked, OOS-aware AI improvement suggestions.
+
+Runs are multi-session and persisted to the filesystem; every run is addressable by
+`run_id`. See [`docs/architecture/overview.md`](docs/architecture/overview.md) for the
+full component and endpoint list.
+
+## Guiding principles
+
+- **Sandboxed execution, always.** LLM-generated code runs only inside RestrictedPython —
+  no file I/O, network, `exec`/`eval`, `__import__`, `open`, or `os`.
+- **No lookahead.** A signal at bar `i` fills at bar `i+1` open. The engine enforces it.
+- **Deterministic.** Slippage is seeded; identical inputs produce identical outputs.
+- **Frozen contracts.** `apps/backend/shared/contracts.py` is a reviewed, stable interface.
+- **No database.** Parquet OHLCV cache + file-backed session/run store — reproducible and
+  inspectable by design.
+
+## Getting started
 
 ### Prerequisites
-- Node.js (v16 or higher)
-- npm or yarn
 
-### Installation & Development
+- Python 3.11+
+- Node.js 16+ and npm
+- An `ANTHROPIC_API_KEY` and/or `OPENAI_API_KEY` (needed for strategy compilation and AI
+  insights; the backend boots without them)
 
-```bash
-cd frontend
-
-# Install dependencies
-npm install
-
-# Set up environment
-cp .env.example .env
-
-# Start development server
-npm run dev
-# Opens on http://localhost:5173
-```
-
-### Build for Production
+### One-time backend setup
 
 ```bash
-# Build the project
-npm run build
-
-# Preview production build locally
-npm run preview
-
-# Run linting
-npm run lint
+python3.11 -m venv apps/backend/.venv
+apps/backend/.venv/bin/pip install -U pip
+apps/backend/.venv/bin/pip install -e apps/backend
+apps/backend/.venv/bin/pip install -r apps/backend/requirements.txt
+cp apps/backend/.env.example apps/backend/.env   # then set your API key(s)
+cd apps/frontend && npm install                  # links the next-vite-shim
 ```
 
-## Environment Configuration
+### Start the platform
 
-Copy `.env.example` to `.env` and configure:
-
-```
-VITE_API_URL=http://localhost:8000
-```
-
-Leave `VITE_API_URL` empty to use Vite's dev proxy for a local backend.
-
-## Project Structure
-
-```
-frontend/src/
-├── components/          # React components
-│   ├── ChatPanel.tsx    # Natural language strategy input
-│   ├── ResultsPanel.tsx # Backtest results display
-│   ├── EquityChart.tsx  # Equity curve visualization
-│   └── ...
-├── hooks/
-│   └── useBacktest.ts   # API communication & state management
-├── App.tsx              # Main application component
-└── index.css            # Global styles
+```bash
+./scripts/dev.sh            # starts backend + frontend together (prints both URLs)
+# or individually:
+./scripts/start-backend.sh
+./scripts/start-frontend.sh
 ```
 
-## Architecture
+`./scripts/dev.sh` computes per-project offset ports and wires the frontend's `/api`
+proxy to the backend automatically. Open the frontend URL it prints.
 
-### UI Layout
+## Using the platform
 
-- **Left Panel**: Chat interface for entering natural-language strategy descriptions with parameter controls
-  - Trading symbol
-  - Timeframe (e.g., 1h, 4h, 1d)
-  - Date range selection
-  - Initial capital
+1. Enter a strategy in natural language and set the symbol, timeframe, date range, and
+   initial capital.
+2. Submit — read the equity curve, metrics, rating, and trade list.
+3. Open a completed iteration's detail view to run **walk-forward validation** (WFE badge
+   + per-window table + combined OOS curve).
+4. Request **AI insights** for ranked improvement suggestions (OOS-aware when
+   walk-forward data exists).
+5. Browse prior runs from session history; each is restorable by `run_id`.
 
-- **Right Panel**: Results display
-  - Equity curve with drawdown overlay
-  - Performance metrics summary
-  - Trade execution list
+## Documentation
 
-### Frontend-Backend Communication
+| File | Contents |
+|---|---|
+| [`docs/goal.md`](docs/goal.md) | Vision, target users, success criteria, non-goals, constraints, must-have journeys, anti-goals |
+| [`docs/architecture/overview.md`](docs/architecture/overview.md) | Component tables, API endpoints, data model, capability status, decisions |
+| [`docs/architecture/backend-internals.md`](docs/architecture/backend-internals.md) | Deep backend internals: pipeline, sandbox security model, data flow |
+| `apps/frontend/CLAUDE.md` | Frontend development guidance |
+| `apps/backend/CLAUDE.md` | Backend development guidance |
 
-The `useBacktest.ts` hook manages API communication with the backend:
+## Project layout
 
-**Request** (POST `/api/run-backtest`):
-```json
-{
-  "natural_language": "Buy when RSI < 30, sell when RSI > 70",
-  "symbol": "BTC/USDT",
-  "timeframe": "1h",
-  "start_date": "2023-01-01",
-  "end_date": "2023-12-31",
-  "initial_capital": 10000
-}
+```
+apps/
+  backend/     FastAPI — NL compile, codegen, sandbox, backtest, metrics, walk-forward (main.py = uvicorn entry)
+  frontend/    Vite + React 18 — the platform UI (tools/next-shim bridges the shared scripts)
+incredible_auto_dev/   AI multi-agent dev-chain (git subtree; remote auto_dev, --squash)
+docs/          goal.md + architecture/ (overview, backend-internals)
+CLAUDE.md config scripts templates tests   symlinks → incredible_auto_dev/
 ```
 
-**Response**:
-```json
-{
-  "success": true,
-  "run_id": "uuid",
-  "result": {
-    "metrics": { "sharpe": 1.5, "max_drawdown": 0.25, ... },
-    "equity_curve": [...],
-    "trades": [...]
-  },
-  "strategy_spec": { ... }
-}
-```
+## Current status
 
-## Key Features
-
-- ✅ Natural language strategy input
-- ✅ Real-time backtest execution with SSE streaming
-- ✅ Interactive equity curve visualization
-- ✅ Comprehensive performance metrics with 5-category rating system
-- ✅ Detailed trade history
-- ✅ Multi-session tabs with persistent state
-- ✅ Auto-run and parallel worker support
-- ✅ Walk-forward validation (overfitting detection)
-- ✅ Responsive mobile-friendly design
-
-## Walk-Forward Validation (v0.10)
-
-After running a backtest, open any completed iteration's detail view. The **Walk-Forward Analysis** section appears above the rating panel and is expanded by default. Configure IS and OOS window lengths (default: 6 months IS / 3 months OOS) and click **Run Walk-Forward**.
-
-Results include:
-- **Aggregate metrics**: Combined OOS return, OOS Sharpe, OOS win rate, max drawdown
-- **WFE badge**: Walk-Forward Efficiency (OOS Sharpe / IS Sharpe) — shown on the iteration card and in the detail header. Green ≥ 0.5, yellow 0.3–0.5, red < 0.3
-- **Per-window table**: IS/OOS periods, returns, Sharpe ratios, and trade counts for each window
-- **Combined OOS equity curve**: All OOS windows chained and compounded into a single curve
-
-Walk-forward results are persisted with the session (OOS equity curves downsampled for storage efficiency).
-
-### Auto-run WF gate
-
-When Auto Run promotes a candidate that beats the baseline score, it first runs walk-forward validation on that candidate. If the WFE is below 0.3 (likely overfit), the candidate is discarded and the baseline is kept. This prevents Auto Run from locking onto in-sample overfit strategies.
-
-### AI suggestions with OOS context
-
-When walk-forward results are available for an iteration, they are included in the insights generation request. The AI factors in OOS performance when ranking suggestions — strategies with low WFE receive suggestions that prioritise reducing parameter sensitivity and improving robustness.
-
-## Related Repositories
-
-- **Backend API**: `finovae_strategy_platform_api`
-  - Handles strategy compilation, backtesting engine, and data management
-
-## Contributing
-
-When working with this codebase, refer to `CLAUDE.md` for detailed development guidelines.
+Frontend and backend are functional and merged into a single `apps/` monorepo wired to
+the `incredible_auto_dev` automation framework (phase-1 complete). The platform does
+**not** do live or paper trading — it is a backtesting and strategy-evaluation lab.
