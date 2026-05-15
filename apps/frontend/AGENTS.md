@@ -7,8 +7,9 @@ This roster scopes the **frontend package only**, which now lives at
 standalone repo). **Path notes for the tables below:**
 
 - `/frontend/**` → `apps/frontend/**` (the Vite/React app).
-- `CLAUDE.md`, `AGENTS.md`, `CODEOWNERS` are at `apps/frontend/`. `apps/frontend/CODEOWNERS`
-  is informational only — GitHub honors CODEOWNERS solely at `/`, `/.github/`, `/docs/`.
+- `CLAUDE.md`, `AGENTS.md` are at `apps/frontend/`. There is no `apps/frontend/CODEOWNERS`
+  (removed — GitHub does not honor CODEOWNERS outside `/`, `/.github/`, `/docs/`); ownership
+  intent is captured by this file.
 - `vercel.json` is at the **repo root**, not in `apps/frontend/`; `.gitignore` is the
   repo-root file; `apps/frontend/.env.example` is the per-app env template.
 - The FastAPI backend is a sibling package at `apps/backend/` (its own `AGENTS.md`);
@@ -79,7 +80,6 @@ ARTEFACT — A<n> — <task ID>
 | `/frontend/**` | A5 | React app, components, hooks, styles |
 | `/CLAUDE.md` | A0 | Agent instructions |
 | `/AGENTS.md` | A0 | This file |
-| `/CODEOWNERS` | A0 | Code review automation |
 | `/.env.example` | A0 | Environment configuration |
 | `/.gitignore` | A0 | Git ignore rules |
 | `/vercel.json` | A0 | Vercel deployment config |
