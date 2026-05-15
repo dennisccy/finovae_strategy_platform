@@ -1,0 +1,272 @@
+# Anti-Patterns
+
+Failure modes observed in production multi-agent development pipelines.
+Each entry includes: the pattern, why it fails, and how to prevent it.
+
+---
+
+## 1. Vague acceptance criteria cause infinite review loops
+
+**Pattern:** Phase specs contain requirements like "works correctly", "handles all cases", or "the UI should look nice."
+
+**Why it fails:** The reviewer and the developer use different interpretations of "correct". Each review cycle produces a FAIL for a different reason. After 3 loops the pipeline halts with no clear fix.
+
+**Prevention:** Every item in DEFINITION OF DONE must be:
+- Specific: "POST /api/items returns 201 with the created item's ID"
+- Testable: a concrete pass/fail condition, not a judgment
+- Scoped: tied to this phase only, not aspirational future state
+
+**Example (bad):** "The form submission should work."
+**Example (good):** "Submitting a valid form creates a record in the database and redirects to the detail page. Submitting an invalid form shows field-level error messages and does not create a record."
+
+---
+
+## 2. Hardcoded stack paths in agent prompts break portability
+
+**Pattern:** Agent definitions or scripts contain paths like `apps/backend/.venv/bin/python -m pytest` or `cd apps/backend && alembic upgrade head` embedded directly.
+
+**Why it fails:** When the framework is adopted by a new project, every agent file needs manual editing. Agents in the pipeline inherit the wrong paths and fail silently.
+
+**Prevention:** All stack-specific commands live in `.claude/project-template.md`. Agent definitions reference the template: "Run the test command from project-template.md." Scripts use env vars (`CHAIN_START_BACKEND_CMD`) or conventionally-named scripts (`scripts/start-backend.sh`).
+
+---
+
+## 3. Merged backend+frontend into one developer agent reduces flexibility
+
+**Pattern (anti):** Splitting implementation into separate backend-only and frontend-only agents with separate model invocations.
+
+**Why it's a false economy:** The backend agent writes the handoff, then the frontend agent reads it and adds another handoff. Two sequential long-context invocations for work that shares context. Each agent re-reads the spec, plan, and existing code from scratch.
+
+**Prevention:** A single developer agent handles both. The plan marks `Frontend Present: yes/no`. On yes, the agent implements backend first, then frontend in the same session. Alternatively, run two passes of the same developer agent (backend pass, then frontend pass) using the same agent definition with different context flags.
+
+---
+
+## 4. UI evolution is an afterthought, not a pipeline gate
+
+**Pattern:** QA runs unit tests, they pass, phase is declared done. Three phases later the product manager notices the user can't access the new feature because no navigation link was added.
+
+**Why it fails:** Unit tests don't check whether the UI exposes the capability. A backend feature is invisible until the UI surfaces it.
+
+**Prevention:** The UI Evolution Audit is part of every phase with `Frontend Present: yes`. `UI-FAIL` blocks overall QA PASS. Review checklist explicitly checks for navigation updates and detail/list pages.
+
+---
+
+## 5. Quota exhaustion mid-pipeline without retry causes data loss
+
+**Pattern:** A 6-stage pipeline runs unattended. At stage 4 (QA), Claude hits the usage quota and exits. The partial run state is lost. The pipeline must restart from scratch.
+
+**Why it fails:** Wasted compute. Worse, if stage 3 (dev) made changes that weren't committed, the developer re-implements the same code differently on retry, causing drift.
+
+**Prevention:**
+- Checkpoint/resume via `runs/<phase>/status.json` — completed stages are skipped on re-run
+- `quota-retry.sh` wraps every Claude invocation — detects quota messages, parses the reset time, sleeps and retries automatically
+- Never start a long pipeline before verifying quota headroom
+
+---
+
+## 6. Review reports without file:line references are useless
+
+**Pattern:** Review report says "the validation logic has issues" or "error handling could be improved."
+
+**Why it fails:** The developer reads the report, doesn't know which file or line to fix, makes a guess, and the reviewer flags the same "issue" again in the next loop.
+
+**Prevention:** Every finding in a review report MUST include:
+- Exact file path
+- Line number or function name
+- Specific problem description
+- Specific fix description
+
+**Example (bad):** "Error handling is insufficient."
+**Example (good):** "`apps/backend/routers/items.py:47` — `create_item` does not catch `IntegrityError` from SQLAlchemy. Add a try/except that returns 409 Conflict when a duplicate key is detected."
+
+---
+
+## 7. Reviewer and QA validator that fix code bypass the feedback loop
+
+**Pattern:** The reviewer notices a bug and edits the file to fix it "since it's obvious." The QA validator notices a test failure and patches the test to pass.
+
+**Why it fails:** The developer agent doesn't learn from the correction. On the next phase, the same mistake recurs because the developer never saw it as a fix — only the reviewer did. More critically: reviewer fixes can silently introduce new bugs that QA was supposed to catch, but QA didn't see the reviewer's changes.
+
+**Prevention:**
+- Reviewer NEVER edits source files — writes the report only
+- QA NEVER fixes test failures — writes them as blockers
+- Only the developer (and auditor, for critical post-QA issues) modifies source code
+
+---
+
+## 8. Free-form agent conversation leads to hallucinated agreements
+
+**Pattern:** Two agents "discuss" a design decision in chat. Agent B says "OK I'll implement it your way." Agent B then implements something different because its actual context window didn't include the full conversation.
+
+**Why it fails:** Chat messages between agents are not in each agent's context window. Agents only have access to what was in their initial prompt and what they've read from files in the current session.
+
+**Prevention:** Agents communicate ONLY through filesystem artifacts. No "pass a message to the next agent." The orchestrator writes a plan to a file; the developer reads that file. The developer writes a handoff; the reviewer reads that file. This is the only reliable inter-agent communication.
+
+---
+
+## 9. Missing functional test plans make QA rubber-stamp
+
+**Pattern:** QA runs `pytest` and reports PASS. The test suite covers internal functions but doesn't verify the user-facing feature works end-to-end. A critical API endpoint is broken but no test covers it.
+
+**Why it fails:** "Tests pass" and "the feature works for a user" are different claims. Without a functional test plan derived from the spec, QA only validates what the developer chose to test, not what the spec required.
+
+**Prevention:** The test plan generator runs BEFORE QA, deriving explicit test cases from the spec's DEFINITION OF DONE and REQUIRED USER FLOWS. QA must execute each TC-01, TC-02, ... test case and record actual vs expected outcomes. A test case failure is a blocker.
+
+---
+
+## 10. Supply-chain attacks target autonomous agents
+
+**Pattern:** A compromised PyPI or npm package gets installed by an agent during a phase run. The agent has no reason to be suspicious — it's just running the install command from the spec.
+
+**Why it fails:** Autonomous agents install packages without human review. A single compromised dependency can exfiltrate secrets, modify the codebase, or establish persistence — all while the pipeline continues normally.
+
+**Prevention:** The install security gate intercepts every `pip install`, `npm install`, `git clone`, and `curl|bash` command. Packages not in the allowlist require approval. Direct URL installs are blocked. All install decisions are logged to `reports/security/install-decisions.jsonl`. The gate is a non-negotiable pipeline component — it is not "paranoia."
+
+---
+
+## 11. One large phase spec with no DEFINITION OF DONE
+
+**Pattern:** A phase spec describes 8 features in general terms, with no numbered acceptance checklist.
+
+**Why it fails:** The orchestrator doesn't know what "done" looks like. The developer implements 5 of the 8 things. The reviewer gives PASS_WITH_NOTES on the missing 3. QA gives PASS because tests pass. The audit gives FAIL because the spec goal wasn't reached. The pipeline re-runs from dev — wasting 3 cycles that could have been avoided.
+
+**Prevention:** Every phase spec MUST have a numbered DEFINITION OF DONE checklist. Each item is specific and testable. The auditor's primary job is to verify this checklist against actual code, not summaries.
+
+---
+
+## 12. Agents that "summarize" instead of reading source code
+
+**Pattern:** The auditor reads the dev handoff and QA report, concludes "tests pass and the handoff describes the implementation," and gives PASS.
+
+**Why it fails:** The handoff is a summary written by the agent that implemented the code. It naturally omits mistakes. The QA report validates what the developer chose to test. Neither is a substitute for reading the actual source files.
+
+**Prevention:** Auditor instructions explicitly state: "Read actual source files, not summaries. If you cannot verify a claim from code, trace through the implementation. Never trust a handoff summary alone."
+
+---
+
+## 13. Backend capabilities without UI verification leads to invisible features
+
+**Pattern:** A phase adds 3 new API endpoints. Unit tests pass. QA validates the APIs. Audit gives PASS. But no one verified that the user can actually reach these features from the UI. Three phases later, someone clicks through the app and discovers half the features have no navigation path.
+
+**Why it fails:** "Tests pass" and "the feature works for a user" are completely different claims. A feature that exists in the backend but has no UI entry point is invisible product capability — it was built but cannot be used.
+
+**Prevention:** The UI visibility system produces 6 artifacts per phase:
+- `implementation-summary` — what was built
+- `user-visible-changes` — what users can now do
+- `ui-surface-map` — which routes/components changed and what to test
+- `ui-test-plan` — exact click paths and expected outcomes
+- `ui-test-results` — browser automation evidence
+- `what-to-click` — 5-minute operator verification guide
+
+The phase closure auditor blocks completion when these artifacts are missing or vague. Browser QA must test actual user workflows, not just that pages render.
+
+---
+
+## 14. Vague test steps make test plans useless
+
+**Pattern:** A test plan says "test the form submission" or "verify results are correct." The browser QA agent cannot execute this. A human tester cannot follow this. The plan exists but adds no value.
+
+**Why it fails:** Vague test steps produce vague results. "Tested and it works" is not evidence. A test plan that cannot produce reproducible pass/fail evidence is not a test plan.
+
+**Prevention:** Every test step must specify: exact URL, exact element to interact with (by name or visible label), exact value to input, and exact expected outcome. The `post-write-artifact-quality.sh` hook warns when phase report files contain vague placeholder lines. The `what-to-click-writer` skill enforces concrete step writing.
+
+---
+
+## 15. Mocked-only tests for external integrations pass while live adapter is broken
+
+**Pattern:** Adapter tests mock all HTTP/browser calls. Tests pass. But the real site changed its HTML structure, blocks headless browsers, or requires auth. No one discovers this until manual testing.
+
+**Why it fails:** Mocked tests validate the parsing logic against a frozen snapshot of the external system. They never detect selector drift, bot detection, geo-blocking, or TLS fingerprint rejection. 100% mocked test coverage gives false confidence that the integration works.
+
+**Prevention:** For phases that add external integrations (scrapers, APIs, webhooks), the developer must include at least one test marked `@pytest.mark.integration` (or equivalent) that hits the real external system. QA functional test plan must include a live integration test case. These tests may be slow/flaky and skipped in CI, but must exist and be run at least once during the phase. The dev handoff must explicitly state whether live testing was successful or document the blocker if it wasn't.
+
+**Example (bad):** All Tesco adapter tests use `_build_tile_html()` fixtures. Tests pass. Tesco changes its CSS classes → live adapter returns 0 results. Bot detection blocks headless Playwright → adapter gets HTTP 403. Neither is caught until a human clicks through the UI.
+
+**Example (good):** One test marked `@pytest.mark.integration` calls `TescoAdapter().search("milk")` against the real Tesco site and asserts `len(results) > 0`. This test is slow but catches selector drift, bot detection, and infrastructure issues immediately.
+
+---
+
+## 16. Hardcoded localhost in service configuration breaks non-local access
+
+**Pattern:** API URLs, CORS origins, and service bindings all use `localhost` or `127.0.0.1`. Works on the dev machine's browser. Breaks when accessed from another machine via private IP, from a VM host, through Docker, or behind a reverse proxy.
+
+**Why it fails:** The frontend sends API requests to the hardcoded `localhost:8000`. A user on another machine resolves `localhost` to their own loopback — the backend isn't there. Even if the backend is reachable by IP, restrictive CORS blocks the request. Even if CORS allows it, the backend only listens on `127.0.0.1` and rejects non-loopback connections.
+
+**Prevention:** Reviewer checklist flags any hardcoded `localhost`/`127.0.0.1` in:
+- API client URLs → must be configurable via env var or derived dynamically (e.g., `window.location.hostname`)
+- CORS origins → must use `*`, a port-range regex (e.g. `http://(localhost|127\.0\.0\.1):\d+`), or be configurable in dev mode
+- Service bindings → dev scripts must bind to `0.0.0.0`, not `127.0.0.1`
+- Dev scripts (`dev.sh`, `start-frontend.sh`) → must pass host/port via env var, not hardcoded URL strings
+
+**Sub-pattern — auto-dev-chain port drift:** `ensure_phase_ports` in `lib/common.sh` assigns a hashed preferred port and falls back to the next free port if taken (e.g., 3101 → 3102 when a stale server holds 3101). A CORS whitelist of specific ports (e.g. `[..., "http://localhost:3101"]`) will reject the fallback port and the QA/browser-QA frontend will fail to fetch data, while `curl` still works. Use a regex or env-driven allowlist so any dev port works.
+
+**Example (bad):** `const API_BASE = "http://localhost:8000"` — works only from the same machine.
+**Example (good):** `const API_BASE = \`http://${window.location.hostname}:${API_PORT}\`` — works from any hostname the user accesses the frontend with.
+**Example (CORS bad):** `allow_origins=["http://localhost:3101"]` — breaks when chain falls back to 3102.
+**Example (CORS good, FastAPI):** `allow_origin_regex=r"http://(localhost|127\.0\.0\.1):\d+"`.
+
+---
+
+## 17. Long `sleep` blocks the chain across system suspend/resume
+
+**Pattern:** Quota-retry logic calls `sleep 11137` (e.g. 3 hours) to wait for the Anthropic reset. The user closes the laptop lid, system suspends. On wake the next day, the sleep continues ticking monotonically instead of noticing that wall-clock time already passed the reset — the chain blocks for many hours past the intended wake-up.
+
+**Why it fails:** On Linux, `sleep N` in coreutils may sleep against the monotonic clock (pauses during suspend) or depend on the kernel honoring RTC wake-up. Across suspend/hibernate, neither guarantee is reliable: a 3-hour sleep that straddles an overnight suspend can block for 12+ hours. The pipeline is not crashed — it is silently wedged in a sleep that the user can only detect by inspecting `/proc/<pid>/wchan`.
+
+**Prevention:** Long waits must target an absolute wall-clock epoch, not a duration. `lib/quota-retry.sh::_sleep_until_epoch` polls `date +%s` against the target epoch in ≤60-second chunks — on resume, the very next poll sees the epoch has passed and the sleep exits. Any new pipeline script that needs to wait more than ~60 seconds MUST use `_sleep_until_epoch` rather than `sleep $secs`.
+
+**Example (bad):** `sleep "$sleep_secs"` where `sleep_secs` may be hours — stuck indefinitely if the laptop suspends.
+**Example (good):** `_sleep_until_epoch "$reset_epoch"` — guaranteed to return within 60s of wall clock reaching the target.
+
+---
+
+## 18. Goal mode without Must-have journeys or Anti-goals
+
+**Pattern:** A user authors `docs/goal.md` from the template but skips or leaves placeholder content in the **Must-have user journeys** and **Anti-goals** sections, then runs `./scripts/automation/run-goal.sh`. The goal-decomposer produces vague iter specs and the goal-evaluator has no concrete evidence to anchor its `GOAL_ACHIEVED` decision.
+
+**Why it fails:** Goal mode uses an AI evaluator to decide when the loop terminates. Without specific journeys, the evaluator falls back on subjective judgment — best case it loops forever (related to anti-pattern #1), worst case it declares done prematurely on something that doesn't actually work for users. Anti-goals serve as veto criteria; without them the evaluator may rubber-stamp a violation (committed credentials, paid-SaaS dependency, accessibility regression) just because the journeys click through.
+
+**Prevention:**
+- `run-goal.sh` validates `docs/goal.md` on first run: it MUST contain a non-empty Must-have user journeys section with at least one journey, and a non-empty Anti-goals section. The script aborts with a clear error message if either is empty or contains only the template placeholders.
+- Each journey in goal.md MUST have an ID (`J-NN`), numbered click/type/assert steps the browser-qa-agent can execute, and an "Acceptance" line describing the observable end state. The goal-evaluator references these by ID, so missing IDs break the journey-history tracking.
+- Anti-goals MUST be concrete, checkable rules (e.g., "no hard-coded credentials in source files"), not aspirations ("be secure"). Concrete rules let the evaluator classify violations as critical (halts loop) vs minor (continues with fix recommendation).
+
+**Example (bad):**
+```
+## Must-have user journeys
+- TODO: fill in later
+
+## Anti-goals
+- Be secure.
+- Be fast.
+```
+
+**Example (good):**
+```
+## Must-have user journeys
+- **J-01: Sign up and log in**
+  - Steps: 1. visit /signup  2. enter email+password  3. submit  4. expect /dashboard  5. log out  6. log in again  7. expect /dashboard
+  - Acceptance: dashboard greeting shows the user's email
+
+## Anti-goals
+- No hard-coded credentials, API keys, or tokens in source.
+- Auth tokens MUST NOT be stored in localStorage (httpOnly cookies only).
+- No dependency on a paid SaaS service unless explicitly listed in Constraints.
+```
+
+---
+
+## 19. `timeout`-wrapped child swallows terminal Ctrl-C
+
+**Pattern:** A long-running command is wrapped with GNU `timeout` for a runtime cap (e.g. `timeout 7200 claude --print "$prompt"`). The user presses Ctrl-C in the terminal and… nothing happens. The shell prints no abort message, no trap fires, and the prompt does not return for many seconds — sometimes minutes — until the wrapped command happens to finish on its own.
+
+**Why it fails:** GNU `timeout` defaults to placing its child in a **new process group** via `setpgid(2)`. Terminal Ctrl-C delivers SIGINT to the foreground process group only, which now contains just the parent shell — *not* the wrapped command. The shell receives the signal and queues the trap, but then has to wait for the pipeline to complete before running the trap; the wrapped command never received SIGINT, so it keeps running. From the user's perspective the script is unresponsive. Eventually the command exits naturally and only then does the queued trap fire — by which point the user has assumed Ctrl-C was lost and probably reached for `kill -9` or closed the terminal.
+
+This is especially bad for AI-agent scripts: the wrapped `claude` keeps consuming API credits long after the user thought they aborted.
+
+**Prevention:** pass `--foreground` to `timeout` (or otherwise keep the child in the parent's process group). With `--foreground`, the wrapped command stays in the parent's pgrp and terminal Ctrl-C reaches it directly. The documented downside — grandchildren of the wrapped command are not timed out — is acceptable for harness use cases where the wrapped command (e.g., `claude`) manages its own subprocesses.
+
+**Example (bad):** `timeout --kill-after=60 7200 claude -p "$prompt" 2>&1 | tee log` — terminal Ctrl-C does NOT reach claude. Trap is queued but blocked.
+**Example (good):** `timeout --foreground --kill-after=60 7200 claude -p "$prompt" 2>&1 | tee log` — terminal Ctrl-C reaches claude immediately; trap fires within milliseconds.
+
+**Detection:** if `kill -INT $shell_pid` exits the shell quickly but terminal Ctrl-C feels "stuck", that's the smoking gun. Confirm with `ps -o pid,pgid,cmd <child_pid>` — if the child's PGID differs from the parent shell's, you've got the bug.
