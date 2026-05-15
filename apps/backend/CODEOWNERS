@@ -1,0 +1,32 @@
+# Frozen contracts
+/shared/                    @A0-lead @A1-architect
+
+# Architecture and documentation
+/docs/                      @A1-architect
+/AGENTS.md                  @A0-lead
+/CLAUDE.md                  @A0-lead
+/CODEOWNERS                 @A0-lead
+
+# Data layer
+/data/                      @A2-data-backtest
+
+# Backtest engine
+/backtest/                  @A2-data-backtest
+
+# Strategy compilation
+/strategy/                  @A3-strategy-compiler
+
+# Backend: API, sandbox, pipeline
+/backend/                   @A4-backend-sandbox
+
+# Tests
+/tests/                     @A6-quant-qa
+
+# Skills
+/skills/                    @A0-lead
+
+# Config files
+/pyproject.toml             @A0-lead
+/requirements.txt           @A0-lead
+/.env.example               @A0-lead
+/.gitignore                 @A0-lead

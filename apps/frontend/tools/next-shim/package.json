@@ -1,0 +1,7 @@
+{
+  "name": "next",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Local shim: maps `next dev|build|start` to Vite so the shared Aplhion scripts (npx next ...) drive a Vite app.",
+  "bin": { "next": "./bin/next.js" }
+}

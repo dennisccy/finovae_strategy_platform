@@ -1,7 +1,7 @@
 {
   "builds": [
     {
-      "src": "frontend/package.json",
+      "src": "apps/frontend/package.json",
       "use": "@vercel/static-build",
       "config": {
         "distDir": "dist"
@@ -10,6 +10,6 @@
   ],
   "routes": [
     { "handle": "filesystem" },
-    { "src": "/(.*)", "dest": "/frontend/$1" }
+    { "src": "/(.*)", "dest": "/apps/frontend/$1" }
   ]
 }

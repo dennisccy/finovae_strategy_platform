@@ -36,10 +36,36 @@ node_modules/
 
 # Build output
 dist
+build
 
 # Vite
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# Next (shim is harmless; ignore any real next build output)
+.next
+
+# Python / backend
+__pycache__/
+*.py[codz]
+*.so
+.venv
+venv
+env/
+ENV/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+*.egg-info/
+.cache/
+apps/backend/.cache/
+
+# Data / db
+*.db
+*.db-journal
 
 # IDE
 .vscode-test
