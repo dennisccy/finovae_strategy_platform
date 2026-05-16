@@ -7,6 +7,7 @@ import { ActivityLog } from './ActivityLog'
 import { IterationPanel } from './IterationPanel'
 import { ScriptEditorModal } from './ScriptEditorModal'
 import type { DirectionCacheSummary } from '../lib/directionsApi'
+import type { ModelOption } from '../lib/modelsApi'
 import type { StrategyCard } from '../data/strategyPrompts'
 
 interface SessionContainerProps {
@@ -15,6 +16,7 @@ interface SessionContainerProps {
   isActive: boolean
   mobileTab: 'activity' | 'iterations'
   lastUsedModel: string
+  availableModels: ModelOption[]
   onLastUsedModelChange: (model: string) => void
   onStatusChange: (status: LiveSessionStatus) => void
   onNameChange: (name: string) => void
@@ -26,6 +28,7 @@ export function SessionContainer({
   isActive,
   mobileTab,
   lastUsedModel,
+  availableModels,
   onLastUsedModelChange,
   onStatusChange,
   onNameChange,
@@ -198,6 +201,7 @@ export function SessionContainer({
         <div className={`${mobileTab === 'activity' ? 'flex' : 'hidden'} lg:flex w-full lg:w-1/2 lg:border-r border-slate-200 flex-col overflow-hidden min-h-0`}>
           <ActivityLog
             entries={activityLog}
+            availableModels={availableModels}
             onSubmitPrompt={handleSubmitPrompt}
             currentSymbol={backtestParams.symbol}
             currentTimeframe={backtestParams.timeframe}

@@ -10,7 +10,14 @@ import os
 from typing import Optional
 
 from anthropic import Anthropic
-from openai import OpenAI
+from openai import BadRequestError, OpenAI
+
+from shared.model_catalog import (
+    DEFAULT_MODEL,
+    OPENAI_JSON_RESPONSE_FORMAT,
+    OPENAI_MAX_COMPLETION_TOKENS,
+    is_openai_model,
+)
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -96,7 +103,7 @@ Output ONLY the JSON, no explanations."""
         self,
         api_key: Optional[str] = None,
         openai_api_key: Optional[str] = None,
-        model: str = "claude-sonnet-4-5-20250929",
+        model: str = DEFAULT_MODEL,
     ):
         """
         Initialize strategy compiler.
@@ -262,7 +269,7 @@ Output ONLY the JSON, no explanations."""
             StrategyCompileResponse with spec or errors
         """
         try:
-            if self.model.startswith("gpt-"):
+            if is_openai_model(self.model):
                 openai_client = self._get_openai_client()
                 
                 messages = [
@@ -270,10 +277,28 @@ Output ONLY the JSON, no explanations."""
                     {"role": "user", "content": request.natural_language}
                 ]
                 
-                response = openai_client.chat.completions.create(
-                    model=self.model,
-                    messages=messages,
-                )
+                openai_kwargs = {
+                    "model": self.model,
+                    "messages": messages,
+                    "max_completion_tokens": OPENAI_MAX_COMPLETION_TOKENS["compiler"],
+                    "response_format": OPENAI_JSON_RESPONSE_FORMAT,
+                }
+                try:
+                    response = openai_client.chat.completions.create(**openai_kwargs)
+                except BadRequestError as e:
+                    _m = str(e).lower()
+                    _retry = dict(openai_kwargs)
+                    if "max_completion_tokens" in _m or "max_tokens" in _m:
+                        _retry.pop("max_completion_tokens", None)
+                    if "response_format" in _m:
+                        _retry.pop("response_format", None)
+                    if _retry == openai_kwargs:
+                        raise
+                    logger.warning(
+                        "StrategyCompiler: OpenAI rejected kwargs (%s); retrying without them",
+                        e,
+                    )
+                    response = openai_client.chat.completions.create(**_retry)
                 
                 if hasattr(response, "usage") and response.usage:
                     u = response.usage

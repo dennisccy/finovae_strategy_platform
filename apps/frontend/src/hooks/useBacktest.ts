@@ -8,6 +8,7 @@ import {
   deleteIterationFromStore,
   beaconSaveSession,
 } from '../lib/sessionApi'
+import { FALLBACK_MODEL } from '../lib/modelsApi'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '';
 
@@ -1638,7 +1639,7 @@ export function useBacktest(sessionId: string) {
     if (!node.insights?.suggestions?.length) {
       // Need a small timeout to let the state settle so generateInsightsForIteration finds it
       setTimeout(() => {
-        generateInsightsForIteration(node.id, node.modelUsed ?? 'gpt-5-mini')
+        generateInsightsForIteration(node.id, node.modelUsed ?? FALLBACK_MODEL)
       }, 50)
     }
   }, [sessionId, addLogEntry, generateInsightsForIteration])
@@ -1651,7 +1652,7 @@ export function useBacktest(sessionId: string) {
       .reverse()
       .find(n => n.status === 'complete' && !!n.result && !(n.insights?.suggestions?.length))
     if (latest) {
-      generateInsightsForIteration(latest.id, latest.modelUsed ?? 'gpt-5-mini')
+      generateInsightsForIteration(latest.id, latest.modelUsed ?? FALLBACK_MODEL)
     }
   }, [generateInsightsForIteration])
 
@@ -1792,7 +1793,7 @@ export function useBacktest(sessionId: string) {
   // editAndRerun
   // ==========================================================================
 
-  const editAndRerun = useCallback(async (originalIterationId: string, editedCode: string, model: string = 'gpt-5-mini') => {
+  const editAndRerun = useCallback(async (originalIterationId: string, editedCode: string, model: string = FALLBACK_MODEL) => {
     const original = iterationHistory.find(n => n.id === originalIterationId)
     if (!original) return
 

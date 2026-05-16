@@ -20,7 +20,7 @@ a UI that makes every step of the workflow visible.
 Enter a natural-language strategy and parameters (symbol, timeframe, date range, initial
 capital). Finovae:
 
-1. Compiles the description into a structured `StrategySpec` (Anthropic/OpenAI).
+1. Compiles the description into a structured `StrategySpec` (OpenAI `gpt-5.4-mini` by default; Claude selectable).
 2. Generates a `signal(df, i) -> int` function and runs it inside a RestrictedPython
    sandbox.
 3. Fetches Binance OHLCV (Parquet-cached) and backtests with a next-bar-open fill model
@@ -50,8 +50,9 @@ full component and endpoint list.
 
 - Python 3.11+
 - Node.js 16+ and npm
-- An `ANTHROPIC_API_KEY` and/or `OPENAI_API_KEY` (needed for strategy compilation and AI
-  insights; the backend boots without them)
+- An `OPENAI_API_KEY` (the default model is `gpt-5.4-mini`); `ANTHROPIC_API_KEY` is
+  optional — only if you pick a Claude model (backend boots without them; the AI
+  endpoints need the key)
 
 ### One-time backend setup
 
@@ -60,7 +61,7 @@ python3 -m venv apps/backend/.venv      # Python 3.11+
 apps/backend/.venv/bin/pip install -U pip
 apps/backend/.venv/bin/pip install -e apps/backend
 apps/backend/.venv/bin/pip install -r apps/backend/requirements.txt
-cp apps/backend/.env.example apps/backend/.env   # then set your API key(s)
+cp apps/backend/.env.example apps/backend/.env   # then set OPENAI_API_KEY (required); ANTHROPIC_API_KEY optional
 cd apps/frontend && npm install                  # links the next-vite-shim
 ```
 

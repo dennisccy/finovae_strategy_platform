@@ -34,6 +34,8 @@ from strategy.compiler import StrategyCompiler
 from strategy.insights_generator import InsightsGenerator
 from strategy.script_generator import ScriptGenerator
 
+from shared.model_catalog import DEFAULT_MODEL
+
 
 class PipelineError(Exception):
     """Exception raised for pipeline errors."""
@@ -108,7 +110,7 @@ class BacktestPipeline:
         initial_capital: float = 10000.0,
         commission: float = 0.00075,
         slippage: float = 0.0005,
-        model: str = "claude-haiku-4-5-20251001",
+        model: str = DEFAULT_MODEL,
     ) -> tuple[Optional[BacktestResult], Optional[StrategySpec], list[str], Optional[StrategyRating]]:
         """
         Run complete backtest pipeline.
@@ -275,7 +277,7 @@ class BacktestPipeline:
     async def generate_strategy(
         self,
         natural_language: str,
-        model: str = "claude-haiku-4-5-20251001",
+        model: str = DEFAULT_MODEL,
         previous_script_code: Optional[str] = None,
         symbol: Optional[str] = None,
         timeframe: Optional[str] = None,
@@ -738,7 +740,7 @@ class BacktestPipeline:
         strategy_description: str = "",
         script_code: str = "",
         natural_language_prompt: str = "",
-        model: str = "claude-haiku-4-5-20251001",
+        model: str = DEFAULT_MODEL,
         symbol: Optional[str] = None,
         timeframe: Optional[str] = None,
         start_date: Optional[str] = None,

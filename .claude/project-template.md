@@ -105,7 +105,7 @@ Important roadmap rule:
 - RestrictedPython sandbox isolation is non-negotiable: no file I/O, network, `exec`/`eval`, `__import__`, `open`, or `os`.
 - No lookahead: a signal at bar `i` fills at bar `i+1` open. Backtests are deterministic (seeded slippage).
 - `apps/backend/shared/contracts.py` is a FROZEN interface; changes require architectural review.
-- AI providers (Anthropic/OpenAI) must remain swappable; do not leak model/cost assumptions into core logic.
+- AI providers (OpenAI/Anthropic) must remain swappable; the selectable model list is the single source of truth in `apps/backend/shared/model_catalog.py` (default `gpt-5.4-mini`, served by `GET /api/models`) — never hardcode model ids or leak model/cost assumptions into core logic.
 - No database by design — favor reproducible, file-backed, inspectable artifacts.
 - Backtest results must be reproducible from the stored spec + config + cached market data.
 
@@ -140,7 +140,7 @@ Never commit:
 
 ## NOTES FOR AGENTS
 
-- The backend boots without API keys, but `/api/generate-strategy`, `/api/run-backtest`, and `/api/generate-insights` require `ANTHROPIC_API_KEY` and/or `OPENAI_API_KEY` in `apps/backend/.env`.
+- The backend boots without API keys, but `/api/generate-strategy`, `/api/run-backtest`, and `/api/generate-insights` require `OPENAI_API_KEY` (default model `gpt-5.4-mini`) in `apps/backend/.env`; `ANTHROPIC_API_KEY` is only needed if a Claude model is selected.
 - The `.venv` is a setup artifact and must never be committed.
 - The frontend is Vite; the shared scripts run `npx next dev` which resolves the local `next-vite-shim`. Do not "fix" this by installing real Next.js.
 - The two `.claude/` layers coexist: this Everything-Claude-Code plugin `.claude/` and the framework's `incredible_auto_dev/CLAUDE.md` (root symlink). If automation generates/symlinks framework files into `.claude/`, surface the collision to the operator rather than silently overwriting.

@@ -35,6 +35,7 @@ from fastapi.responses import StreamingResponse
 
 from backend.pipeline import BacktestPipeline, CancellationToken
 from shared.contracts import StrategyRating
+from shared.model_catalog import models_payload
 from shared.schemas import (
     BacktestResultSchema,
     CapacityLevelSchema,
@@ -933,20 +934,13 @@ async def validate_symbol(symbol: str = Query(..., description="Symbol to valida
 @app.get("/api/models", tags=["Reference Data"])
 async def get_available_models():
     """
-    Get list of supported Claude models for strategy compilation.
+    Get the list of supported models (OpenAI + Claude) for the model picker.
 
-    Returns available models with display labels.
-    Use these model values in backtest requests.
+    The list is the single source of truth in ``shared.model_catalog``; the
+    entry flagged default is the project-wide default. Use these values in
+    backtest / generate requests.
     """
-    return {
-        "models": [
-            {"value": "claude-haiku-4-5-20251001", "label": "Claude Haiku 4.5", "default": True},
-            {"value": "claude-sonnet-4-5-20250929", "label": "Claude Sonnet 4.5", "default": False},
-            {"value": "claude-sonnet-4-6", "label": "Claude Sonnet 4.6", "default": False},
-            {"value": "claude-opus-4-6", "label": "Claude Opus 4.6", "default": False},
-            {"value": "gpt-5-mini", "label": "ChatGPT 5 Mini", "default": False},
-        ],
-    }
+    return {"models": models_payload()}
 
 
 @app.get("/api/timeframes", tags=["Reference Data"])

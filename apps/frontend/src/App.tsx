@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { SessionContainer } from './components/SessionContainer'
+import { getModels, defaultModelId, FALLBACK_MODEL, type ModelOption } from './lib/modelsApi'
 import { SessionPicker } from './components/SessionPicker'
 import { MessageSquare, GitBranch } from 'lucide-react'
 import { type LiveSessionStatus, type ArchivedSession } from './hooks/useBacktest'
@@ -82,7 +83,8 @@ function App() {
   const [activeSessionId, setActiveSessionId] = useState<string>('')
   const [liveStatuses, setLiveStatuses] = useState<Record<string, LiveSessionStatus>>({})
   const [mobileTab, setMobileTab] = useState<'activity' | 'iterations'>('activity')
-  const [lastUsedModel, setLastUsedModel] = useState('gpt-5-mini')
+  const [lastUsedModel, setLastUsedModel] = useState(FALLBACK_MODEL)
+  const [availableModels, setAvailableModels] = useState<ModelOption[]>([])
   const [tabsLoaded, setTabsLoaded] = useState(false)
 
   // Archive state managed at App level
@@ -90,6 +92,20 @@ function App() {
 
   // Debounce ref for saving tabs
   const tabsSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Fetch the model list once — single source of truth is backend /api/models
+  // (apps/backend/shared/model_catalog.py). No hardcoded model ids here.
+  useEffect(() => {
+    let cancelled = false
+    getModels().then(models => {
+      if (cancelled) return
+      setAvailableModels(models)
+      setLastUsedModel(prev => (prev === FALLBACK_MODEL ? defaultModelId(models) : prev))
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   // Load tabs + archive from backend on mount (with migration)
   useEffect(() => {
@@ -265,6 +281,7 @@ function App() {
           isActive={session.id === activeSessionId}
           mobileTab={mobileTab}
           lastUsedModel={lastUsedModel}
+          availableModels={availableModels}
           onLastUsedModelChange={setLastUsedModel}
           onStatusChange={handleStatusChange}
           onNameChange={(name) => handleNameChange(session.id, name)}

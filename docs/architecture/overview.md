@@ -21,7 +21,7 @@
 | RestrictedPython sandbox | `apps/backend/backend/sandbox.py` | Safe execution of generated `signal()` code (30s timeout) |
 | Session routes & store | `apps/backend/backend/session_routes.py`, `backend/session_store.py` | `/api/sessions` CRUD, iterations, archive; file-backed persistence |
 | Directions cache | `apps/backend/backend/directions_routes.py`, `backend/directions_cache.py` | Cached AI strategy "directions" |
-| NL compiler | `apps/backend/strategy/compiler.py` | NL → `StrategySpec` via Claude/OpenAI |
+| NL compiler | `apps/backend/strategy/compiler.py` | NL → `StrategySpec` via OpenAI `gpt-5.4-mini` (default) / Claude |
 | Code generation | `apps/backend/strategy/codegen.py`, `strategy/script_generator.py` | `StrategySpec` → executable `signal()` code |
 | Indicators | `apps/backend/strategy/indicators.py` | Technical-indicator registry |
 | Market analysis / insights | `apps/backend/strategy/market_analyzer.py`, `strategy/insights_generator.py` | Regime detection, ranked improvement suggestions |

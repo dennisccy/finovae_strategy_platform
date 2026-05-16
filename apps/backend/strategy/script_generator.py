@@ -18,15 +18,18 @@ import os
 from typing import Any, Optional
 
 from anthropic import Anthropic
-from openai import OpenAI
+from openai import BadRequestError, OpenAI
 
 from shared.contracts import OHLCV
+from shared.model_catalog import (
+    DEFAULT_MODEL,
+    HAIKU_MODEL,
+    OPENAI_MAX_COMPLETION_TOKENS,
+    SONNET_MODEL,
+    is_openai_model,
+)
 
 logger = logging.getLogger(__name__)
-
-SONNET_MODEL = "claude-sonnet-4-5-20250929"
-HAIKU_MODEL = "claude-haiku-4-5-20251001"
-GPT_MINI_MODEL = "gpt-5-mini"
 
 
 class ScriptGeneratorError(Exception):
@@ -206,7 +209,7 @@ class ScriptGenerator:
         self,
         api_key: Optional[str] = None,
         openai_api_key: Optional[str] = None,
-        model: str = SONNET_MODEL,
+        model: str = DEFAULT_MODEL,
     ):
         self.api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
         self.openai_api_key = openai_api_key or os.getenv("OPENAI_API_KEY")
@@ -371,7 +374,7 @@ class ScriptGenerator:
             script_code = ""
 
             # --- Provider Routing ---
-            if effective_model.startswith("gpt-"):
+            if is_openai_model(effective_model):
                 openai_client = self._get_openai_client()
                 
                 messages = [
@@ -379,10 +382,25 @@ class ScriptGenerator:
                     {"role": "user", "content": user_message}
                 ]
                 
-                response = openai_client.chat.completions.create(
-                    model=effective_model,
-                    messages=messages,
-                )
+                openai_kwargs = {
+                    "model": effective_model,
+                    "messages": messages,
+                    "max_completion_tokens": OPENAI_MAX_COMPLETION_TOKENS["script"],
+                }
+                try:
+                    response = openai_client.chat.completions.create(**openai_kwargs)
+                except BadRequestError as e:
+                    _m = str(e).lower()
+                    _retry = dict(openai_kwargs)
+                    if "max_completion_tokens" in _m or "max_tokens" in _m:
+                        _retry.pop("max_completion_tokens", None)
+                    if _retry == openai_kwargs:
+                        raise
+                    logger.warning(
+                        "ScriptGenerator: OpenAI rejected kwargs (%s); retrying without them",
+                        e,
+                    )
+                    response = openai_client.chat.completions.create(**_retry)
                 
                 if hasattr(response, "usage") and response.usage:
                     u = response.usage

@@ -3,7 +3,7 @@
 ## Vision
 
 Finovae Strategy Platform is an AI-assisted crypto strategy lab. A user describes a
-trading strategy in plain English; an LLM (Anthropic or OpenAI) compiles it into a
+trading strategy in plain English; an LLM (OpenAI `gpt-5.4-mini` by default; Claude selectable) compiles it into a
 structured `StrategySpec`, a code generator emits a `signal(df, i) -> int` function, that
 function executes inside a RestrictedPython sandbox, and it is backtested against real
 Binance OHLCV data with a next-bar-open fill model (commission + slippage). The platform
@@ -40,7 +40,7 @@ to the filesystem.
 
 ## Key Capabilities
 
-1. NL → `StrategySpec` compilation — `apps/backend/strategy/compiler.py` (Claude/OpenAI).
+1. NL → `StrategySpec` compilation — `apps/backend/strategy/compiler.py` (OpenAI `gpt-5.4-mini` default; Claude selectable).
 2. `StrategySpec` → executable signal code — `apps/backend/strategy/codegen.py`,
    `strategy/script_generator.py`.
 3. RestrictedPython sandbox execution with a 30s per-call timeout —
@@ -70,8 +70,9 @@ to the filesystem.
 
 - Backend: Python 3.11+, FastAPI, RestrictedPython, Anthropic/OpenAI SDKs.
 - Frontend: Node.js 16+, Vite 5, React 18, TypeScript, Tailwind, Recharts.
-- Strategy compilation and AI insights require `ANTHROPIC_API_KEY` (and/or
-  `OPENAI_API_KEY`); the backend boots without keys but those endpoints will fail.
+- Strategy compilation and AI insights require `OPENAI_API_KEY` (default model
+  `gpt-5.4-mini`); `ANTHROPIC_API_KEY` is only needed if a Claude model is
+  selected. The backend boots without keys but those endpoints will fail.
 - Depends on the public Binance REST API for market data.
 - `apps/backend/shared/contracts.py` is a FROZEN interface contract — changes require
   architectural review.

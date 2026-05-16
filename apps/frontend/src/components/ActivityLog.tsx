@@ -5,6 +5,7 @@ import { ActivityLogGroup } from './ActivityLogGroup'
 import type { ActivityEntry } from '../hooks/useBacktest'
 import { getStrategyPrompts, getShortStrategyPrompts, type StrategyCard } from '../data/strategyPrompts'
 import type { DirectionCacheSummary, DirectionsCacheResult } from '../lib/directionsApi'
+import { FALLBACK_MODEL, type ModelOption } from '../lib/modelsApi'
 
 interface IterationGroup {
   iterationId: string
@@ -71,11 +72,22 @@ interface ActivityLogProps {
   onRunAll?: (cards: StrategyCard[]) => void
   onStopRunAll?: () => void
   onCachedDirectionClick?: (card: StrategyCard, summary: DirectionCacheSummary) => void
+  availableModels?: ModelOption[]
 }
 
-export function ActivityLog({ entries, onSubmitPrompt, currentSymbol, currentTimeframe, isLoading, onEditAndRerun, onSuggestionClick, onCancel, allowShort, cacheResult, isRunningAll, runAllProgress, concurrency = 10, onConcurrencyChange, onRunAll, onStopRunAll, onCachedDirectionClick }: ActivityLogProps) {
+export function ActivityLog({ entries, onSubmitPrompt, currentSymbol, currentTimeframe, isLoading, onEditAndRerun, onSuggestionClick, onCancel, allowShort, cacheResult, isRunningAll, runAllProgress, concurrency = 10, onConcurrencyChange, onRunAll, onStopRunAll, onCachedDirectionClick, availableModels = [] }: ActivityLogProps) {
   const [prompt, setPrompt] = useState('')
-  const [model, setModel] = useState('gpt-5-mini')
+  const [model, setModel] = useState(FALLBACK_MODEL)
+  // When the async model list arrives, switch to the backend default unless the
+  // current selection is already a valid option the user picked.
+  useEffect(() => {
+    if (availableModels.length === 0) return
+    setModel(prev =>
+      availableModels.some(m => m.value === prev)
+        ? prev
+        : (availableModels.find(m => m.default)?.value ?? availableModels[0].value)
+    )
+  }, [availableModels])
   const scrollRef = useRef<HTMLDivElement>(null)
   const isUserScrolledUp = useRef(false)
   const lastScrollHeight = useRef(0)
@@ -315,11 +327,9 @@ export function ActivityLog({ entries, onSubmitPrompt, currentSymbol, currentTim
             onChange={(e) => setModel(e.target.value)}
             className="px-2 py-1 text-xs border border-slate-200 rounded-md focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white"
           >
-            <option value="claude-haiku-4-5-20251001">Haiku 4.5</option>
-            <option value="claude-sonnet-4-5-20250929">Sonnet 4.5</option>
-            <option value="claude-sonnet-4-6">Sonnet 4.6</option>
-            <option value="claude-opus-4-6">Opus 4.6</option>
-            <option value="gpt-5-mini">GPT-5 Mini</option>
+            {availableModels.map(m => (
+              <option key={m.value} value={m.value}>{m.label}</option>
+            ))}
           </select>
         </div>
         <form onSubmit={handleSubmit} className="flex gap-2">

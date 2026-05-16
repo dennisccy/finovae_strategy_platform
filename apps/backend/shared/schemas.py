@@ -11,6 +11,8 @@ from typing import List, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
+from shared.model_catalog import DEFAULT_MODEL, HAIKU_MODEL, SONNET_MODEL
+
 
 # =============================================================================
 # ENUMS (Pydantic compatible)
@@ -251,10 +253,10 @@ class RunBacktestAPIRequest(BaseModel):
         examples=[10000.0],
     )
     model: str = Field(
-        default="claude-haiku-4-5-20251001",
+        default=DEFAULT_MODEL,
         pattern=r"^(claude-|gpt-)",
         description="Claude or OpenAI model to use for strategy compilation",
-        examples=["claude-haiku-4-5-20251001", "claude-sonnet-4-5-20250929", "gpt-5-mini"],
+        examples=[DEFAULT_MODEL, SONNET_MODEL, HAIKU_MODEL],
     )
 
 
@@ -288,7 +290,7 @@ class GenerateStrategyRequest(BaseModel):
         description="Natural language strategy description",
     )
     model: str = Field(
-        default="claude-haiku-4-5-20251001",
+        default=DEFAULT_MODEL,
         pattern=r"^(claude-|gpt-)",
         description="Claude or OpenAI model to use for script generation",
     )
@@ -571,7 +573,7 @@ class GenerateInsightsRequest(BaseModel):
     script_code: str = ""
     natural_language_prompt: str = ""
     model: str = Field(
-        default="claude-haiku-4-5-20251001",
+        default=DEFAULT_MODEL,
         pattern=r"^(claude-|gpt-)",
         description="Claude or OpenAI model to use for insights generation",
     )

@@ -4,12 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Finovae Strategy API is the backend service for the Finovae crypto backtesting platform. It compiles natural language trading strategy descriptions into executable Python code using Claude API, then backtests them against historical Binance data.
+Finovae Strategy API is the backend service for the Finovae crypto backtesting platform. It compiles natural language trading strategy descriptions into executable Python code using an LLM (OpenAI `gpt-5.4-mini` by default; Claude models selectable), then backtests them against historical Binance data.
 
 This is the `apps/backend/` package of the **finovae_strategy_platform monorepo** (no longer a standalone repo). The Vite/React frontend is in the *same* repo at `apps/frontend/`. All module paths below are relative to `apps/backend/`. The `incredible_auto_dev` dev-chain is a git subtree; repo-level project context for agents lives in the root `.claude/project-template.md`, `docs/goal.md`, and `docs/architecture/overview.md` (with deep backend internals in `docs/architecture/backend-internals.md`).
 
 **Tech Stack:**
-- Python 3.11+, FastAPI, RestrictedPython, Anthropic SDK
+- Python 3.11+, FastAPI, RestrictedPython, OpenAI SDK (default) + Anthropic SDK
+- Default model `gpt-5.4-mini`; model list is the single source of truth in `shared/model_catalog.py` (served by `GET /api/models`)
 - Data: Binance REST API, pandas, numpy
 
 ## Development Commands
@@ -46,13 +47,14 @@ python3 -m venv .venv
 ### Environment Setup
 Copy `apps/backend/.env.example` → `apps/backend/.env` and set:
 ```
-ANTHROPIC_API_KEY=your_api_key_here
+OPENAI_API_KEY=your_api_key_here          # required — default model gpt-5.4-mini
+ANTHROPIC_API_KEY=your_api_key_here       # optional — only if a Claude model is selected
 CORS_ORIGINS=https://your-frontend.vercel.app,http://localhost:5173
 ```
 `./scripts/dev.sh` and `./scripts/start-backend.sh` export `CORS_ORIGINS` for the
 offset frontend port automatically; the backend boots without keys, but
 `/api/run-backtest`, `/api/generate-strategy`, and `/api/generate-insights`
-require `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`.
+require `OPENAI_API_KEY` (default `gpt-5.4-mini`); `ANTHROPIC_API_KEY` only if a Claude model is selected. The selectable model list is the single source of truth in `shared/model_catalog.py` (served by `GET /api/models`).
 
 ## Architecture Overview
 

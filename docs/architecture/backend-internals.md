@@ -8,8 +8,9 @@
 ## System Overview
 
 Finovae Strategy Platform is a crypto backtesting platform that compiles natural
-language trading strategy descriptions into executable Python code using the
-Claude API, then backtests them against historical Binance OHLCV data. The
+language trading strategy descriptions into executable Python code using an LLM
+(OpenAI `gpt-5.4-mini` by default; Claude selectable), then backtests them against
+historical Binance OHLCV data. The
 frontend presents a conversational interface (chat panel) alongside a results
 dashboard (equity chart, metrics cards, trades table, run history).
 
@@ -17,7 +18,7 @@ dashboard (equity chart, metrics cards, trades table, run history).
 
 | Layer    | Technology                                        |
 |----------|---------------------------------------------------|
-| Backend  | Python 3.11+, FastAPI, RestrictedPython, Anthropic SDK |
+| Backend  | Python 3.11+, FastAPI, RestrictedPython, OpenAI SDK (default) + Anthropic SDK |
 | Frontend | React 18, TypeScript, Vite, Tailwind CSS, Recharts |
 | Data     | Binance REST API, pandas, numpy, Parquet cache    |
 
@@ -49,7 +50,7 @@ Stage  Module                     Input                  Output
    description plus parameters (symbol, timeframe, date range, initial capital)
    and sends a POST to `/api/run-backtest`.
 
-2. **NL Compilation** (`strategy/compiler.py`) -- The Claude API receives a
+2. **NL Compilation** (`strategy/compiler.py`) -- The LLM (OpenAI `gpt-5.4-mini` by default; Claude when selected) receives a
    system prompt defining the output JSON schema and the allowed indicator
    whitelist. It returns a `StrategySpec` containing name, description,
    indicators, entry/exit conditions, and position sizing.
