@@ -10,8 +10,9 @@ Binance OHLCV data with a next-bar-open fill model (commission + slippage). The 
 returns an institutional-grade report — Sharpe, Sortino, max drawdown, profit factor, win
 rate, equity curve, trade log, and a 5-category rating — with optional walk-forward
 validation (rolling in-sample/out-of-sample windows, WFE) and AI-generated improvement
-insights. There is no database: OHLCV is cached as Parquet and sessions/runs are persisted
-to the filesystem.
+insights. There is no database: OHLCV is cached as a single Parquet file per (symbol,
+timeframe), and sessions/runs are persisted to a durable filesystem location (never
+volatile `/tmp`).
 
 ## Target Users
 
@@ -37,6 +38,12 @@ to the filesystem.
   `run_id`.
 - The backend boots and serves `/docs`; all key `GET /api/*` endpoints respond in a
   running dev environment.
+- Repeated backtests on an already-fetched (symbol, timeframe, date range) load from
+  the local Parquet cache with no Binance re-fetch and no per-day file fan-out; a warm
+  load is at least 10× faster than the cold fetch.
+- Opening a session or run history renders the list without parsing full per-iteration
+  `result`/`rating` payloads; heavy iteration detail is fetched lazily on selection.
+- Session and run history survive a backend restart (persisted outside volatile `/tmp`).
 
 ## Key Capabilities
 
@@ -45,7 +52,8 @@ to the filesystem.
    `strategy/script_generator.py`.
 3. RestrictedPython sandbox execution with a 30s per-call timeout —
    `apps/backend/backend/sandbox.py`.
-4. Binance OHLCV fetch with Parquet caching — `apps/backend/data/loader.py`,
+4. Binance OHLCV fetch with single-file Parquet caching per (symbol, timeframe),
+   warm-cache reads with no re-fetch — `apps/backend/data/loader.py`,
    `data/binance_client.py`, `data/validation.py`.
 5. Backtest engine: next-bar fills, commission/slippage, equity tracking —
    `apps/backend/backtest/engine.py`, `backtest/fills.py`.
@@ -61,7 +69,8 @@ to the filesystem.
 ## Non-Goals
 
 - No live or paper trading and no broker/exchange order execution.
-- No relational database or migrations (Parquet + file-based session/run store by design).
+- No relational database, SQLite, or migrations — OHLCV uses single-file Parquet;
+  sessions/runs/directions use a durable file store by design.
 - No authentication, accounts, or multi-tenant isolation.
 - No options/derivatives engine beyond the existing long + leverage fields.
 - Not a real-time signal/alert or notification service.
@@ -128,6 +137,14 @@ to the filesystem.
   - Acceptance: `/api/symbols` and `/api/timeframes` populate the symbol and timeframe
     controls.
 
+- **J-06: Warm-cache re-run works end-to-end**
+  - Steps:
+    1. Run a backtest for `BTCUSDT` `1h` over a fixed date range; wait for results
+    2. Run the same strategy with the same symbol/timeframe/date range again
+  - Acceptance: the second run completes and renders metrics, an equity curve, and a
+    trades table without error, and the run appears in history (warm local-cache path
+    works end-to-end).
+
 ## Anti-goals
 
 - No hard-coded credentials, API keys, or tokens in source files (keys only via env /
@@ -139,3 +156,13 @@ to the filesystem.
 - No dependency on a paid SaaS service other than Anthropic/OpenAI (already in
   Constraints).
 - The frozen dataclasses in `shared/contracts.py` must not be mutated in place.
+- OHLCV market data MUST be cached as a single Parquet file per (symbol, timeframe) —
+  NOT one CSV or file per calendar day — and MUST NOT be re-fetched from Binance when a
+  covering local cache exists.
+- `BACKTEST_STORE_DIR` (session/run history) MUST NOT default to a volatile `/tmp`
+  path; session and run history MUST survive a process restart.
+- No relational database or SQLite is introduced for OHLCV, session, or directions
+  storage (Parquet + durable file store only).
+- `GET /api/sessions/{id}` (the list/open path) MUST NOT eagerly parse full
+  per-iteration `result.json`/`rating.json` payloads; iteration detail is lazy-loaded
+  via the existing per-iteration endpoint.
