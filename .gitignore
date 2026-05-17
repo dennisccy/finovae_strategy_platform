@@ -66,6 +66,7 @@ apps/backend/.cache/
 # Data / db
 *.db
 *.db-journal
+.data/
 
 # IDE
 .vscode-test

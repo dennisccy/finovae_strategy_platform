@@ -1,0 +1,8 @@
+=== GET API surface @ 2026-05-17T22:22:56Z ===
+[200] /api/health  (62B)  {"status":"healthy","components":{"api":"ok","pipeline":"ok"}}
+[200] /docs  (1028B)      <!DOCTYPE html>    <html>    <head>    <meta name="viewport" content="width=device-width, initial-scale=1.0">    <link type="text/css" rel="stylesheet"
+[200] /api/models  (374B)  {"models":[{"value":"gpt-5.4-mini","label":"GPT-5.4 Mini","default":true},{"value":"claude-haiku-4-5","label":"Claude Haiku 4.5","default":false},{"value":"clau
+[200] /api/symbols  (309B)  {"symbols":["BTC/USDT","ETH/USDT","BNB/USDT","SOL/USDT","XRP/USDT","ADA/USDT","DOGE/USDT","AVAX/USDT","DOT/USDT","LINK/USDT","MATIC/USDT","UNI/USDT","LTC/USDT",
+[200] /api/timeframes  (218B)  {"timeframes":[{"value":"1m","label":"1 Minute"},{"value":"5m","label":"5 Minutes"},{"value":"15m","label":"15 Minutes"},{"value":"1h","label":"1 Hour"},{"value
+[200] /api/sessions  (2124B)  {"tabs":[{"id":"07f97d4a-f6bf-417b-b2b9-5b21a6cc3c33","name":"DOGE 4h Range Breakout (Volume-Confirmed) (edited)","lastAccessedAt":1778974671579},{"id":"e9d8239
+[200] /api/runs  (27B)  {"runs":[],"total_count":0}

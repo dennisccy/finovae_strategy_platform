@@ -1,0 +1,85 @@
+{
+  "journeys": {
+    "J-01": {
+      "id": "J-01",
+      "name": "Run a backtest from natural language",
+      "status": "already_passing",
+      "last_verified_iter": "goal-money-money-iter-0",
+      "last_passing_iter": "goal-money-money-iter-0",
+      "first_seen_iter": "goal-money-money-iter-0",
+      "last_evidence_path": "reports/qa/goal-money-money-iter-0-evidence/UT-J-01-result.png"
+    },
+    "J-02": {
+      "id": "J-02",
+      "name": "Inspect and browse run history",
+      "status": "already_passing",
+      "last_verified_iter": "goal-money-money-iter-0",
+      "last_passing_iter": "goal-money-money-iter-0",
+      "first_seen_iter": "goal-money-money-iter-0",
+      "last_evidence_path": "reports/qa/goal-money-money-iter-0-evidence/UT-J-02-trades.png"
+    },
+    "J-03": {
+      "id": "J-03",
+      "name": "Walk-forward validation",
+      "status": "already_passing",
+      "last_verified_iter": "goal-money-money-iter-0",
+      "last_passing_iter": "goal-money-money-iter-0",
+      "first_seen_iter": "goal-money-money-iter-0",
+      "last_evidence_path": "reports/qa/goal-money-money-iter-0-evidence/UT-J-03-walkforward.png"
+    },
+    "J-04": {
+      "id": "J-04",
+      "name": "AI insights",
+      "status": "already_passing",
+      "last_verified_iter": "goal-money-money-iter-0",
+      "last_passing_iter": "goal-money-money-iter-0",
+      "first_seen_iter": "goal-money-money-iter-0",
+      "last_evidence_path": "reports/qa/goal-money-money-iter-0-evidence/UT-J-04-insights.png",
+      "note": "Core acceptance (>=1 ranked suggestion renders) met: 10 suggestion chips + analysis paragraph corroborated by screenshot. Evidence file is byte-identical to UT-J-03-walkforward.png (single capture showing both panels). OOS-aware sub-clause not explicitly verifiable from generic chip labels — verify in a future iter, not a baseline failure."
+    },
+    "J-05": {
+      "id": "J-05",
+      "name": "Reference data loads",
+      "status": "failing",
+      "last_verified_iter": "goal-money-money-iter-0",
+      "last_passing_iter": null,
+      "first_seen_iter": "goal-money-money-iter-0",
+      "last_evidence_path": "reports/qa/goal-money-money-iter-0-evidence/UT-J-05-controls.png",
+      "note": "Frontend code gap: /api/symbols and /api/timeframes return 200 with valid data (26 symbols / 6 timeframes) but the UI never calls them. Symbol is a free-text input; Timeframe is a static hardcoded button group. Not environmental. Tractable: wire both controls to the endpoints."
+    },
+    "J-06": {
+      "id": "J-06",
+      "name": "Warm-cache re-run works end-to-end",
+      "status": "already_passing",
+      "last_verified_iter": "goal-money-money-iter-0",
+      "last_passing_iter": "goal-money-money-iter-0",
+      "first_seen_iter": "goal-money-money-iter-0",
+      "last_evidence_path": "reports/qa/goal-money-money-iter-0-evidence/UT-J-06-rerun.png",
+      "note": "Second run produced byte-identical metrics to J-01 (116 trades, -34.98%) -> deterministic + warm-cache reuse at the UI layer; new history entry present. Cold-vs-warm timing (goal.md >=10x criterion) is a backend concern not measured at the UI; J-06's own acceptance (clean second render + history entry) is met."
+    }
+  },
+  "anti_goal_violations": [
+    {
+      "iter": "goal-money-money-iter-0",
+      "anti_goal": "OHLCV market data MUST be cached as a single Parquet file per (symbol, timeframe) — NOT one CSV or file per calendar day — and MUST NOT be re-fetched from Binance when a covering local cache exists.",
+      "severity": "minor",
+      "evidence": "apps/backend/data/loader.py:63 (_get_daily_cache_path -> {symbol}/{tf}/{YYYY-MM-DD}.csv per calendar day), :51 (MARKET_DATA_CACHE_DIR default /tmp), :302 (rglob *.csv). Pre-existing; NOT introduced by this verify-only iteration. 'minor' = does not trigger REGRESSION halt; this is central remediation work, not product-trivial.",
+      "resolved": false
+    },
+    {
+      "iter": "goal-money-money-iter-0",
+      "anti_goal": "`BACKTEST_STORE_DIR` (session/run history) MUST NOT default to a volatile `/tmp` path; session and run history MUST survive a process restart.",
+      "severity": "minor",
+      "evidence": "apps/backend/backend/session_store.py:26 default '/tmp/backtests'; apps/backend/backend/directions_cache.py:23 default '/tmp/initial_directions'. Runtime durability holds ONLY via the .env override (boot log: .data/backtests). The code default itself is the violation. Pre-existing; not introduced this iteration.",
+      "resolved": false
+    },
+    {
+      "iter": "goal-money-money-iter-0",
+      "anti_goal": "`GET /api/sessions/{id}` (the list/open path) MUST NOT eagerly parse full per-iteration `result.json`/`rating.json` payloads; iteration detail is lazy-loaded via the existing per-iteration endpoint.",
+      "severity": "minor",
+      "evidence": "apps/backend/backend/session_routes.py:150-156 loops read_iteration_full() for every iteration. Runtime proof (runs/goal-money-money-iter-0/antigoal-sessions-evidence.txt): open path = 53,920,916 B (~51 MB), 26 full entries, vs lightweight /iterations = 1,273,461 B (~42x smaller). Pre-existing; not introduced this iteration.",
+      "resolved": false
+    }
+  ],
+  "updated_at": "2026-05-17T23:10:05Z"
+}

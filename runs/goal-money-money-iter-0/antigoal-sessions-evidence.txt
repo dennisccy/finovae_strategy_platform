@@ -1,0 +1,5 @@
+=== Anti-goal evidence: open path vs lightweight path (read-only) ===
+GET /api/sessions/{id}            -> 200 53920916B
+  iterationHistory entries: 26
+  first entry has full result/rating keys: ['insights', 'rating', 'result', 'scriptCode', 'timeframeResults']
+GET /api/sessions/{id}/iterations -> 200 1273461B  (lightweight metas-only path that SHOULD back the open path)
