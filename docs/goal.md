@@ -14,6 +14,12 @@ insights. There is no database: OHLCV is cached as a single Parquet file per (sy
 timeframe), and sessions/runs are persisted to a durable filesystem location (never
 volatile `/tmp`).
 
+Strategy development is also available **headless via the API**: a single call starts an
+automated, token-budgeted session that *searches an open universe* of symbols /
+timeframes / leverage / strategy ideas, learns from prior sessions to spend tokens where
+payoff is highest, and maximizes a robust walk-forward profit objective — producing the
+same session, iteration, backtest, and suggestion records the UI renders.
+
 ## Target Users
 
 - A solo systematic / retail-quant trader who wants to go from idea to validated backtest
@@ -44,6 +50,13 @@ volatile `/tmp`).
 - Opening a session or run history renders the list without parsing full per-iteration
   `result`/`rating` payloads; heavy iteration detail is fetched lazily on selection.
 - Session and run history survive a backend restart (persisted outside volatile `/tmp`).
+- One API call (no browser) starts an automated session that explores multiple distinct
+  configs, runs to a terminal state (robust targets met or hard budget exhausted)
+  server-side within the stated AI-token/cost budget, marks a best strategy by the
+  robust objective, and shows all sessions/iterations/suggestions/leaderboard updating
+  live in the existing UI.
+- A second automated run with global history scope demonstrably warm-starts from prior
+  sessions (prioritizes historically strong families) and is opt-out-able.
 
 ## Key Capabilities
 
@@ -65,6 +78,14 @@ volatile `/tmp`).
    `backend/session_routes.py`, `backend/session_store.py`.
 10. (nice-to-have) Directions cache — `apps/backend/backend/directions_routes.py`,
     `backend/directions_cache.py`.
+11. Headless auto-optimizing strategy session — API-triggered two-level search: a
+    config-search controller (history surrogate/bandit + cached LLM-planner) over an
+    open, bounded universe, driving the existing generate→backtest→insights→iterate loop
+    under staged cheap-first evaluation, model routing, and a hard AI-token/cost budget;
+    selects the best strategy by a robust (walk-forward, WFE-gated, drawdown-penalized)
+    objective; runs server-side and writes standard session artifacts that update live
+    in the existing UI. Subsumes the previous in-browser "Auto Run" —
+    `apps/backend/backend/api.py`, `backend/session_store.py`.
 
 ## Non-Goals
 
@@ -74,6 +95,14 @@ volatile `/tmp`).
 - No authentication, accounts, or multi-tenant isolation.
 - No options/derivatives engine beyond the existing long + leverage fields.
 - Not a real-time signal/alert or notification service.
+- Automated "profit" is backtested / walk-forward only — the chain never executes live
+  or paper trades.
+- No exhaustive grid over the entire exchange symbol list; automated exploration is
+  bounded and budget-driven from a seed universe.
+- No new datastore/queue/vector DB/scheduler; automated history learning reuses the
+  existing file store; one automated run per API call.
+- No multi-objective/Pareto optimization for the automated session (single robust scalar
+  objective in v1).
 
 ## Constraints
 
@@ -145,6 +174,107 @@ volatile `/tmp`).
     trades table without error, and the run appears in history (warm local-cache path
     works end-to-end).
 
+All automated-session journeys (J-07–J-16) MUST use tiny budgets (≤ 2 screen iterations,
+a short date range, the cheapest model, lenient targets) so verification stays fast and
+cheap. In `POST /api/auto-sessions` every search-space field is optional: a provided
+field pins that dimension (cheap deterministic tests); omitting symbol/timeframe means
+open-universe. Journeys are layered so the Foundation lands before the Optimizer.
+
+**Layer 1 — Foundation (headless chain + live UI tracking)**
+
+- **J-07: Start a headless automated session via the API (pinned config)**
+  - Steps:
+    1. `POST /api/auto-sessions` with a pinned config: natural-language strategy,
+       `symbol`, `timeframe`, `start_date`, `end_date`, `initial_capital`, `model`,
+       robust `targets`, and `budget` with `max_iterations: 2`
+    2. Read the JSON response
+    3. `GET /api/sessions` (or open the UI session list)
+  - Acceptance: the response is HTTP 200 with a `sessionId` and a run state of `running`
+    or `queued`; the same `sessionId` appears immediately in `GET /api/sessions` (a new
+    session tab in the UI) with no browser interaction required to start it.
+
+- **J-08: Track the automated run live in the UI**
+  - Steps:
+    1. Trigger a run as in J-07 (tiny budget)
+    2. Open the UI and open the created session
+    3. Observe the session without manually reloading the page
+  - Acceptance: a run-status indicator shows "running"; at least one iteration with a
+    backtest result and generated suggestions appears, and the status then reaches a
+    terminal state — all without a manual page reload.
+
+- **J-09: Automated chain stops on robust target or budget; best is marked**
+  - Steps:
+    1. `POST /api/auto-sessions` with lenient robust `targets` and a small `budget`
+    2. Wait for the run to reach a terminal state
+    3. Open the session in the UI
+  - Acceptance: the session shows a terminal status with a visible stop reason
+    (`criteria-met` or `budget-exhausted`) and a best iteration marked; when the stop
+    reason is `criteria-met`, the best iteration's metrics satisfy every supplied robust
+    target.
+
+- **J-10: Backend is the single source of truth (button rewired, survives reload)**
+  - Steps:
+    1. In the UI, open a completed iteration and click "Auto Run" with a small budget
+    2. Mid-run, reload the browser tab and reopen the session
+  - Acceptance: the run continues and completes server-side — progress keeps advancing
+    after the reload and the session reaches a terminal state — proving the loop is not
+    driven by the browser.
+
+- **J-11: Stop a running automated session**
+  - Steps:
+    1. Start a run with a budget large enough that it is still running
+    2. `POST /api/auto-sessions/{sessionId}/stop` (or click the UI stop control)
+    3. Reopen / observe the session
+  - Acceptance: the run transitions to a `stopped` terminal state, no further iterations
+    are appended after the stop, and the best-so-far iteration remains marked.
+
+**Layer 2 — Optimizer (open-universe, token-budgeted search)**
+
+- **J-12: Open-universe run from only an objective + budget**
+  - Steps:
+    1. `POST /api/auto-sessions` with no `symbol` or `timeframe` — only
+       `objective: "robust"` and a small `budget` (optionally `history_scope`)
+    2. Wait for a terminal state
+    3. Open the session in the UI
+  - Acceptance: at least two distinct configs (differing symbol and/or timeframe) appear
+    as iterations; the run reaches a terminal state within budget; the best is marked by
+    robust score.
+
+- **J-13: AI-token/cost budget is hard-enforced**
+  - Steps:
+    1. Trigger a run with a tiny token / USD budget
+    2. Wait for a terminal state
+    3. Read the session status block
+  - Acceptance: the stop reason is `budget-exhausted`; the recorded token/cost spend is
+    ≤ the cap (within one-call tolerance) and visible in the status block; no iterations
+    are added after the cap is reached.
+
+- **J-14: Staged screening — full cost only on survivors**
+  - Steps:
+    1. Trigger an open-universe run
+    2. Inspect the session activity log / status
+  - Acceptance: the activity log shows a `SCREEN` stage with several cheap candidates and
+    a `PROMOTE` stage applied to only the top-k (k < number screened); walk-forward and
+    the stronger model appear only on promoted configs.
+
+- **J-15: Learns from global history (warm start) and is opt-out-able**
+  - Steps:
+    1. Run #1 open-universe with a tiny budget; let it finish
+    2. Run #2 with `history_scope: "global"`
+    3. Run #3 with `history_scope: "this-run"`
+  - Acceptance: run #2's activity log shows a planner decision citing prior-session
+    performance and its first promoted config's family matches a top performer from run
+    #1; run #3 shows no such cross-run citation (opt-out honored).
+
+- **J-16: Robust objective gates overfit**
+  - Steps:
+    1. Trigger an open-universe run
+    2. Inspect the leaderboard / best iteration in the UI
+  - Acceptance: the marked best satisfies WFE ≥ threshold and the min-trades floor and
+    its score derives from walk-forward OOS; a higher raw-return but WFE-failing or
+    over-leveraged candidate is not selected as best (visible in the leaderboard /
+    activity log).
+
 ## Anti-goals
 
 - No hard-coded credentials, API keys, or tokens in source files (keys only via env /
@@ -166,3 +296,39 @@ volatile `/tmp`).
 - `GET /api/sessions/{id}` (the list/open path) MUST NOT eagerly parse full
   per-iteration `result.json`/`rating.json` payloads; iteration detail is lazy-loaded
   via the existing per-iteration endpoint.
+- The automated chain MUST write the same session/iteration/activity/insights artifacts
+  the UI renders (the existing file store) — no parallel store, no schema fork; a
+  headless run MUST be indistinguishable in the UI from a manual one.
+- Every automated run MUST honor a hard budget (AI tokens/USD AND max-configs AND
+  wall-clock), enforced by an immutable cost tracker; it MUST NOT loop unbounded or take
+  "one more round" past the cap, even if targets are never met.
+- The automated-session `autoRun` status MUST be persisted to the durable store and
+  survive a worker restart and a browser reload; it MUST NOT live only in browser memory
+  or a non-persisted in-process variable.
+- After the rewire, the iterate loop MUST exist only in the backend; the frontend MUST
+  NOT run a second in-browser iterate loop.
+- The automated chain MUST reuse the existing `BacktestPipeline`; it MUST NOT bypass the
+  RestrictedPython sandbox or the deterministic next-bar engine.
+- Open-universe exploration MUST start from a bounded seed universe and MUST NOT blindly
+  fan out across the entire exchange symbol list; expansion only as budget/history
+  justify.
+- The automated "best" MUST be selected by the robust objective (walk-forward OOS,
+  WFE-gated, drawdown-penalized, min-trades floor); a higher raw-return but WFE-failing
+  or over-leveraged candidate MUST NOT be marked best.
+- Cheap `SCREEN` evaluation MUST NOT run walk-forward or the strongest model; those are
+  reserved for promoted candidates.
+- Identical generated strategies (by code hash) MUST NOT be re-generated or
+  re-backtested; the OHLCV Parquet cache MUST be reused across configs (no re-fetch when
+  a covering cache exists).
+- Global history learning MUST be read-only mining of the existing store (it MUST NOT
+  mutate or delete prior sessions' artifacts); the `history_scope` opt-out MUST be
+  honored.
+- The LLM-planner / history context MUST use prompt caching; the leaderboard/history
+  MUST NOT be re-sent uncached every round.
+- The automated background job MUST NOT block the API event loop; the UI poll and other
+  requests MUST stay responsive while a run is active (one-backtest-per-worker semaphore
+  respected).
+- No new external infrastructure (no Celery/Redis/database/broker/vector-store) for the
+  automated session; optimizer state persists in the existing file store.
+- API keys/secrets MUST NOT be written into the activity log or persisted in session
+  artifacts.
