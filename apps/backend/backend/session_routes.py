@@ -141,7 +141,17 @@ async def delete_archive_entry(archive_id: str):
 
 @router.get("/{session_id}")
 async def get_session(session_id: str):
-    """Get full session: meta + activity log + all iterations."""
+    """Open a session: meta + activity log + a LIGHTWEIGHT iteration list.
+
+    The iteration list carries only per-iteration metadata (id, status,
+    timestamp, params, strategy name, parent linkage, ...) via
+    read_iteration_meta. It deliberately does NOT eager-load each iteration's
+    heavy result/rating/equity_curve/trades payload — those are lazy-loaded on
+    demand through GET /{session_id}/iterations/{iteration_id}. This keeps
+    opening a session with many runs from deserializing every run's full
+    payload (anti-goal: the list/open path must not eager-parse result.json /
+    rating.json).
+    """
     def _load():
         meta = read_session_meta(session_id) or {}
         activity = read_activity_log(session_id)
@@ -151,7 +161,7 @@ async def get_session(session_id: str):
             parts = d.name.split("_", 1)
             if len(parts) < 2:
                 continue
-            node = read_iteration_full(session_id, parts[1])
+            node = read_iteration_meta(session_id, parts[1])
             if node:
                 iterations.append(node)
         return meta, activity, iterations

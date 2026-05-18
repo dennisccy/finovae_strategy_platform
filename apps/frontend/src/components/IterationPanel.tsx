@@ -1,5 +1,5 @@
 import { useEffect, useRef, useMemo } from 'react'
-import { GitBranch } from 'lucide-react'
+import { GitBranch, Loader2, AlertCircle, ChevronLeft } from 'lucide-react'
 import type { IterationNode, WalkForwardConfig } from '../hooks/useBacktest'
 import { IterationCard } from './IterationCard'
 import { IterationDetailView } from './IterationDetailView'
@@ -13,6 +13,42 @@ interface IterationPanelProps {
   onStartAutoRun: (id: string) => void
   isLoading: boolean
   onRunWalkForward?: (iterationId: string, config: WalkForwardConfig, onProgress?: (w: number, t: number) => void) => void
+  /** True while the selected run's heavy detail is being lazy-fetched. */
+  detailLoading?: boolean
+  /** Set when the lazy per-iteration detail fetch failed. */
+  detailError?: string | null
+  /** Retry the lazy detail fetch for the currently selected run. */
+  onRetryDetail?: () => void
+}
+
+// =============================================================================
+// Detail-pane status (loading / error / no-detail) — shown while the selected
+// run's heavy payload is lazy-fetched on selection.
+// =============================================================================
+
+function DetailStatusPane({
+  children,
+  onBack,
+}: {
+  children: React.ReactNode
+  onBack: () => void
+}) {
+  return (
+    <div className="flex-1 flex flex-col bg-slate-50">
+      <div className="p-4 border-b border-slate-200 bg-white">
+        <button
+          onClick={onBack}
+          className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-colors"
+        >
+          <ChevronLeft className="w-3.5 h-3.5" />
+          Back to history
+        </button>
+      </div>
+      <div className="flex-1 flex items-center justify-center p-6">
+        <div className="text-center max-w-sm">{children}</div>
+      </div>
+    </div>
+  )
 }
 
 // =============================================================================
@@ -89,7 +125,7 @@ function IterationTreeItem({ node, latestId, onSelect, onDelete, onRerun, onStar
 // IterationPanel
 // =============================================================================
 
-export function IterationPanel({ iterations, selectedId, onSelect, onDelete, onRerun, onStartAutoRun, onRunWalkForward }: IterationPanelProps) {
+export function IterationPanel({ iterations, selectedId, onSelect, onDelete, onRerun, onStartAutoRun, onRunWalkForward, detailLoading, detailError, onRetryDetail }: IterationPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const isUserScrolledUp = useRef(false)
   const lastScrollHeight = useRef(0)
@@ -139,22 +175,74 @@ export function IterationPanel({ iterations, selectedId, onSelect, onDelete, onR
     return () => element.removeEventListener('scroll', handleScroll)
   }, [])
 
-  // Detail view for selected iteration
+  // Detail view for selected iteration. The session list/open path is
+  // lightweight, so the selected run's heavy detail (result/rating/trades/
+  // scriptCode) is lazy-fetched on selection — render an explicit loading and
+  // error state instead of a silent blank pane.
   if (selectedId) {
     const selected = sortedIterations.find(n => n.id === selectedId)
-    if (selected && selected.result) {
-      // Use parent node's code as the "before" snapshot for diff view
-      const previousIteration = selected.parentId
-        ? sortedIterations.find(n => n.id === selected.parentId) ?? undefined
-        : undefined
+    if (selected) {
+      if (selected.result) {
+        // Use parent node's code as the "before" snapshot for diff view
+        const previousIteration = selected.parentId
+          ? sortedIterations.find(n => n.id === selected.parentId) ?? undefined
+          : undefined
 
+        return (
+          <IterationDetailView
+            iteration={selected}
+            previousIteration={previousIteration}
+            onBack={() => onSelect(null)}
+            onRunWalkForward={onRunWalkForward}
+          />
+        )
+      }
+
+      if (detailLoading) {
+        return (
+          <DetailStatusPane onBack={() => onSelect(null)}>
+            <Loader2 className="w-8 h-8 text-primary-500 animate-spin mx-auto" />
+            <p className="mt-3 text-sm font-medium text-slate-600">Loading run detail…</p>
+            <p className="mt-1 text-xs text-slate-400">
+              Fetching this run's strategy, metrics, and trades.
+            </p>
+          </DetailStatusPane>
+        )
+      }
+
+      if (detailError) {
+        return (
+          <DetailStatusPane onBack={() => onSelect(null)}>
+            <AlertCircle className="w-8 h-8 text-red-500 mx-auto" />
+            <p className="mt-3 text-sm font-medium text-slate-700">
+              Couldn't load this run's detail
+            </p>
+            <p className="mt-1 text-xs text-slate-500 break-words">{detailError}</p>
+            {onRetryDetail && (
+              <button
+                onClick={onRetryDetail}
+                className="mt-4 px-3 py-1.5 text-xs font-medium text-white bg-primary-600 hover:bg-primary-700 rounded-lg transition-colors"
+              >
+                Retry
+              </button>
+            )}
+          </DetailStatusPane>
+        )
+      }
+
+      // Selected, not loading, no error, but no result on disk (e.g. an
+      // errored/in-progress run). Don't crash the detail view — show a clear
+      // message and keep the history list reachable via Back.
       return (
-        <IterationDetailView
-          iteration={selected}
-          previousIteration={previousIteration}
-          onBack={() => onSelect(null)}
-          onRunWalkForward={onRunWalkForward}
-        />
+        <DetailStatusPane onBack={() => onSelect(null)}>
+          <GitBranch className="w-8 h-8 text-slate-300 mx-auto" />
+          <p className="mt-3 text-sm font-medium text-slate-600">
+            No detailed results for this run
+          </p>
+          <p className="mt-1 text-xs text-slate-400">
+            This run has no stored metrics or trades to display.
+          </p>
+        </DetailStatusPane>
       )
     }
   }

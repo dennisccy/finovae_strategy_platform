@@ -41,6 +41,9 @@ export function SessionContainer({
     activityLog,
     selectedIterationId,
     iterationHistory,
+    detailLoading,
+    detailError,
+    retryDetailLoad,
     generateAndExecute,
     editAndRerun,
     cancelOperation,
@@ -232,6 +235,9 @@ export function SessionContainer({
             onStartAutoRun={handleStartAutoRunFromCard}
             isLoading={isLoading}
             onRunWalkForward={runWalkForward}
+            detailLoading={detailLoading}
+            detailError={detailError}
+            onRetryDetail={retryDetailLoad}
           />
         </div>
       </main>

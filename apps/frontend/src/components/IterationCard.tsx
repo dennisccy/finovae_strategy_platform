@@ -247,8 +247,10 @@ export function IterationCard({ iteration, onSelect, onDelete, onRerun, onStartA
         </p>
       )}
 
-      {/* Metrics row (when complete) */}
-      {iteration.status === 'complete' && iteration.result && (
+      {/* Metrics row (when complete). Driven by meta fields (totalReturn,
+          numTrades, …) which are present even on a lightweight (not-yet
+          lazy-loaded) node, so it does NOT gate on iteration.result. */}
+      {iteration.status === 'complete' && (
         <div className="flex items-center gap-2 mt-2.5 text-xs flex-wrap">
           <span className={`font-semibold ${(iteration.totalReturn ?? 0) >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
             {formatReturn(iteration.totalReturn ?? 0)}

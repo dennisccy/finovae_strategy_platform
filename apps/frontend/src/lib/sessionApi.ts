@@ -136,6 +136,25 @@ export async function upsertIteration(
   }
 }
 
+/**
+ * Lazy-load a single full iteration node (result, rating, insights, scriptCode,
+ * prompt) from the per-iteration endpoint. The session list/open path
+ * (loadSession) returns a LIGHTWEIGHT list with no heavy payloads; this is the
+ * on-demand sibling used when a run is selected.
+ *
+ * Throws on HTTP/network failure so the caller can surface an explicit error
+ * state (the detail pane must not silently blank out).
+ */
+export async function fetchIterationDetail(
+  sessionId: string,
+  iterationId: string
+): Promise<Record<string, unknown>> {
+  const res = await apiFetch(
+    `/api/sessions/${sessionId}/iterations/${iterationId}`
+  )
+  return (await res.json()) as Record<string, unknown>
+}
+
 export async function deleteIterationFromStore(
   sessionId: string,
   iterationId: string

@@ -1,7 +1,7 @@
 {
   "session_id": "money-billions",
   "started_at": "2026-05-17T23:43:43.252519Z",
-  "current_iter": 3,
+  "current_iter": 4,
   "cli": "claude",
   "halt_config": {
     "max_iterations": 50,
@@ -9,10 +9,10 @@
     "regression_halt": true
   },
   "status": "in_progress",
-  "last_verdict": "CONTINUE",
-  "next_depth": "full",
+  "last_verdict": "GOAL_ACHIEVED",
+  "next_depth": "lean",
   "auto_release": false,
   "push_per_iter": true,
   "push_branch": "goal/money-billions",
-  "updated_at": "2026-05-18T04:18:01.841103Z"
+  "updated_at": "2026-05-18T08:10:07.361458Z"
 }

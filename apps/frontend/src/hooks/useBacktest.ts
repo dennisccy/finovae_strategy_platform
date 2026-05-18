@@ -6,6 +6,7 @@ import {
   rewriteActivityLog as apiRewriteActivity,
   upsertIteration,
   deleteIterationFromStore,
+  fetchIterationDetail,
   beaconSaveSession,
 } from '../lib/sessionApi'
 import { FALLBACK_MODEL } from '../lib/modelsApi'
@@ -438,6 +439,15 @@ export function useBacktest(sessionId: string) {
   const abortControllerRef = useRef<AbortController | null>(null)
   const [error, setError] = useState<string | null>(null)
 
+  // Lazy per-iteration detail fetch (the session list/open path is now
+  // lightweight — heavy result/rating/scriptCode is fetched on selection).
+  const [detailLoading, setDetailLoading] = useState(false)
+  const [detailError, setDetailError] = useState<string | null>(null)
+  // ids whose full detail has been merged in (skip refetch) and the id of an
+  // in-flight fetch (dedupe concurrent triggers for the same node).
+  const loadedDetailIdsRef = useRef<Set<string>>(new Set())
+  const loadingDetailIdRef = useRef<string | null>(null)
+
   // Auto-run state
   const [isAutoRunning, setIsAutoRunning] = useState(false)
   const [autoRunProgress, setAutoRunProgress] = useState<{ current: number; max: number } | null>(null)
@@ -503,14 +513,29 @@ export function useBacktest(sessionId: string) {
           selectedIterationId: data.selectedIterationId ?? null,
         })
 
+        // The list/open path is lightweight: it omits the heavy/bulk fields
+        // (prompt, scriptCode, result, rating, insights). Normalize each node
+        // back to the IterationNode contract's nullable defaults so list/tree
+        // rendering never reads an undefined heavy field (e.g. prompt.length);
+        // the real values are lazy-merged on selection.
+        const normalizeLightweight = (n: IterationNode): IterationNode => ({
+          ...n,
+          prompt: n.prompt ?? '',
+          scriptCode: n.scriptCode ?? '',
+          scriptId: n.scriptId ?? '',
+          result: n.result ?? null,
+          rating: n.rating ?? null,
+          insights: n.insights ?? null,
+        })
+
         // Fix up in-progress statuses that survived a page reload
         const restoredHistory = migrated.iterationHistory.flatMap((n: IterationNode) => {
           if (n.status === 'generating' || n.status === 'executing') {
-            if (n.result) return [{ ...n, status: 'complete' as const }]
+            if (n.result) return [normalizeLightweight({ ...n, status: 'complete' as const })]
             return []
           }
           if (n.status !== 'complete') return []  // drop error/cancelled/unknown on reload
-          return [n]
+          return [normalizeLightweight(n)]
         })
 
         const restoredIds = new Set(restoredHistory.map((n: IterationNode) => n.id))
@@ -1481,6 +1506,81 @@ export function useBacktest(sessionId: string) {
     setSelectedIterationId(id)
   }, [])
 
+  // Lazy-load one iteration's heavy detail (result/rating/insights/scriptCode/
+  // prompt) and merge it into the in-memory node. Used for the selected run and
+  // the initially-resolved run on session open, since the list/open path is now
+  // lightweight.
+  const loadIterationDetail = useCallback(async (id: string) => {
+    const current = iterationHistoryRef.current.find(n => n.id === id)
+    if (!current) return
+    if (current.result) return                       // already have heavy detail
+    if (loadingDetailIdRef.current === id) return     // fetch already in flight
+    loadingDetailIdRef.current = id
+    setDetailLoading(true)
+    setDetailError(null)
+    try {
+      const detail = await fetchIterationDetail(sessionId, id) as Partial<IterationNode>
+      const apply = (list: IterationNode[]) => list.map(n =>
+        n.id === id
+          ? {
+              ...n,
+              result: detail.result ?? null,
+              rating: detail.rating ?? null,
+              insights: detail.insights ?? n.insights ?? null,
+              prompt: detail.prompt || n.prompt || '',
+              scriptCode: detail.scriptCode || n.scriptCode || '',
+              scriptId: detail.scriptId || n.scriptId || '',
+              walkForwardResult: detail.walkForwardResult ?? n.walkForwardResult ?? null,
+              walkForwardStatus: detail.walkForwardStatus ?? n.walkForwardStatus,
+            }
+          : n
+      )
+      const nextHistory = apply(iterationHistoryRef.current)
+      const merged = nextHistory.find(n => n.id === id)
+      // Prevent the save effect from re-persisting lazy-loaded detail: it keys
+      // off `${status}:${insights?.suggestions?.length}`. The lightweight node
+      // seeded `complete:0` at hydration; once real insights merge in, that key
+      // would differ and trigger a redundant upsert of an already-stored
+      // iteration. Pre-set the ref to the post-merge key so the effect no-ops.
+      if (merged && (merged.status === 'complete' || merged.status === 'error')) {
+        savedIterationVersionRef.current.set(
+          id, `${merged.status}:${merged.insights?.suggestions?.length ?? 0}`
+        )
+      }
+      loadedDetailIdsRef.current.add(id)
+      iterationHistoryRef.current = nextHistory
+      setIterationHistory(prev => apply(prev))
+    } catch (e) {
+      setDetailError(e instanceof Error ? e.message : 'Failed to load run detail')
+    } finally {
+      loadingDetailIdRef.current = null
+      setDetailLoading(false)
+    }
+  }, [sessionId])
+
+  // Fetch heavy detail for the selected (or initially-resolved) run when it is
+  // still lightweight. Covers both session-open (resolved id) and user
+  // selection from history.
+  useEffect(() => {
+    if (!isHydrated) return
+    const id = selectedIterationId
+    if (!id) return
+    const node = iterationHistory.find(n => n.id === id)
+    if (!node || node.result || loadedDetailIdsRef.current.has(id)) return
+    loadIterationDetail(id)
+  }, [isHydrated, selectedIterationId, iterationHistory, loadIterationDetail])
+
+  // Clear any stale detail error when the selection changes (a fresh selection
+  // gets a fresh detail-pane state; loadIterationDetail sets its own error).
+  useEffect(() => {
+    setDetailError(null)
+  }, [selectedIterationId])
+
+  const retryDetailLoad = useCallback(() => {
+    const id = selectedIterationIdRef.current
+    if (id) loadIterationDetail(id)
+  }, [loadIterationDetail])
+
   // ==========================================================================
   // loadCachedIteration — inject a pre-built node (from directions cache)
   // ==========================================================================
@@ -2166,6 +2266,9 @@ export function useBacktest(sessionId: string) {
     activityLog,
     selectedIterationId,
     iterationHistory,
+    detailLoading,
+    detailError,
+    retryDetailLoad,
     generateAndExecute,
     editAndRerun,
     cancelOperation,
