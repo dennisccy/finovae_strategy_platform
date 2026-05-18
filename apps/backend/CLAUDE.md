@@ -134,7 +134,7 @@ Key features:
 
 ### Data Caching (data/loader.py)
 
-OHLCV data is cached in `.cache/ohlcv/` as Parquet files to avoid redundant Binance API calls. Cache key format: `{symbol}_{timeframe}_{start}_{end}.parquet`
+OHLCV data is cached as a **single Parquet file per (symbol, timeframe)** at `<cache_dir>/{symbol}/{timeframe}.parquet` (default `cache_dir`: the durable in-repo `.data/market_data`, override via `MARKET_DATA_CACHE_DIR`). A warm load whose `[start, end]` window is covered by the cached span makes **zero** Binance calls; a partially-covered window fetches only the missing leading/trailing sub-range(s) and rewrites the single file atomically. Authoritative contract: `docs/goal.md`.
 
 ## Testing Philosophy
 

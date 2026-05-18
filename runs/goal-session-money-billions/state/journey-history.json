@@ -3,39 +3,42 @@
     "J-01": {
       "id": "J-01",
       "name": "Run a backtest from natural language",
-      "status": "already_passing",
-      "last_verified_iter": "goal-money-billions-iter-0",
-      "last_passing_iter": "goal-money-billions-iter-0",
+      "status": "passing",
+      "last_verified_iter": "goal-money-billions-iter-1",
+      "last_passing_iter": "goal-money-billions-iter-1",
       "first_seen_iter": "goal-money-billions-iter-0",
-      "last_evidence_path": "reports/qa/goal-money-billions-iter-0-evidence/UT-J-01-result.png"
+      "last_evidence_path": "reports/qa/goal-money-billions-iter-1-evidence/TC-15-02-results.png",
+      "note": "Target journey iter-1. Cold backtest through the migrated single-Parquet loader: +12.08% / 20 trades / 70% WR / 0.91 SR, equity curve drawn, trades table, new run_id. Verified via TC-15 (QA) and UT-02 (browser, distinct -10.60%/42-trade run); both passed."
     },
     "J-02": {
       "id": "J-02",
       "name": "Inspect and browse run history",
-      "status": "already_passing",
-      "last_verified_iter": "goal-money-billions-iter-0",
-      "last_passing_iter": "goal-money-billions-iter-0",
+      "status": "passing",
+      "last_verified_iter": "goal-money-billions-iter-1",
+      "last_passing_iter": "goal-money-billions-iter-1",
       "first_seen_iter": "goal-money-billions-iter-0",
-      "last_evidence_path": "reports/qa/goal-money-billions-iter-0-evidence/UT-J-02-result.png"
+      "last_evidence_path": "reports/qa/goal-money-billions-iter-1-evidence/TC-17-03-loaded.png",
+      "note": "Highest persistence-layer regression watch for the session_store migration. Prior session reloaded full spec/metrics/115-trade table/equity from the durable store (TC-17, UT-04); survives browser refresh with empty localStorage (UT-10). UT-05 (literal backend-restart-with-no-.env durability) was SKIPPED by browser-QA for environment-safety (killing shared backend + moving .env was policy-denied, no interactive user) — that specific restart guarantee is gated by pytest TC-08 (BASE_DIR absolute & not /tmp with env unset) + TC-09 (simulated-restart round-trip), both PASS, plus auditor git-rev-parse confirmation the default lands on the 18 existing live sessions. J-02 itself is positively verified passing."
     },
     "J-03": {
       "id": "J-03",
       "name": "Walk-forward validation",
-      "status": "already_passing",
-      "last_verified_iter": "goal-money-billions-iter-0",
-      "last_passing_iter": "goal-money-billions-iter-0",
+      "status": "passing",
+      "last_verified_iter": "goal-money-billions-iter-1",
+      "last_passing_iter": "goal-money-billions-iter-1",
       "first_seen_iter": "goal-money-billions-iter-0",
-      "last_evidence_path": "reports/qa/goal-money-billions-iter-0-evidence/UT-J-03-result.png"
+      "last_evidence_path": "reports/qa/goal-money-billions-iter-1-evidence/TC-18-01-walkforward.png",
+      "note": "Walk-forward recomputed through the rewritten loader (fresh WFE 0.53 green ✓ / 4-window QA run; UT-06 WFE 1.15 ✓ / 2-window run): WFE badge + OOS aggregate row + per-window table + combined OOS equity curve all render. Loader change did not regress walk-forward. Documented test-plan deviation: IS/OOS adapted from plan's 6/3 to 3-4/1-2 because the small reference range cannot form windows at 6/3 — journey assertion still satisfied."
     },
     "J-04": {
       "id": "J-04",
       "name": "AI insights",
-      "status": "already_passing",
-      "last_verified_iter": "goal-money-billions-iter-0",
-      "last_passing_iter": "goal-money-billions-iter-0",
+      "status": "passing",
+      "last_verified_iter": "goal-money-billions-iter-1",
+      "last_passing_iter": "goal-money-billions-iter-1",
       "first_seen_iter": "goal-money-billions-iter-0",
-      "last_evidence_path": "reports/qa/goal-money-billions-iter-0-evidence/UT-J-04-result.png",
-      "note": "Primary acceptance (>=1 ranked suggestion renders) verified — 10 ranked suggestion chips + summary. Sub-clause 'suggestions are OOS-aware when walk-forward data exists' NOT separately verified (insights were generated before the J-03 walk-forward run). A Mode:next iteration should confirm post-WF insights regeneration is OOS-aware."
+      "last_evidence_path": "reports/qa/goal-money-billions-iter-1-evidence/TC-19-01-insights.png",
+      "note": "Primary acceptance (>=1 ranked suggestion renders) verified — narrative tied to run metrics + 20 (UT-07) / 28 (TC-19) ranked suggestion pills, no error. CARRIED SOFT GAP (from iter-0, still open): the conditional sub-clause 'suggestions are OOS-aware when walk-forward data exists' is still not separately asserted. Must be explicitly confirmed (post-walk-forward insights regeneration) before GOAL_ACHIEVED; not a blocker for CONTINUE."
     },
     "J-05": {
       "id": "J-05",
@@ -45,17 +48,17 @@
       "last_passing_iter": null,
       "first_seen_iter": "goal-money-billions-iter-0",
       "last_evidence_path": "reports/qa/goal-money-billions-iter-0-evidence/UT-J-05-result.png",
-      "note": "Endpoints /api/symbols (26 symbols) and /api/timeframes (6) are healthy, but the frontend never calls them. apps/frontend/src/components/BacktestConfigBar.tsx: timeframe is a hardcoded literal ['1m','5m','15m','1h','4h','1d'] (line 61); symbol is a free-text input with regex validation (lines 43-54). Failure mode = UI does not consume working endpoints (frontend wiring), NOT broken endpoints."
+      "note": "NOT TESTED iter-1 — explicitly OUT OF SCOPE per the iter-1 spec (deferred to a dedicated lean iteration); status carried from iter-0. /api/symbols (26) and /api/timeframes (6) are healthy but apps/frontend/src/components/BacktestConfigBar.tsx never calls them: timeframe is a hardcoded literal ['1m','5m','15m','1h','4h','1d'], symbol is a free-text regex-validated input. This is the ONLY remaining failing Must-have journey and the critical path to GOAL_ACHIEVED — recommended as the next (lean) iteration."
     },
     "J-06": {
       "id": "J-06",
       "name": "Warm-cache re-run works end-to-end",
-      "status": "already_passing",
-      "last_verified_iter": "goal-money-billions-iter-0",
-      "last_passing_iter": "goal-money-billions-iter-0",
+      "status": "passing",
+      "last_verified_iter": "goal-money-billions-iter-1",
+      "last_passing_iter": "goal-money-billions-iter-1",
       "first_seen_iter": "goal-money-billions-iter-0",
-      "last_evidence_path": "reports/qa/goal-money-billions-iter-0-evidence/UT-J-06-result.png",
-      "note": "Functional warm re-run works end-to-end (2nd identical run completed, rendered metrics/equity/trades, both runs in history). This is the FUNCTIONAL journey only — it does NOT imply the single-Parquet anti-goal is met; the warm path is currently served by per-day CSV under /tmp (see anti_goal_violations)."
+      "last_evidence_path": "reports/qa/goal-money-billions-iter-1-evidence/TC-16-02-rerun-result.png",
+      "note": "Target journey iter-1. The iter-0 caveat is now retired: the warm path is served by the single-file Parquet cache (anti-goal resolved), NOT per-day CSV under /tmp. Identical warm re-run completes byte-identically (TC-16: +12.08%/20/70%/0.91 across 3 runs with distinct run_ids; UT-03: -10.60%/42-trade re-run byte-identical), both runs appear in history. Determinism preserved across the Parquet round-trip (pytest test_cold_equals_warm_equivalence PASS)."
     }
   },
   "anti_goal_violations": [
@@ -63,23 +66,23 @@
       "iter": "goal-money-billions-iter-0",
       "anti_goal": "OHLCV market data MUST be cached as a single Parquet file per (symbol, timeframe) — NOT one CSV or file per calendar day — and MUST NOT be re-fetched from Binance when a covering local cache exists.",
       "severity": "minor",
-      "evidence": "PRE-EXISTING baseline state, NOT introduced this iteration (verify-only, zero code changes). apps/backend/data/loader.py:50-63 — cache_dir=os.getenv('MARKET_DATA_CACHE_DIR','/tmp'), path={cache_dir}/{symbol}/{tf}/{YYYY-MM-DD}.csv; _save_to_csv -> df.to_csv; load() loops day-by-day; clear_cache() globs *.csv. Observed live: /tmp/market_data holds ~29,182 per-day .csv files (366 for BTC_USDT/1h/2023 alone), ZERO .parquet files anywhere in repo.",
-      "resolved": false
+      "evidence": "RESOLVED in goal-money-billions-iter-1. apps/backend/data/loader.py rewritten: single file {cache}/{safe_symbol}/{timeframe}.parquet; per-day helpers (_get_daily_cache_path/_load_from_csv/_save_to_csv) + day-by-day loop removed; covering-cache returns filtered slice with zero Binance calls (only missing leading/trailing sub-range fetched & merged); atomic tempfile.mkstemp + os.replace; clear_cache() now globs *.parquet. Verified: git diff, pytest TC-01 (calls==[] on warm load), TC-03 (1 parquet / 0 csv), TC-04 (gap-only fetch); on-disk /tmp/market_data/BTC_USDT/1h.parquet + 5m.parquet, zero new .csv 2026-05-18. Code default moved off /tmp to <repo>/.data/market_data.",
+      "resolved": true
     },
     {
       "iter": "goal-money-billions-iter-0",
       "anti_goal": "BACKTEST_STORE_DIR (session/run history) MUST NOT default to a volatile /tmp path; session and run history MUST survive a process restart.",
       "severity": "minor",
-      "evidence": "PRE-EXISTING baseline state, NOT introduced this iteration. apps/backend/backend/session_store.py:26 — BASE_DIR=Path(os.environ.get('BACKTEST_STORE_DIR','/tmp/backtests')). Code default is volatile /tmp. RUNTIME is durable only because apps/backend/.env overrides it to <repo>/.data/backtests (boot log confirms 'Session store initialized at .../.data/backtests'; dir holds prior live/+archive/ runs). Anti-goal targets the default, which still contradicts the text. (Secondary: backend/directions_cache.py:23 DIRECTIONS_CACHE_DIR default /tmp/initial_directions — directions is a nice-to-have, not pinned by the anti-goal.)",
-      "resolved": false
+      "evidence": "RESOLVED in goal-money-billions-iter-1. apps/backend/backend/session_store.py: _DEFAULT_STORE_DIR = Path(__file__).resolve().parents[3] / '.data' / 'backtests'; BASE_DIR = Path(os.environ.get('BACKTEST_STORE_DIR') or _DEFAULT_STORE_DIR). Default is absolute, not under /tmp, and (auditor-verified independently via git rev-parse, NOT the test's own parents[3]) resolves to <repo>/.data/backtests — the same directory holding the 18 existing live sessions, so none are orphaned. pytest TC-08 (default absolute & not /tmp with env unset) + TC-09 (simulated-restart round-trip) PASS; UT-10 corroborates server-side persistence across browser refresh. Runtime .env BACKTEST_STORE_DIR already pointed durably.",
+      "resolved": true
     },
     {
-      "iter": "goal-money-billions-iter-0",
+      "iter": "goal-money-billions-iter-1",
       "anti_goal": "GET /api/sessions/{id} (the list/open path) MUST NOT eagerly parse full per-iteration result.json/rating.json payloads; iteration detail is lazy-loaded via the existing per-iteration endpoint.",
       "severity": "minor",
-      "evidence": "UNCONFIRMED SIGNAL — flagged for full-mode QA verification, NOT a definitive determination. browser-QA observed GET /api/sessions/9573c955-... returned iterationHistory[] with full per-iteration result inline (8759-pt equity_curve + 115 trades + rating). Needs code-level confirmation against apps/backend/backend/session_routes.py (open path vs per-iteration endpoint) in a full-mode iteration before being treated as a confirmed violation.",
+      "evidence": "CODE-CONFIRMED this iteration (was UNCONFIRMED SIGNAL in iter-0). apps/backend/backend/session_routes.py:142-171 get_session calls read_iteration_full per iteration, inlining result.json/rating.json into the session-open response (per iter-1 spec OUT OF SCOPE section, dev handoff, and audit §5). NOT introduced by this iteration (pre-existing baseline behavior) and explicitly OUT OF SCOPE for iter-1 — its fix is a frontend+backend session-open contract change with J-02 regression risk that warrants its own dedicated full-depth iteration. Minor severity (performance/efficiency; no secret/paid-SaaS/license/backdoor). Blocks GOAL_ACHIEVED until resolved.",
       "resolved": false
     }
   ],
-  "updated_at": "2026-05-18T00:35:26Z"
+  "updated_at": "2026-05-18T03:11:15Z"
 }

@@ -4,10 +4,10 @@ OHLCV Data Loader with Caching
 Provides a high-level interface for loading and caching OHLCV data.
 """
 
-import hashlib
-import json
+import asyncio
 import os
-from datetime import datetime, timedelta, timezone
+import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -15,6 +15,11 @@ import pandas as pd
 
 from data.binance_client import BinanceClient
 from shared.contracts import OHLCV
+
+# Durable, CWD-independent default cache dir resolved from this file's location
+# (apps/backend/data/loader.py -> parents[3] == repo root). The old default was
+# the volatile "/tmp", which violated the single-Parquet storage anti-goal.
+_DEFAULT_CACHE_DIR = Path(__file__).resolve().parents[3] / ".data" / "market_data"
 
 # Maps strategy timeframe → finer resolution timeframe used for sub-bar SL/TP accuracy.
 # The resolution TF is chosen so its typical bar range is well below any practical SL value,
@@ -44,51 +49,77 @@ class OHLCVLoader:
         Initialize OHLCV loader.
 
         Args:
-            cache_dir: Directory for cached data files (defaults to MARKET_DATA_CACHE_DIR or /tmp)
+            cache_dir: Directory for cached data files (defaults to
+                MARKET_DATA_CACHE_DIR, else a durable in-repo .data/market_data)
             use_cache: Whether to use disk caching
         """
         if not cache_dir:
-            cache_dir = os.getenv("MARKET_DATA_CACHE_DIR", "/tmp")
-            
+            cache_dir = os.getenv("MARKET_DATA_CACHE_DIR") or str(_DEFAULT_CACHE_DIR)
+
         self.cache_dir = Path(cache_dir)
         self.use_cache = use_cache
 
         if self.use_cache:
             self.cache_dir.mkdir(parents=True, exist_ok=True)
 
-    def _get_daily_cache_path(self, symbol: str, timeframe: str, date: datetime) -> Path:
-        """Get file path for a daily cache file."""
+    def _parquet_path(self, symbol: str, timeframe: str) -> Path:
+        """Single cache file per (symbol, timeframe) — no per-day fan-out."""
         safe_symbol = symbol.replace("/", "_").replace("-", "_")
-        date_str = date.strftime("%Y-%m-%d")
-        return self.cache_dir / safe_symbol / timeframe / f"{date_str}.csv"
+        return self.cache_dir / safe_symbol / f"{timeframe}.parquet"
 
-    def _load_from_csv(self, cache_path: Path) -> Optional[list[OHLCV]]:
-        """Load OHLCV data from daily CSV cache if available."""
+    def _dedupe_sort(self, data: list[OHLCV]) -> list[OHLCV]:
+        """Dedupe by timestamp (first occurrence wins), then sort ascending."""
+        seen: set = set()
+        out: list[OHLCV] = []
+        for candle in data:
+            if candle.timestamp not in seen:
+                seen.add(candle.timestamp)
+                out.append(candle)
+        out.sort(key=lambda c: c.timestamp)
+        return out
+
+    def _read_parquet_cache(self, cache_path: Path) -> list[OHLCV]:
+        """Load the cached candles, or [] if the file is missing/corrupt.
+
+        A corrupt, partial, or legacy-layout file is treated as a cache miss
+        (return []) so the caller re-fetches instead of hard-crashing.
+        """
         if not cache_path.exists():
-            return None
-
+            return []
         try:
-            df = pd.read_csv(cache_path)
-            # Ensure timestamp is parsed as UTC datetime
+            df = pd.read_parquet(cache_path)
+            # Defensive: parquet preserves dtype, but normalise to UTC so a
+            # legacy/foreign file still yields tz-aware timestamps.
             df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
-            return self._df_to_ohlcv_list(df)
+            return self._dedupe_sort(self._df_to_ohlcv_list(df))
         except Exception:
-            # If cache is corrupted or missing columns, return None to refetch
-            return None
+            return []
 
-    def _save_to_csv(self, cache_path: Path, data: list[OHLCV]) -> None:
-        """Save OHLCV data to daily CSV cache."""
+    def _write_parquet_atomic(self, cache_path: Path, data: list[OHLCV]) -> None:
+        """Atomically rewrite the single Parquet file for this (symbol, tf).
+
+        Writes to a temp file in the same directory then os.replace()s it onto
+        the final path, so a partial or concurrent write is never observable
+        (last complete writer wins; safe under overlapping resolution-TF loads
+        and the asyncio.Semaphore(1) backtest gate).
+        """
         if not data:
             return
-
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        df = self._ohlcv_list_to_df(data)
+        fd, tmp_name = tempfile.mkstemp(
+            dir=cache_path.parent,
+            prefix=f".{cache_path.stem}-",
+            suffix=".parquet.tmp",
+        )
+        os.close(fd)
+        tmp_path = Path(tmp_name)
         try:
-            cache_path.parent.mkdir(parents=True, exist_ok=True)
-            df = self._ohlcv_list_to_df(data)
-            df.to_csv(cache_path, index=False)
-        except OSError:
-            # Another concurrent backtest might be writing the exact same cache file.
-            # Safe to ignore; this process already has the fetched data in memory.
-            pass
+            df.to_parquet(tmp_path, index=False)
+            os.replace(tmp_path, cache_path)
+        except Exception:
+            tmp_path.unlink(missing_ok=True)
+            raise
 
     def _ohlcv_list_to_df(self, data: list[OHLCV]) -> pd.DataFrame:
         """Convert list of OHLCV to DataFrame."""
@@ -136,7 +167,13 @@ class OHLCVLoader:
         """
         Load OHLCV data for a symbol and date range.
 
-        Uses cached data if available, otherwise fetches from Binance API.
+        Reads the single per-(symbol, timeframe) Parquet cache when present.
+        If the cache fully covers [start_date, end_date] no Binance call is
+        made; otherwise only the missing leading/trailing sub-range(s) are
+        fetched, merged into the cached set, and the single Parquet is
+        rewritten atomically. Liquid-pair Binance history is assumed
+        contiguous (no interior gaps), so a covering [cache_min, cache_max]
+        span is treated as fully populated.
 
         Args:
             symbol: Trading pair (e.g., "BTCUSDT")
@@ -145,83 +182,86 @@ class OHLCVLoader:
             end_date: End datetime (UTC)
 
         Returns:
-            List of OHLCV dataclasses sorted by timestamp
+            List of OHLCV dataclasses sorted by timestamp. Byte-identical
+            whether served cold or warm for the same inputs.
         """
-        import asyncio
-        
-        all_data: list[OHLCV] = []
-        missing_dates_to_fetch = []
-        
-        # Determine the exact bounds (normalized to midnight UTC for daily looping)
-        current_date = start_date.replace(hour=0, minute=0, second=0, microsecond=0)
-        end_day = end_date.replace(hour=0, minute=0, second=0, microsecond=0)
-        
-        async with BinanceClient() as client:
-            while current_date <= end_day:
-                next_date = current_date + timedelta(days=1)
-                cache_path = self._get_daily_cache_path(symbol, timeframe, current_date)
-                
-                daily_data = None
-                
-                # 1. Try Cache
-                if self.use_cache:
-                    daily_data = self._load_from_csv(cache_path)
-                
-                # 2. Mark for fetching if missing, else add to result
-                if daily_data is None:
-                    # Subtract 1 ms from next_date so we strictly bound fetching up to 23:59:59.999
-                    query_end = next_date - timedelta(milliseconds=1)
-                    missing_dates_to_fetch.append((current_date, query_end, cache_path))
-                else:
-                    all_data.extend(daily_data)
-                
-                current_date = next_date
+        # use_cache=False: always fetch fresh; never read or write disk.
+        if not self.use_cache:
+            async with BinanceClient() as client:
+                fetched = await self._fetch_with_retry(
+                    client, symbol, timeframe, start_date, end_date
+                )
+            return self._postprocess(fetched, start_date, end_date)
 
-            # Fetch missing dates concurrently but limit to 10 concurrent requests
-            if missing_dates_to_fetch:
-                semaphore = asyncio.Semaphore(10)
-                
-                async def fetch_and_cache(curr_dt, q_end, c_path):
-                    async with semaphore:
-                        try:
-                            # Added a small retry loop to be robust against transient API errors
-                            for attempt in range(3):
-                                try:
-                                    data = await client.fetch_ohlcv(symbol, timeframe, curr_dt, q_end)
-                                    if self.use_cache and data is not None:
-                                        self._save_to_csv(c_path, data)
-                                    return data
-                                except Exception as inner_e:
-                                    if attempt == 2:
-                                        raise inner_e
-                                    await asyncio.sleep(1 * (attempt + 1))
-                        except Exception as e:
-                            raise RuntimeError(f"Failed to fetch data from Binance for {curr_dt}: {e}")
-                
-                tasks = [fetch_and_cache(c, q, p) for c, q, p in missing_dates_to_fetch]
-                fetch_results = await asyncio.gather(*tasks)
-                
-                for result in fetch_results:
-                    if result:
-                        all_data.extend(result)
+        cache_path = self._parquet_path(symbol, timeframe)
+        cached = self._read_parquet_cache(cache_path)
 
-        # Deduplicate and sort, just in case
-        unique_timestamps = set()
-        deduped_data = []
-        for candle in all_data:
-            if candle.timestamp not in unique_timestamps:
-                unique_timestamps.add(candle.timestamp)
-                deduped_data.append(candle)
-                
-        deduped_data.sort(key=lambda x: x.timestamp)
-        
-        # Filter strictly to the requested time window
-        filtered_data = [
-            candle for candle in deduped_data 
-            if start_date <= candle.timestamp <= end_date
-        ]
+        # Only the shortfall vs the cached span needs fetching. Re-fetching the
+        # boundary bar (inclusive sub-ranges) is harmless: it dedupes away and
+        # keeps the single accumulating file contiguous.
+        missing_ranges: list[tuple[datetime, datetime]] = []
+        if cached:
+            cache_min = cached[0].timestamp
+            cache_max = cached[-1].timestamp
+            if start_date < cache_min:
+                missing_ranges.append((start_date, cache_min))
+            if end_date > cache_max:
+                missing_ranges.append((cache_max, end_date))
+        else:
+            missing_ranges.append((start_date, end_date))
 
-        return filtered_data
+        fetched: list[OHLCV] = []
+        if missing_ranges:
+            async with BinanceClient() as client:
+                for sub_start, sub_end in missing_ranges:
+                    fetched.extend(
+                        await self._fetch_with_retry(
+                            client, symbol, timeframe, sub_start, sub_end
+                        )
+                    )
+
+        if fetched:
+            merged = self._dedupe_sort(cached + fetched)
+            self._write_parquet_atomic(cache_path, merged)
+        else:
+            merged = cached
+
+        return self._postprocess(merged, start_date, end_date)
+
+    def _postprocess(
+        self, data: list[OHLCV], start_date: datetime, end_date: datetime
+    ) -> list[OHLCV]:
+        """Dedupe -> sort ascending -> filter strictly to the window.
+
+        This is the determinism invariant: the returned list is identical
+        whether ``data`` came from a cold fetch or a warm Parquet read.
+        """
+        deduped = self._dedupe_sort(data)
+        return [c for c in deduped if start_date <= c.timestamp <= end_date]
+
+    async def _fetch_with_retry(
+        self,
+        client: BinanceClient,
+        symbol: str,
+        timeframe: str,
+        start_date: datetime,
+        end_date: datetime,
+    ) -> list[OHLCV]:
+        """Fetch one sub-range, retrying transient Binance errors (3 attempts)."""
+        last_exc: Optional[Exception] = None
+        for attempt in range(3):
+            try:
+                return await client.fetch_ohlcv(
+                    symbol, timeframe, start_date, end_date
+                )
+            except Exception as exc:
+                last_exc = exc
+                if attempt < 2:
+                    await asyncio.sleep(1 * (attempt + 1))
+        raise RuntimeError(
+            f"Failed to fetch data from Binance for "
+            f"{start_date}..{end_date}: {last_exc}"
+        )
 
     @staticmethod
     def get_resolution_timeframe(strategy_tf: str) -> Optional[str]:
@@ -299,7 +339,7 @@ class OHLCVLoader:
         """
         count = 0
         if self.cache_dir.exists():
-            for f in self.cache_dir.rglob("*.csv"):
+            for f in self.cache_dir.rglob("*.parquet"):
                 f.unlink()
                 count += 1
         return count

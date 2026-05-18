@@ -1,6 +1,8 @@
 """File-based session persistence for backtest sessions.
 
-Stores all data under BASE_DIR (default: /tmp/backtests):
+Stores all data under BASE_DIR (default: a durable in-repo <repo>/.data/backtests
+resolved from this file's location, NOT volatile /tmp; override with
+BACKTEST_STORE_DIR):
   live/{sessionId}/session.json  — name, lastAccessedAt, backtestParams, selectedIterationId
   live/{sessionId}/activity.jsonl          — one ActivityEntry per line (append-friendly)
   live/{sessionId}/iterations/{NNN}_{id}/  — one dir per iteration
@@ -23,7 +25,13 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-BASE_DIR = Path(os.environ.get("BACKTEST_STORE_DIR", "/tmp/backtests"))
+# Durable, CWD-independent default resolved from this file's location
+# (apps/backend/backend/session_store.py -> parents[3] == repo root). This is
+# the SAME path the runtime .env advertises (<repo>/.data/backtests), so the
+# default and an explicit BACKTEST_STORE_DIR point at the same on-disk store
+# and session/run history survives a process restart with no .env present.
+_DEFAULT_STORE_DIR = Path(__file__).resolve().parents[3] / ".data" / "backtests"
+BASE_DIR = Path(os.environ.get("BACKTEST_STORE_DIR") or _DEFAULT_STORE_DIR)
 
 
 # =============================================================================
