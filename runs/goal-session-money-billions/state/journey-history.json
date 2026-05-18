@@ -1,0 +1,85 @@
+{
+  "journeys": {
+    "J-01": {
+      "id": "J-01",
+      "name": "Run a backtest from natural language",
+      "status": "already_passing",
+      "last_verified_iter": "goal-money-billions-iter-0",
+      "last_passing_iter": "goal-money-billions-iter-0",
+      "first_seen_iter": "goal-money-billions-iter-0",
+      "last_evidence_path": "reports/qa/goal-money-billions-iter-0-evidence/UT-J-01-result.png"
+    },
+    "J-02": {
+      "id": "J-02",
+      "name": "Inspect and browse run history",
+      "status": "already_passing",
+      "last_verified_iter": "goal-money-billions-iter-0",
+      "last_passing_iter": "goal-money-billions-iter-0",
+      "first_seen_iter": "goal-money-billions-iter-0",
+      "last_evidence_path": "reports/qa/goal-money-billions-iter-0-evidence/UT-J-02-result.png"
+    },
+    "J-03": {
+      "id": "J-03",
+      "name": "Walk-forward validation",
+      "status": "already_passing",
+      "last_verified_iter": "goal-money-billions-iter-0",
+      "last_passing_iter": "goal-money-billions-iter-0",
+      "first_seen_iter": "goal-money-billions-iter-0",
+      "last_evidence_path": "reports/qa/goal-money-billions-iter-0-evidence/UT-J-03-result.png"
+    },
+    "J-04": {
+      "id": "J-04",
+      "name": "AI insights",
+      "status": "already_passing",
+      "last_verified_iter": "goal-money-billions-iter-0",
+      "last_passing_iter": "goal-money-billions-iter-0",
+      "first_seen_iter": "goal-money-billions-iter-0",
+      "last_evidence_path": "reports/qa/goal-money-billions-iter-0-evidence/UT-J-04-result.png",
+      "note": "Primary acceptance (>=1 ranked suggestion renders) verified — 10 ranked suggestion chips + summary. Sub-clause 'suggestions are OOS-aware when walk-forward data exists' NOT separately verified (insights were generated before the J-03 walk-forward run). A Mode:next iteration should confirm post-WF insights regeneration is OOS-aware."
+    },
+    "J-05": {
+      "id": "J-05",
+      "name": "Reference data loads",
+      "status": "failing",
+      "last_verified_iter": "goal-money-billions-iter-0",
+      "last_passing_iter": null,
+      "first_seen_iter": "goal-money-billions-iter-0",
+      "last_evidence_path": "reports/qa/goal-money-billions-iter-0-evidence/UT-J-05-result.png",
+      "note": "Endpoints /api/symbols (26 symbols) and /api/timeframes (6) are healthy, but the frontend never calls them. apps/frontend/src/components/BacktestConfigBar.tsx: timeframe is a hardcoded literal ['1m','5m','15m','1h','4h','1d'] (line 61); symbol is a free-text input with regex validation (lines 43-54). Failure mode = UI does not consume working endpoints (frontend wiring), NOT broken endpoints."
+    },
+    "J-06": {
+      "id": "J-06",
+      "name": "Warm-cache re-run works end-to-end",
+      "status": "already_passing",
+      "last_verified_iter": "goal-money-billions-iter-0",
+      "last_passing_iter": "goal-money-billions-iter-0",
+      "first_seen_iter": "goal-money-billions-iter-0",
+      "last_evidence_path": "reports/qa/goal-money-billions-iter-0-evidence/UT-J-06-result.png",
+      "note": "Functional warm re-run works end-to-end (2nd identical run completed, rendered metrics/equity/trades, both runs in history). This is the FUNCTIONAL journey only — it does NOT imply the single-Parquet anti-goal is met; the warm path is currently served by per-day CSV under /tmp (see anti_goal_violations)."
+    }
+  },
+  "anti_goal_violations": [
+    {
+      "iter": "goal-money-billions-iter-0",
+      "anti_goal": "OHLCV market data MUST be cached as a single Parquet file per (symbol, timeframe) — NOT one CSV or file per calendar day — and MUST NOT be re-fetched from Binance when a covering local cache exists.",
+      "severity": "minor",
+      "evidence": "PRE-EXISTING baseline state, NOT introduced this iteration (verify-only, zero code changes). apps/backend/data/loader.py:50-63 — cache_dir=os.getenv('MARKET_DATA_CACHE_DIR','/tmp'), path={cache_dir}/{symbol}/{tf}/{YYYY-MM-DD}.csv; _save_to_csv -> df.to_csv; load() loops day-by-day; clear_cache() globs *.csv. Observed live: /tmp/market_data holds ~29,182 per-day .csv files (366 for BTC_USDT/1h/2023 alone), ZERO .parquet files anywhere in repo.",
+      "resolved": false
+    },
+    {
+      "iter": "goal-money-billions-iter-0",
+      "anti_goal": "BACKTEST_STORE_DIR (session/run history) MUST NOT default to a volatile /tmp path; session and run history MUST survive a process restart.",
+      "severity": "minor",
+      "evidence": "PRE-EXISTING baseline state, NOT introduced this iteration. apps/backend/backend/session_store.py:26 — BASE_DIR=Path(os.environ.get('BACKTEST_STORE_DIR','/tmp/backtests')). Code default is volatile /tmp. RUNTIME is durable only because apps/backend/.env overrides it to <repo>/.data/backtests (boot log confirms 'Session store initialized at .../.data/backtests'; dir holds prior live/+archive/ runs). Anti-goal targets the default, which still contradicts the text. (Secondary: backend/directions_cache.py:23 DIRECTIONS_CACHE_DIR default /tmp/initial_directions — directions is a nice-to-have, not pinned by the anti-goal.)",
+      "resolved": false
+    },
+    {
+      "iter": "goal-money-billions-iter-0",
+      "anti_goal": "GET /api/sessions/{id} (the list/open path) MUST NOT eagerly parse full per-iteration result.json/rating.json payloads; iteration detail is lazy-loaded via the existing per-iteration endpoint.",
+      "severity": "minor",
+      "evidence": "UNCONFIRMED SIGNAL — flagged for full-mode QA verification, NOT a definitive determination. browser-QA observed GET /api/sessions/9573c955-... returned iterationHistory[] with full per-iteration result inline (8759-pt equity_curve + 115 trades + rating). Needs code-level confirmation against apps/backend/backend/session_routes.py (open path vs per-iteration endpoint) in a full-mode iteration before being treated as a confirmed violation.",
+      "resolved": false
+    }
+  ],
+  "updated_at": "2026-05-18T00:35:26Z"
+}
