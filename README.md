@@ -5,11 +5,11 @@ A reusable framework for running phased software development with Claude AI agen
 ## What This Is
 
 A collection of:
-- **13 Claude agent definitions** covering the full dev lifecycle, UI visibility, and per-iteration summary
-- **16 automation shell scripts** orchestrating an 11-step pipeline
+- **14 Claude agent definitions** covering the full dev lifecycle, UI visibility, per-iteration summary, and an auto-recorded product demo
+- **18 automation shell scripts** orchestrating an 11-step pipeline plus an on-demand demo viewer
 - **5 security hooks** guarding against supply-chain attacks, dangerous commands, and vague artifacts
 - **9 skills** providing reusable methodologies for UI analysis, test design, and doc updates
-- **16 report templates** for consistent handoffs across all agents
+- **18 report templates** for consistent handoffs across all agents
 - **A modular CLAUDE.md system** (core rules, workflow, project config, anti-patterns, architecture docs)
 
 The chain has checkpoint/resume, quota-exhaustion auto-retry, and a verdict-gated pipeline where each stage must pass before the next runs.
@@ -108,6 +108,9 @@ Phase spec (docs/phases/<phase>.md)
  6. browser-qa-agent   --> ui-test-results                       [frontend only]
     |
     v
+ 6.5 demo-narrator      --> demo-script + demo-results + screenshots [frontend only, showcase]
+    |
+    v
  7. qa (validate)      --> qa-report                    (loop: max 3 attempts)
     |
     v
@@ -126,7 +129,9 @@ Phase spec (docs/phases/<phase>.md)
 11. release-manager    --> summary.json + branch + commit + PR
 ```
 
-Steps 5, 6, and 8 are skipped for backend-only phases (`Frontend Present: no`).
+Steps 5, 6, 6.5, and 8 are skipped for backend-only phases (`Frontend Present: no`).
+
+Step 6.5 (the demo) is **showcase, not gate** — a failed step is a soft note, never a hard pipeline fail. It re-uses the app already booted by browser QA in the same window (idempotent `ensure_services_running`), so no second app boot.
 
 ## Iteration Summary + HTML Report
 
@@ -149,6 +154,94 @@ bash scripts/automation/render-summary.sh <phase-id>                  # rebuild 
 bash scripts/automation/render-summary.sh <phase-id> --no-resummarize # re-render HTML only (no API tokens)
 bash scripts/automation/render-summary.sh --session-index <sid>       # re-render goal-mode session index
 ```
+
+## Non-Technical Summary & Live Demo
+
+The framework writes a layered view of every iteration so that **anyone — not just developers — can understand what was built and decide what's next.** Three things happen, automatically, on every iteration:
+
+1. **Plain-language layer in the iteration summary.** The iteration-summary HTML (the page at `reports/phase-<phase>-summary.html`) now *leads* with a `## In plain words` block: *What you can do now / What changed this time / What's next*. No jargon, no file names, no journey IDs. The technical sections (Direction, What was done, Quick verify, Artifacts) are kept exactly as before — they just sit below, **collapsed by default**, for when a developer wants to drill down.
+
+2. **An auto-recorded narrated demo (Step 6.5).** Right after browser QA — in the same app-up window — a new `demo-narrator` agent walks the **whole working product so far** in a real browser, captures one captioned screenshot per step, and assembles them into a "Watch it work" gallery on the same page. Steps that were added or visibly changed this iteration are flagged `[NEW]`. Showcase, not QA — a failed step is a soft note in `demo-results.md`, never a hard pipeline fail.
+
+3. **A continuously-updated "Project story so far" + GOAL_ACHIEVED wrap** (goal mode only). The `iteration-summarizer` agent also maintains `runs/goal-session-<sid>/state/project-story.md` — one flowing plain-language narrative of how the product grew, rewritten each iteration so it reads end-to-end. The session index HTML (`reports/goal-session-<sid>-index.html`) leads with this story plus the latest demo gallery. When `goal-evaluator` finally returns `GOAL_ACHIEVED`, the framework emits a one-time polished `goal-session-<sid>-delivered.html` — a celebratory "what we delivered" page with the final walkthrough embedded, linked from a banner on the session index.
+
+### Commands a non-technical owner can run
+
+```bash
+# Open the most recent walkthrough in your browser
+./scripts/automation/demo.sh --latest
+
+# Open a specific iteration's gallery (auto-detects phase vs. session id)
+./scripts/automation/demo.sh phase-1
+./scripts/automation/demo.sh goal-money-iter-3
+./scripts/automation/demo.sh money-first                # session-level index
+
+# Open the GOAL_ACHIEVED "delivered" wrap for a session
+./scripts/automation/demo.sh money-first --delivered
+
+# Live walkthrough — the agent drives a visible Chrome step-by-step
+# while you watch and narrates each action to the terminal
+./scripts/automation/demo.sh phase-1 --live
+
+# Re-record the gallery on demand (boots the app if not running)
+./scripts/automation/demo-phase.sh phase-1              # record mode (default)
+./scripts/automation/demo-phase.sh phase-1 --live       # alias for `demo.sh phase-1 --live`
+```
+
+### Outputs produced
+
+| Artifact | Where | Audience |
+|----------|-------|----------|
+| Plain-language section + Watch-it-work gallery + technical accordions | `reports/phase-<phase>-summary.html` | Everyone |
+| Narrated demo script (record mode) | `reports/phase-<phase>-demo-script.md` | Reviewable text source for the gallery |
+| Demo results + verdict (`RECORDED` / `RECORDED_WITH_NOTES` / `SKIPPED` / `NOT_YET`) | `reports/phase-<phase>-demo-results.md` | Renderer + audit trail |
+| Captioned screenshots | `reports/demo/<phase>/step-NN.png` | Embedded into the HTML |
+| Cumulative "Project story so far" (goal mode) | `runs/goal-session-<sid>/state/project-story.md` | Rendered into the session index |
+| Session index (story + latest gallery + matrix + per-iter cards) | `reports/goal-session-<sid>-index.html` | Everyone |
+| One-time delivered wrap (MD + HTML) | `reports/goal-session-<sid>-delivered.{md,html}` | Everyone, on `GOAL_ACHIEVED` |
+
+For more, see [`docs/goal-mode-quickstart.md`](docs/goal-mode-quickstart.md), [`runs/SCHEMA.md`](runs/SCHEMA.md) (artifact registry), and [`.claude/architecture/artifacts.md`](.claude/architecture/artifacts.md) (producer/consumer matrix).
+
+Screenshots of the rendered HTML appear in this section after your first iteration runs end-to-end — the artifacts are real, not mocked.
+
+## Faster Iterations
+
+Two always-on improvements and one opt-in flag shorten every iteration:
+
+- **Always on — Tier 1 prompt polish.** Per-agent prompts no longer re-read `CLAUDE.md` (it's auto-loaded into the system prompt) and the duplicated "Token and Questioning Policy" boilerplate that paraphrased `.claude/core.md` has been removed from every agent body. Each call is smaller and the static prefix is more cache-friendly. **Behavior is unchanged** — same artifacts, same verdicts.
+- **Always on — per-agent `--effort` overrides.** Reasoning-heavy agents (`developer`, `reviewer`, `auditor`, `orchestrator`, `goal-decomposer`, `goal-evaluator`, `browser-qa-agent`, `demo-narrator`) stay at `--effort max`. Structured / mechanical agents (`release-manager`, `qa`, `ui-test-designer`, `ui-impact-analyst`, `phase-closure-auditor`) drop to `--effort medium` for shorter responses without losing what they need to do their job. Set `CHAIN_DISABLE_EFFORT_OVERRIDE=true` to restore `--effort max` for every agent.
+- **Opt-in — `--fast` flag.** After Step 3 finishes, the safe post-dev pairs run **in parallel** with shared services:
+
+```
+                        (Step 3: dev + review)
+                                │
+                                ▼
+                  ┌─────────────── shared app boot ──────────────┐
+                  │                                              │
+  ┌─ Branch A (UI chain, sequential) ─┐    ┌─ Branch B (QA) ─┐
+  │  ui-impact   →  ui-test-design    │    │  qa-validate    │
+  │     →  browser-qa  →  demo        │    │                 │
+  └──────────────┬───────────────────┘    └──────┬──────────┘
+                 │                               │
+                 └────────── wait both ──────────┘
+                                │
+                                ▼
+                    Step 8: ux-regression   →   close + finalize
+```
+
+The fanout writes a single `post_dev_parallel_complete` checkpoint after both branches succeed. If Branch B's QA verdict fails, the existing sequential Step 7 retry loop still runs (dev → review → qa, up to 3 attempts) — so the self-heal path is preserved. If either branch is interrupted by signal or hits quota, the parent propagates the same exit code and the next resume re-runs the fanout from scratch.
+
+Expected wall-clock reduction with `--fast`: **~30–50% for full phase iterations**, **~15–25% for lean goal-mode iterations** (lean has nothing to parallelise; only Tier 1 polish + `--effort` drops apply).
+
+Backward compatibility: **default behavior is unchanged.** Without `--fast` the pipeline runs exactly as today, with the same artifacts and the same checkpoint labels (the new label only appears when `--fast` is used). All eval-suite tests stay green.
+
+```bash
+./scripts/automation/run-phase.sh phase-1 --fast              # phase mode
+./scripts/automation/run-goal.sh --session-id my-app --fast   # goal mode (full iters get parallel; lean iters log no-op)
+CHAIN_DISABLE_EFFORT_OVERRIDE=true ./scripts/automation/run-phase.sh phase-1   # escape hatch: restore --effort max
+```
+
+Implementation notes for advanced users: the parallel runner is in [`scripts/automation/lib/parallel.sh`](scripts/automation/lib/parallel.sh); shared services are coordinated via the `CHAIN_SHARED_SERVICES=true` env contract that `browser-qa-phase.sh`, `qa-phase.sh`, and `demo-phase.sh` honor; per-agent effort is resolved by `agent_permissions.py effort <agent>`. Telemetry (`CHAIN_TELEMETRY_TOKENS=true`, default) records per-agent input/output/cache/cost so you can quantify the gain on your own workloads.
 
 ## Goal Mode Pipeline
 
@@ -201,7 +294,8 @@ Iteration name `goal-<sid>-iter-<N>` is used as the "phase name" so existing scr
 | `browser-qa-agent` | standard | 6 | Executes browser tests via Chrome MCP |
 | `ux-regression-reviewer` | standard | 8 | Checks UI evolved with capabilities, flags regressions |
 | `phase-closure-auditor` | standard | 10 | Final gate: validates all artifacts exist and are non-vague |
-| `iteration-summarizer` | light | 10.5 | Synthesizes the per-iteration summary MD (what was done / left / direction) that drives the HTML report |
+| `iteration-summarizer` | light | 10.5 | Synthesizes the per-iteration summary MD (what was done / left / direction) that drives the HTML report; also maintains the cumulative `project-story.md` and writes the one-time `delivered.md` wrap on `GOAL_ACHIEVED` |
+| `demo-narrator` | standard | 6.5 | Drives the running app via Chrome MCP and captures a narrated, captioned "Watch it work" gallery (record mode) or walks a visible Chrome live (live mode). Showcase, not gate. |
 | `goal-decomposer` | strong | (goal mode) | Reads goal + state, writes next iteration spec, picks lean/full depth |
 | `goal-evaluator` | strong | (goal mode) | Skeptical done/regression/stall judgment, updates journey-history |
 
@@ -213,6 +307,7 @@ Model tiers are defined in `config/agent-models.yaml`. Change assignments there 
 # Full pipeline
 ./scripts/automation/run-phase.sh phase-1              # all 11 steps
 ./scripts/automation/run-phase.sh phase-1 --auto-release  # auto-commit + PR
+./scripts/automation/run-phase.sh phase-1 --fast       # parallel post-dev fanout (~30-50% faster)
 
 # Individual steps
 ./scripts/automation/dev-phase.sh phase-1              # implement
@@ -225,8 +320,15 @@ Model tiers are defined in `config/agent-models.yaml`. Change assignments there 
 ./scripts/automation/ui-impact-phase.sh phase-1        # analyze UI impact
 ./scripts/automation/ui-test-design-phase.sh phase-1   # create UI test plan
 ./scripts/automation/browser-qa-phase.sh phase-1       # run browser QA
+./scripts/automation/demo-phase.sh phase-1             # auto-record a narrated product demo (showcase, non-gating)
 ./scripts/automation/ux-regression-phase.sh phase-1    # check UX regression
 ./scripts/automation/phase-closure-check.sh phase-1    # final closure gate
+
+# Demo viewer (non-technical owner UX)
+./scripts/automation/demo.sh --latest                  # open most recent walkthrough
+./scripts/automation/demo.sh <id>                      # open recorded gallery (phase OR session id)
+./scripts/automation/demo.sh <id> --live               # live walkthrough — agent drives a visible Chrome
+./scripts/automation/demo.sh <sid> --delivered         # open the GOAL_ACHIEVED "delivered" wrap
 
 # Utilities
 ./scripts/automation/generate-test-plan.sh phase-1     # write test plan before dev
@@ -247,6 +349,7 @@ bash scripts/automation/render-summary.sh --session-index <sid>        # re-rend
 ./scripts/automation/run-goal.sh --session-id my-app --stall-window 5   # widen stall window
 ./scripts/automation/run-goal.sh --session-id my-app --auto-release     # release-manager runs once on GOAL_ACHIEVED
 ./scripts/automation/run-goal.sh --session-id my-app --acknowledge-regression  # continue past REGRESSION_HALT
+./scripts/automation/run-goal.sh --session-id my-app --fast             # parallel post-dev fanout for full iters; no-op for lean
 ./scripts/automation/goal-iter-lean.sh <iter-name>                      # single lean iteration (advanced)
 ```
 
@@ -275,7 +378,9 @@ bash scripts/automation/render-summary.sh --session-index <sid>        # re-rend
 | `templates/ui-test-results.md` | Browser QA results format |
 | `templates/what-to-click.md` | Operator verification guide format |
 | `templates/closure-verdict.md` | Phase closure verdict format |
-| `templates/iteration-summary.md` | Iteration summary format (drives the HTML report) |
+| `templates/iteration-summary.md` | Iteration summary format (drives the HTML report; includes the new plain-language `## In plain words` section) |
+| `templates/demo-script.md` | Per-iteration narrated demo script (Highlights + Full tour) |
+| `templates/demo-results.md` | Per-iteration demo verdict + captured-steps table |
 | `templates/project-goal.md` | Project goal document template (now includes Must-have user journeys + Anti-goals — required for goal mode, ignored by phase mode) |
 | `templates/architecture-overview.md` | Project architecture doc template |
 
@@ -315,19 +420,23 @@ With `CHAIN_TELEMETRY_TOKENS` now defaulting to true, the next phase or goal ite
 
 Analyze with: `python3 scripts/automation/lib/analyze_telemetry.py runs/<phase>/trace/trace.jsonl` — gives per-agent input/output/cache/cost breakdown. Without this baseline, everything below is guesswork.
 
-### Tier 1 polish (low-risk leftovers, skipped in 15507dc)
+### Tier 1 polish (low-risk leftovers)
 
-- [ ] Remove the duplicated "Token and Questioning Policy" footer from each agent file (`.claude/agents/*.md`). Most footers just paraphrase `core.md`. Keep agent-specific bullets (e.g., developer.md "Ask only about: schema decisions, lifecycle states…"); drop the rest.
-- [ ] Drop `CLAUDE.md` from the "Always read first" list in the 11 remaining agent files (only orchestrator, goal-decomposer, goal-evaluator are done). The script-side fix already prevents the duplicate Read in practice; this is consistency cleanup.
-- [ ] Inline only the sections each agent needs from `.claude/project-template.md` — release-manager needs the never-commit list (5 lines); developer needs most of it. Add a helper in `lib/common.sh` that emits the right slice per agent.
+- [x] **Shipped** — Remove the duplicated "Token and Questioning Policy" footer from each agent file (`.claude/agents/*.md`). Agent-specific bullets are kept (e.g., developer.md "Ask only about: schema decisions, lifecycle states…"); generic paraphrasing of `core.md` is gone. See `agents/<name>/body.md`.
+- [x] **Shipped** — Drop `CLAUDE.md` from the "Always read first" list in the 11 remaining agent files. CLAUDE.md is auto-loaded into the system prompt; each agent now has a friendly one-line reassurance instead of re-reading the file.
+- [ ] Inline only the sections each agent needs from `.claude/project-template.md` — release-manager needs the never-commit list (5 lines); developer needs most of it. Add a helper in `lib/common.sh` that emits the right slice per agent. (Deferred until measured token win is meaningful.)
 
 ### Tier 2 (needs baseline data first)
 
-- [ ] **Per-agent `--effort` overrides.** `--effort max` is currently passed unconditionally in `lib/quota-retry.sh:398`. Keep it for developer, auditor, goal-decomposer, goal-evaluator. Drop for release-manager (Haiku, git ops), ui-impact-analyst, phase-closure-auditor, ui-test-designer, qa-validate. Wire through `lib/agent_permissions.py` (already plumbed for `budget` and `disallowed`). A/B against telemetry baseline.
+- [x] **Shipped — Per-agent `--effort` overrides.** Resolved per agent via `lib/agent_permissions.py effort <agent>`. `developer`, `reviewer`, `auditor`, `orchestrator`, `goal-decomposer`, `goal-evaluator`, `browser-qa-agent`, and `demo-narrator` stay at `--effort max`. `release-manager`, `qa`, `ui-test-designer`, `phase-closure-auditor`, and `ui-impact-analyst` drop to `--effort medium`. Escape hatch: `CHAIN_DISABLE_EFFORT_OVERRIDE=true`.
 - [ ] **Move orchestrator from Opus → Sonnet** (`config/agent-models.yaml`). Plan-writing is structured-output work. A/B against 2–3 historical phases — revert if plan quality drops.
 - [ ] **Move goal-decomposer from Opus → Sonnet.** Same rationale as orchestrator. Keep goal-evaluator on Opus (skeptical adversarial judgment).
 - [ ] **Skip `generate-test-plan.sh` (Step 2/11) when the spec already lists test scenarios.** Need a clear heuristic for "spec has tests" — don't skip silently.
 - [ ] **Cap audit-failure full-rerun.** `run-phase.sh:649-679` re-runs dev + review + QA on audit fail. If telemetry shows that path firing often, switch to fix-only mode.
+
+### Pipeline parallelism (shipped)
+
+- [x] **Parallel post-dev fanout (`--fast`).** Branch A (ui-impact → ui-test-design → browser-qa → demo) runs in parallel with Branch B (qa-validate), with shared services. See the [Faster Iterations](#faster-iterations) section. Opt-in; default behavior unchanged.
 
 ### Tier 3 (don't touch unless data forces)
 
