@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<title>Goal session money-billions</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  margin: 0; padding: 0; color: #1f2328; background: #f6f8fa; line-height: 1.5;
+}
+.container { max-width: 880px; margin: 0 auto; padding: 24px 16px 80px; }
+.hero {
+  background: white; border: 1px solid #d0d7de; border-radius: 8px;
+  padding: 28px; margin-bottom: 16px; text-align: center;
+}
+.hero.pass { border-top: 6px solid #1a7f37; }
+.hero.fail { border-top: 6px solid #cf222e; }
+.hero.inprogress { border-top: 6px solid #d4a72c; }
+.hero h1 { margin: 0 0 6px 0; font-size: 1.6rem; }
+.hero h2 { margin: 0 0 14px 0; font-size: 1rem; color: #57606a; font-weight: 500; }
+.badge-row { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin-bottom: 10px; }
+.badge {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 6px 14px; border-radius: 999px; font-weight: 600; font-size: 0.95rem;
+}
+.badge.pass { background: #dafbe1; color: #1a7f37; }
+.badge.fail { background: #ffebe9; color: #cf222e; }
+.badge.inprogress { background: #fff8c5; color: #9a6700; }
+.signal-badge { padding: 6px 14px; border-radius: 999px; font-weight: 600; font-size: 0.9rem; }
+.signal-badge.improving { background: #dafbe1; color: #1a7f37; }
+.signal-badge.holding { background: #ddf4ff; color: #0969da; }
+.signal-badge.stalling { background: #fff8c5; color: #9a6700; }
+.signal-badge.regressing { background: #ffebe9; color: #cf222e; }
+.signal-badge.na { background: #f6f8fa; color: #57606a; }
+.meta { color: #57606a; font-size: 0.875rem; margin: 10px 0 16px; }
+.journey-row {
+  display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin: 12px 0 4px;
+}
+.journey-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 10px; border-radius: 999px; font-size: 0.85rem;
+  background: #f6f8fa; border: 1px solid #d0d7de;
+}
+.journey-pill.passing, .journey-pill.already_passing { background: #dafbe1; color: #1a7f37; border-color: #b4e2c0; }
+.journey-pill.failing, .journey-pill.regressed { background: #ffebe9; color: #cf222e; border-color: #f1aeb0; }
+.journey-pill.partial { background: #fff8c5; color: #9a6700; border-color: #eed888; }
+.journey-pill.unknown { background: #f6f8fa; color: #57606a; }
+.hero-image { margin-top: 18px; }
+.hero-image img { max-width: 100%; height: auto; border-radius: 6px; border: 1px solid #d0d7de; }
+details {
+  background: white; border: 1px solid #d0d7de; border-radius: 8px;
+  margin-bottom: 12px;
+}
+details > summary {
+  cursor: pointer; padding: 14px 18px; font-weight: 600; font-size: 1.05rem;
+  list-style: none; user-select: none; display: flex; align-items: center; gap: 8px;
+}
+details > summary::-webkit-details-marker { display: none; }
+details > summary::before {
+  content: '▶'; transition: transform 0.15s; font-size: 0.75rem; color: #57606a;
+}
+details[open] > summary::before { transform: rotate(90deg); }
+.accordion-body { padding: 0 18px 18px; }
+.accordion-body h3 { font-size: 0.95rem; color: #57606a; margin: 16px 0 6px; }
+.why-text { background: #f6f8fa; padding: 10px 12px; border-radius: 6px; margin: 4px 0 12px; }
+ul.bullets { margin: 6px 0 14px; padding-left: 22px; }
+ul.bullets li { margin-bottom: 4px; }
+ol.steps { padding-left: 0; list-style: none; counter-reset: step; }
+ol.steps > li {
+  counter-increment: step; padding: 12px 0 12px 44px;
+  border-top: 1px solid #eaeef2; position: relative;
+}
+ol.steps > li:first-child { border-top: none; }
+ol.steps > li::before {
+  content: counter(step); position: absolute; left: 0; top: 14px;
+  width: 30px; height: 30px; border-radius: 50%;
+  background: #0969da; color: white; display: flex;
+  align-items: center; justify-content: center; font-size: 0.85rem; font-weight: 600;
+}
+.step-shot { margin-top: 10px; }
+.step-shot img { max-width: 100%; height: auto; border-radius: 6px; border: 1px solid #d0d7de; }
+.next-step-box {
+  background: #ddf4ff; padding: 12px 16px; border-radius: 6px;
+  border-left: 4px solid #0969da; margin: 12px 0;
+}
+.drill-table { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
+.drill-table th, .drill-table td {
+  text-align: left; padding: 8px 6px; border-bottom: 1px solid #eaeef2;
+}
+.drill-table th { background: #f6f8fa; }
+.verdict-cell.PASS, .verdict-cell.CLOSURE-PASS, .verdict-cell.GOAL_ACHIEVED { color: #1a7f37; font-weight: 600; }
+.verdict-cell.FAIL, .verdict-cell.CLOSURE-FAIL, .verdict-cell.REGRESSION { color: #cf222e; font-weight: 600; }
+.verdict-cell.CONTINUE, .verdict-cell.ESCALATE, .verdict-cell.STALLED { color: #9a6700; font-weight: 600; }
+.verdict-cell.SKIPPED, .verdict-cell.UNKNOWN, .verdict-cell.IN-PROGRESS { color: #57606a; }
+.footer-note { text-align: center; color: #6e7781; font-size: 0.8rem; margin-top: 24px; }
+.iter-card {
+  background: white; border: 1px solid #d0d7de; border-radius: 8px;
+  padding: 16px 18px; margin-bottom: 12px; display: flex; align-items: center; gap: 14px;
+}
+.iter-card .left { flex-shrink: 0; }
+.iter-card .body { flex: 1 1 auto; }
+.iter-card .body .title { font-weight: 600; }
+.iter-card .body .sub { color: #57606a; font-size: 0.88rem; margin-top: 2px; }
+.iter-card a.open { color: #0969da; text-decoration: none; font-weight: 500; }
+.iter-card a.open:hover { text-decoration: underline; }
+.matrix { width: 100%; border-collapse: collapse; margin: 12px 0 22px; font-size: 0.88rem; }
+.matrix th, .matrix td { padding: 6px 8px; border: 1px solid #d0d7de; text-align: center; }
+.matrix th:first-child, .matrix td:first-child { text-align: left; }
+.matrix .cell-passing, .matrix .cell-already_passing { background: #dafbe1; color: #1a7f37; }
+.matrix .cell-failing, .matrix .cell-regressed { background: #ffebe9; color: #cf222e; }
+.matrix .cell-partial { background: #fff8c5; color: #9a6700; }
+.matrix .cell-unknown { background: #f6f8fa; color: #57606a; }
+.no-summary {
+  background: #fff8c5; border: 1px solid #eed888; padding: 14px 18px;
+  border-radius: 8px; color: #9a6700; margin-bottom: 14px;
+}
+</style>
+</head><body><div class='container'>
+<section class='hero pass'><div class='badge-row'><div class='badge pass'><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+<circle cx="12" cy="12" r="11" fill="#1a7f37"/>
+<path d="M7 12.5l3 3 7-7" stroke="white" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+</svg><span>GOAL_ACHIEVED</span></div></div><h1>Project Goal</h1><h2>Session <code>money-billions</code></h2><div class='meta'>4 iterations · 6/6 journeys passing · 507 min wall time</div></section>
+<h2 style='font-size:1rem;color:#57606a;margin:14px 0 6px'>Journey progress</h2><table class='matrix'><thead><tr><th>Journey</th><th title='CONTINUE'>iter-0</th><th title='CONTINUE'>iter-1</th><th title='CONTINUE'>iter-2</th><th title='GOAL_ACHIEVED'>iter-3</th><th>Latest</th></tr></thead><tbody><tr><td title='Run a backtest from natural language'>J-01</td><td class='cell-unknown'>·</td><td class='cell-unknown'>·</td><td class='cell-unknown'>·</td><td class='cell-passing'>✓</td><td class='cell-passing'>passing</td></tr><tr><td title='Inspect and browse run history'>J-02</td><td class='cell-unknown'>·</td><td class='cell-unknown'>·</td><td class='cell-unknown'>·</td><td class='cell-passing'>✓</td><td class='cell-passing'>passing</td></tr><tr><td title='Walk-forward validation'>J-03</td><td class='cell-unknown'>·</td><td class='cell-unknown'>·</td><td class='cell-unknown'>·</td><td class='cell-passing'>✓</td><td class='cell-passing'>passing</td></tr><tr><td title='AI insights'>J-04</td><td class='cell-unknown'>·</td><td class='cell-unknown'>·</td><td class='cell-unknown'>·</td><td class='cell-passing'>✓</td><td class='cell-passing'>passing</td></tr><tr><td title='Reference data loads'>J-05</td><td class='cell-unknown'>·</td><td class='cell-unknown'>·</td><td class='cell-unknown'>·</td><td class='cell-passing'>✓</td><td class='cell-passing'>passing</td></tr><tr><td title='Warm-cache re-run works end-to-end'>J-06</td><td class='cell-unknown'>·</td><td class='cell-unknown'>·</td><td class='cell-unknown'>·</td><td class='cell-passing'>✓</td><td class='cell-passing'>passing</td></tr></tbody></table>
+<h2 style='font-size:1rem;color:#57606a;margin:14px 0 6px'>Iterations</h2><div class='iter-card'><div class='left'><div class='badge inprogress'><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+<circle cx="12" cy="12" r="11" fill="#d4a72c"/>
+<path d="M12 6v6l4 2.5" stroke="white" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+</svg><span>CONTINUE</span></div></div><div class='body'><div class='title'>Iteration 0 — Baseline (verify-only, zero code changes): 5/6 Must-have journeys already pass; J-05 fails.</div><div class='sub'>2026-05-18 · goal-lean · <code>goal-money-billions-iter-0</code></div></div><a class='open' href='phase-goal-money-billions-iter-0-summary.html'>Open summary →</a></div><div class='iter-card'><div class='left'><div class='badge inprogress'><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+<circle cx="12" cy="12" r="11" fill="#d4a72c"/>
+<path d="M12 6v6l4 2.5" stroke="white" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+</svg><span>CONTINUE</span></div></div><div class='body'><div class='title'>Iteration 1 — Single-file Parquet OHLCV cache + durable-by-default session store; both pinned storage anti-goals resolved.</div><div class='sub'>2026-05-18 · goal-full · <code>goal-money-billions-iter-1</code></div></div><a class='open' href='phase-goal-money-billions-iter-1-summary.html'>Open summary →</a></div><div class='iter-card'><div class='left'><div class='badge inprogress'><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+<circle cx="12" cy="12" r="11" fill="#d4a72c"/>
+<path d="M12 6v6l4 2.5" stroke="white" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+</svg><span>CONTINUE</span></div></div><div class='body'><div class='title'>Iteration 2 — Wired the Symbol and Timeframe parameter controls to the live backend reference endpoints (J-05).</div><div class='sub'>2026-05-18 · goal-lean · <code>goal-money-billions-iter-2</code></div></div><a class='open' href='phase-goal-money-billions-iter-2-summary.html'>Open summary →</a></div><div class='iter-card'><div class='left'><div class='badge pass'><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+<circle cx="12" cy="12" r="11" fill="#1a7f37"/>
+<path d="M7 12.5l3 3 7-7" stroke="white" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+</svg><span>GOAL_ACHIEVED</span></div></div><div class='body'><div class='title'>Iteration 3 — Faster session open — server no longer parses every run&#x27;s full payload on open; last anti-goal resolved, goal achieved</div><div class='sub'>2026-05-18 · goal-full · <code>goal-money-billions-iter-3</code></div></div><a class='open' href='phase-goal-money-billions-iter-3-summary.html'>Open summary →</a></div>
+<details><summary>Latest evaluator note</summary><div class='accordion-body'><pre style='white-space:pre-wrap;font-size:0.85rem;color:#3b4252'>## Iteration 3 — goal-money-billions-iter-3<br><br>**Date:** 2026-05-18T08:03:08Z<br>**Verdict:** GOAL_ACHIEVED<br>**Depth dispatched:** full<br>**Depth recommendation (next):** lean (no further feature work — release/finalization only; loop halts)<br>**Journey deltas:**<br>- Newly passing: none new (all six already passing) — but **J-04 soft gap CLOSED**: the OOS-aware sub-clause, open &amp; unasserted since iter-0 (invalid duplicate screenshot iter-2), now has dedicated, byte-distinct AND structurally-distinct, evaluator-inspected evidence<br>- Re-verified passing this iter: J-01, J-02 (primary regression watch), J-03, J-04, J-05, J-06<br>- Newly failing: none<br>- Regressed: none (J-02 — the highest regression risk of the session-open contract change — strongly passes: lazy detail on selection, no A→B→A stale bleed, reopen auto-loads, re-selection cached/no write-amplification)<br>- Anti-goal violations: none introduced. **The last open anti-goal (#10 GET /api/sessions/{id} eager-load) is now RESOLVED**, code-and-test proven independently of J-02. All 10 anti-goals resolved; 0 violated.<br><br>**Reasoning:** Both binding gates were verified by the evaluator against source and pixels, not from handoffs. (1) Anti-goal #10: I read the final `session_routes.py` `get_session` (lines 155-181) — it builds the list via `read_iteration_meta` (line 164) with zero `read_iteration_full` calls (that heavy reader now only in the unchanged lazy `get_iteration`:242); 404 + envelope unchanged. The binding backend test is non-vacuou…</pre></div></details>
+<div class='footer-note'>Generated 2026-05-18 09:10</div>
+</div></body></html>

@@ -8,11 +8,15 @@
     "stall_window": 3,
     "regression_halt": true
   },
-  "status": "in_progress",
+  "status": "GOAL_ACHIEVED",
   "last_verdict": "GOAL_ACHIEVED",
   "next_depth": "lean",
   "auto_release": false,
   "push_per_iter": true,
   "push_branch": "goal/money-billions",
-  "updated_at": "2026-05-18T08:10:07.361458Z"
+  "updated_at": "2026-05-18T08:10:07.361458Z",
+  "finished_at": "2026-05-18T08:10:44.720931Z",
+  "total_iterations": 4,
+  "wall_time_seconds": 30421,
+  "quota_pause_count": 0
 }
