@@ -66,6 +66,7 @@ RESUME=false
 RESET=false
 AUTO_RELEASE=false
 ACK_REGRESSION=false
+FAST_MODE=false
 # Per-iter push is ON by default for new sessions. Pass --no-push-per-iter to
 # opt out. On resume, the persisted session.json value wins unless overridden
 # by an explicit CLI flag (--push-per-iter or --no-push-per-iter).
@@ -91,6 +92,7 @@ while [[ $# -gt 0 ]]; do
     --push-per-iter)           PUSH_PER_ITER=true;  PUSH_FLAG_USER="yes"; shift ;;
     --no-push-per-iter)        PUSH_PER_ITER=false; PUSH_FLAG_USER="no";  shift ;;
     --push-branch)             PUSH_BRANCH="$2"; shift 2 ;;
+    --fast)                    FAST_MODE=true; shift ;;
     *) echo "Unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -150,11 +152,17 @@ _run_iteration_summarizer() {
   local eval_log_inline=""
   eval_log_inline=$(_tail_or_placeholder "$EVALUATOR_LOG" 300 "(none yet)")
 
+  local project_story_md="$REPO_ROOT/runs/goal-session-${SESSION_ID}/state/project-story.md"
+  mkdir -p "$REPO_ROOT/runs/goal-session-${SESSION_ID}/state"
+
   cd "$REPO_ROOT"
+  export CHAIN_CURRENT_AGENT=iteration-summarizer
   claude_with_quota_retry -p "You are the iteration-summarizer agent.
 
+mode: normal
 Phase id: $iter_name
-Output path: $summary_md
+Output path (iteration summary): $summary_md
+Output path (project story, GOAL MODE ONLY): $project_story_md
 Agent instructions: .claude/agents/iteration-summarizer.md  <-- read this first
 Template: templates/iteration-summary.md  <-- exact section structure your output must follow
 (CLAUDE.md is already in your system prompt -- do not Read it again.)
@@ -172,6 +180,11 @@ ${eval_log_inline}
 
 Write the iteration summary to: $summary_md
 
+This is a GOAL-MODE iteration. After writing the iteration summary, also
+maintain $project_story_md per the 'Cumulative project story' section of your
+agent instructions. Read the existing file if present, then rewrite it as one
+flowing plain-language narrative that ends with this iteration.
+
 Follow the section structure in templates/iteration-summary.md EXACTLY -- the
 HTML renderer keys off the section headings. The verdict line must match the
 form '**Verdict:** VALUE' where VALUE is one of: GOAL_ACHIEVED, CONTINUE,
@@ -179,6 +192,58 @@ ESCALATE, REGRESSION, STALLED, PASS, FAIL, IN-PROGRESS.
 
 When finished, STOP." \
     || echo "[run-goal] Warning: iteration-summarizer call failed (non-blocking)"
+}
+
+# Generate the one-time "delivered" wrap when goal-evaluator returns
+# GOAL_ACHIEVED. Writes a polished non-technical summary to
+# reports/goal-session-<sid>-delivered.md and renders the matching HTML. Both
+# steps are non-blocking — failures only log so the GOAL_ACHIEVED path still
+# completes its auto-release / exit.
+_render_final_delivered() {
+  local sid="$1"
+  local delivered_md="$REPO_ROOT/reports/goal-session-${sid}-delivered.md"
+  local agent_file="$REPO_ROOT/.claude/agents/iteration-summarizer.md"
+  local renderer="$SCRIPT_DIR/lib/render_iteration_summary.py"
+
+  if [[ ! -f "$agent_file" ]]; then
+    echo "[run-goal] Warning: iteration-summarizer agent missing — skipping delivered wrap"
+    return 0
+  fi
+
+  mkdir -p "$REPO_ROOT/reports"
+
+  cd "$REPO_ROOT"
+  export CHAIN_CURRENT_AGENT=iteration-summarizer
+  claude_with_quota_retry -p "You are the iteration-summarizer agent.
+
+mode: delivered
+Session id: $sid
+Output path: $delivered_md
+Agent instructions: .claude/agents/iteration-summarizer.md  <-- read this first; specifically the 'Delivered wrap' section
+(CLAUDE.md is already in your system prompt -- do not Read it again.)
+
+Apply the TOKEN AND QUESTIONING POLICY from .claude/core.md strictly.
+
+This is the one-time GOAL_ACHIEVED delivered wrap. Read:
+- runs/goal-session-${sid}/state/journey-history.json (all currently passing journeys)
+- runs/goal-session-${sid}/state/project-story.md (the running narrative)
+- All reports/phase-goal-${sid}-iter-*-iteration-summary.md files (each iter's plain words)
+- docs/goal.md (goal title)
+
+Write a polished, non-technical 'what we delivered' document to:
+$delivered_md
+
+Follow the 'Delivered wrap' skeleton in your agent instructions EXACTLY. Do
+NOT also rewrite the iteration summary in this mode. Friendly, factual, no
+journey IDs, no file names.
+
+When finished, STOP." \
+    || echo "[run-goal] Warning: delivered-wrap iteration-summarizer call failed (non-blocking)"
+
+  if [[ -f "$renderer" ]]; then
+    python3 "$renderer" delivered "$sid" --repo-root="$REPO_ROOT" 2>&1 \
+      | sed 's/^/[run-goal] /' || echo "[run-goal] Warning: delivered HTML render failed (non-blocking)"
+  fi
 }
 
 # Render the per-iteration HTML summary. Non-blocking — failures only log.
@@ -739,14 +804,25 @@ Do NOT write code or implement anything. STOP after writing the spec." || _decom
 
   # 3. Dispatch
   if [[ "$DEPTH" == "full" ]]; then
-    echo "[run-goal] Dispatching FULL pipeline via run-phase.sh --no-finalize ..."
+    # Propagate --fast into the full-iteration path so the parallel post-dev
+    # fanout in run-phase.sh kicks in. Lean iterations have no parallelisable
+    # surface (dev → review → browser-qa → demo are strictly sequential), so
+    # --fast is a no-op there and we just log the fact for visibility.
+    _full_extra_args=(--no-finalize)
+    if [[ "$FAST_MODE" == "true" ]]; then
+      _full_extra_args+=(--fast)
+    fi
+    echo "[run-goal] Dispatching FULL pipeline via run-phase.sh ${_full_extra_args[*]} ..."
     if grep -q '\-\-no-finalize' "$SCRIPT_DIR/run-phase.sh"; then
-      bash "$SCRIPT_DIR/run-phase.sh" "$ITER_NAME" --no-finalize || _exec_rc=$?
+      bash "$SCRIPT_DIR/run-phase.sh" "$ITER_NAME" "${_full_extra_args[@]}" || _exec_rc=$?
     else
       echo "[run-goal] run-phase.sh does not yet support --no-finalize. Falling back to lean for safety." >&2
       bash "$SCRIPT_DIR/goal-iter-lean.sh" "$ITER_NAME" || _exec_rc=$?
     fi
   else
+    if [[ "$FAST_MODE" == "true" ]]; then
+      echo "[run-goal] --fast is a no-op for lean iterations (no parallelisable steps); Tier 1 polish + per-agent --effort overrides still apply."
+    fi
     echo "[run-goal] Dispatching LEAN pipeline via goal-iter-lean.sh ..."
     bash "$SCRIPT_DIR/goal-iter-lean.sh" "$ITER_NAME" || _exec_rc=$?
   fi
@@ -931,6 +1007,10 @@ except Exception as e:
   # 5. Halt-on-verdict
   case "$VERDICT" in
     GOAL_ACHIEVED)
+      # Render the one-time delivered wrap BEFORE write_session_summary so the
+      # session-index renderer (invoked inside write_session_summary) can find
+      # delivered.html and surface a prominent link to it. Non-blocking.
+      _render_final_delivered "$SESSION_ID"
       write_session_summary "GOAL_ACHIEVED" "$((CURRENT_ITER+1))"
       if [[ "$AUTO_RELEASE" == "true" ]]; then
         # Direct gh pr create from $PUSH_BRANCH — every iter commit is already

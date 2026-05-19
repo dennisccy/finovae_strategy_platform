@@ -67,6 +67,8 @@ Specialist subagent definitions live in `.claude/agents/`:
 | `ux-regression-reviewer` | `.claude/agents/ux-regression-reviewer.md` | Checks UI evolved with new capabilities, flags hidden/undiscoverable features |
 | `goal-decomposer` | `.claude/agents/goal-decomposer.md` | Goal mode: reads goal + state, writes next iteration spec, picks lean/full depth |
 | `goal-evaluator` | `.claude/agents/goal-evaluator.md` | Goal mode: skeptical done/regression/stall judgment, updates journey-history |
+| `iteration-summarizer` | `.claude/agents/iteration-summarizer.md` | Post-iteration synthesis: writes the plain-language + technical iteration summary and maintains the cumulative `project-story.md` in goal mode; emits the one-time `delivered.md` wrap on GOAL_ACHIEVED |
+| `demo-narrator` | `.claude/agents/demo-narrator.md` | Per-iteration product demonstrator: drives the running app via Chrome MCP, captures a captioned narrated screenshot gallery (record mode) or walks a visible Chrome live (live mode). Showcase, not QA — never halts the pipeline |
 
 ---
 
@@ -94,10 +96,12 @@ Reusable instruction files that agents read during their workflow. Located in `.
 # Run a full phase end-to-end (phase mode)
 ./scripts/automation/run-phase.sh phase-1
 ./scripts/automation/run-phase.sh phase-1 --cli codex      # use Codex instead of Claude
+./scripts/automation/run-phase.sh phase-1 --fast           # parallel post-dev fanout (~30-50% faster)
 
 # Run goal mode (continuous, autonomous, until goal achieved or hard halt)
 ./scripts/automation/run-goal.sh --session-id my-app
 ./scripts/automation/run-goal.sh --session-id my-app --cli codex
+./scripts/automation/run-goal.sh --session-id my-app --fast     # full iters use parallel fanout; lean iters are unchanged
 ./scripts/automation/run-goal.sh --resume --session-id my-app   # resume (CLI pinned in session.json)
 
 # Sync per-CLI asset trees (.claude/ and .codex/) from neutral source — runs
@@ -122,6 +126,11 @@ Reusable instruction files that agents read during their workflow. Located in `.
 ./scripts/automation/ui-impact-phase.sh phase-1      # analyze UI impact after dev
 ./scripts/automation/ui-test-design-phase.sh phase-1  # create UI test plan
 ./scripts/automation/browser-qa-phase.sh phase-1      # run browser QA
+./scripts/automation/demo-phase.sh phase-1            # auto-record a narrated product demo (showcase, non-gating)
+./scripts/automation/demo.sh phase-1                  # open the saved demo gallery for a phase or session
+./scripts/automation/demo.sh phase-1 --live           # live walkthrough — agent drives a visible Chrome
+./scripts/automation/demo.sh <sid> --delivered        # open the one-time GOAL_ACHIEVED "delivered" wrap
+./scripts/automation/demo.sh --latest                 # open the most recently rendered HTML
 ./scripts/automation/ux-regression-phase.sh phase-1   # check UX regression
 ./scripts/automation/phase-closure-check.sh phase-1   # final closure gate
 bash scripts/automation/render-summary.sh phase-1     # (re)build iteration-summary.md via summarizer agent + render HTML
