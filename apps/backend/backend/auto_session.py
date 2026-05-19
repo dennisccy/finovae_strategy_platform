@@ -41,13 +41,14 @@ import queue
 import time
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Callable, Optional
+from typing import Any, Callable, NamedTuple, Optional
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel, Field
 
 from backend import session_store
+from backend.cost_tracker import DEFAULT_MAX_CONFIGS, CostTracker
 from backend.pipeline import CancellationToken, PipelineError
 from backend.robust_objective import RobustInputs, robust_score, select_best, targets_met
 from shared.model_catalog import DEFAULT_MODEL
@@ -69,6 +70,29 @@ _COMMISSION = 0.00075
 # window for the robust objective; WF is reused from the pipeline (no fork).
 _WFV_IS_MONTHS = 2
 _WFV_OOS_MONTHS = 1
+
+# --- Bounded seed universe (J-12) -------------------------------------------
+# A small, hard-coded constant set of (symbol, timeframe) candidates — a few
+# liquid pairs × a couple of timeframes. Open-universe exploration draws ONLY
+# from this set (anti-goal: MUST NOT blindly fan out across the whole exchange
+# symbol list). This is deliberately NOT the 26×6 /api/symbols × /api/timeframes
+# grid, NOT env-driven, and NOT a live exchange enumeration. The deterministic
+# bounded enumerator below walks it in order (the history-surrogate/bandit +
+# LLM planner that would prioritise within it is J-15 / OUT OF SCOPE).
+_SEED_UNIVERSE: tuple[tuple[str, str], ...] = (
+    ("BTC/USDT", "4h"),
+    ("ETH/USDT", "4h"),
+    ("SOL/USDT", "4h"),
+    ("BNB/USDT", "1h"),
+    ("BTC/USDT", "1h"),
+    ("ETH/USDT", "1h"),
+)
+# Fixed deterministic short historical window used when an open-universe
+# request omits start/end (tiny-budget rule): long enough for the small WF
+# IS/OOS windows above to form ≥1 window, short enough that the single-file
+# OHLCV Parquet cache can serve/cache it cheaply and be reused across configs.
+_OPEN_UNIVERSE_START = "2023-01-01"
+_OPEN_UNIVERSE_END = "2023-06-01"
 
 
 # --- In-process cancellation registry (NO new infra) -------------------------
@@ -307,16 +331,29 @@ class AutoSessionTargets(BaseModel):
 
 class AutoSessionBudget(BaseModel):
     """Hard budget. ``max_iterations`` is always defaulted/clamped so the
-    loop is bounded; ``max_wall_clock_seconds`` is an optional extra cap."""
+    loop is bounded; the others are extra caps the immutable
+    :class:`~backend.cost_tracker.CostTracker` enforces (AI tokens, USD,
+    max-configs, wall-clock). All are clamped to a safe finite default + an
+    absolute hard ceiling — a run is never unbounded, even with no budget."""
 
     max_iterations: Optional[int] = None
     max_wall_clock_seconds: Optional[float] = None
+    max_ai_tokens: Optional[int] = None
+    max_usd: Optional[float] = None
+    max_configs: Optional[int] = None
 
 
 class AutoSessionRequest(BaseModel):
-    """Pinned-config request. Every search-space field is optional in the
-    schema (open-universe is J-12); this iteration only supports the pinned
-    path, so a missing pinned dimension is rejected with a clear 4xx."""
+    """Auto-session request.
+
+    Pinned config: supply ``symbol`` + ``timeframe`` (+ ``start_date`` /
+    ``end_date``) — the loop refines one pinned strategy (J-07–J-11).
+    Open-universe (J-12): omit BOTH ``symbol`` and ``timeframe`` and supply
+    only ``objective`` + ``budget`` — the deterministic bounded enumerator
+    explores ≥2 distinct configs from the seed universe. ``objective`` v1
+    supports only ``"robust"`` (the single-robust-scalar Non-Goal);
+    ``history_scope`` is accepted & persisted but its cross-run *learning*
+    is J-15 / OUT OF SCOPE this iteration."""
 
     natural_language: str
     symbol: Optional[str] = None
@@ -325,6 +362,8 @@ class AutoSessionRequest(BaseModel):
     end_date: Optional[str] = None
     initial_capital: float = 10000.0
     model: str = DEFAULT_MODEL
+    objective: Optional[str] = "robust"
+    history_scope: Optional[str] = None
     targets: AutoSessionTargets = Field(default_factory=AutoSessionTargets)
     budget: AutoSessionBudget = Field(default_factory=AutoSessionBudget)
 
@@ -414,14 +453,103 @@ def _resolve_budget(budget: AutoSessionBudget) -> tuple[int, Optional[float]]:
     return max_iter, wall
 
 
-def _backtest_params(req: AutoSessionRequest) -> dict:
+class _Config(NamedTuple):
+    """One resolved (symbol, timeframe, date-window) the loop runs. Pinned
+    runs use a single config every iteration; an open-universe run draws a
+    distinct one per round from the bounded seed universe."""
+
+    symbol: str
+    timeframe: str
+    start_str: str
+    end_str: str
+    start_dt: datetime
+    end_dt: datetime
+
+
+def _is_open_universe(req: AutoSessionRequest) -> bool:
+    """Open-universe iff BOTH symbol and timeframe are omitted. Exactly one
+    of them present is a *partial* pin — a malformed pinned request, not an
+    open-universe request (the endpoint rejects it with a clear 422)."""
+    return not req.symbol and not req.timeframe
+
+
+def _config_plan(req: AutoSessionRequest) -> tuple[list[_Config], bool]:
+    """Return ``(ordered configs, is_open)``.
+
+    Pinned → exactly ONE config from the pinned fields (the loop refines the
+    prompt across iterations, byte-for-byte the J-07–J-11 behaviour).
+    Open-universe → the bounded seed universe in deterministic order, each
+    with the request's date window or the fixed default short window when
+    start/end are omitted (tiny-budget rule; Parquet-cache friendly).
+    """
+    if not _is_open_universe(req):
+        s, e = req.start_date, req.end_date
+        return (
+            [_Config(req.symbol, req.timeframe, s, e,
+                     _parse_date(s, end=False), _parse_date(e, end=True))],
+            False,
+        )
+    s = req.start_date or _OPEN_UNIVERSE_START
+    e = req.end_date or _OPEN_UNIVERSE_END
+    sd, ed = _parse_date(s, end=False), _parse_date(e, end=True)
+    return (
+        [_Config(sym, tf, s, e, sd, ed) for sym, tf in _SEED_UNIVERSE],
+        True,
+    )
+
+
+def _build_cost_tracker(
+    req: AutoSessionRequest, max_iter: int, is_open: bool
+) -> CostTracker:
+    """Construct the immutable hard cost tracker for this run.
+
+    Pinned: the config cap is pinned to ``max_iter`` so the tracker never
+    terminates a pinned run before the existing ``max_iterations`` clamp
+    does — pinned termination is byte-unchanged; the token/USD caps still
+    apply but default high enough not to bite a normal run. Open-universe:
+    the supplied/clamped ``max_configs`` bounds the distinct configs (default
+    small; hard-ceilinged to the bounded seed size — never a blind fan-out).
+    """
+    b = req.budget
+    if is_open:
+        default_cfg = min(DEFAULT_MAX_CONFIGS, len(_SEED_UNIVERSE))
+        hard_cfg = len(_SEED_UNIVERSE)
+        max_cfg = b.max_configs
+    else:
+        default_cfg = hard_cfg = max_cfg = max_iter
+    return CostTracker(
+        max_ai_tokens=b.max_ai_tokens,
+        max_usd=b.max_usd,
+        max_configs=max_cfg,
+        max_wall_clock_seconds=b.max_wall_clock_seconds,
+        default_max_configs=default_cfg,
+        hard_max_configs=hard_cfg,
+    )
+
+
+def _drain_usage(tracker: CostTracker, sink: list) -> None:
+    """Feed the REAL captured per-call SDK usage into the cost tracker
+    (monotonic). Called right after each LLM call so the next per-round
+    budget check sees actual spend."""
+    for u in sink:
+        tracker.record_usage(
+            u.get("model", ""),
+            u.get("input_tokens", 0),
+            u.get("output_tokens", 0),
+        )
+    sink.clear()
+
+
+def _backtest_params(req: AutoSessionRequest, cfg: _Config) -> dict:
     """The BacktestParams-shaped dict stored in session.json + each node so
-    the UI config bar and detail pane render exactly like a manual run."""
+    the UI config bar and detail pane render exactly like a manual run. The
+    symbol/timeframe/date window come from the resolved config (a headless
+    open-universe iteration is UI-indistinguishable from a manual run)."""
     return {
-        "symbol": req.symbol,
-        "timeframe": req.timeframe,
-        "start_date": req.start_date,
-        "end_date": req.end_date,
+        "symbol": cfg.symbol,
+        "timeframe": cfg.timeframe,
+        "start_date": cfg.start_str,
+        "end_date": cfg.end_str,
         "initial_capital": req.initial_capital,
         "exchange": "binance",
         "allow_short": False,
@@ -558,15 +686,18 @@ async def _run_auto_session_impl(
     inside one iteration is recorded and the loop still reaches a terminal
     state (it never hangs).
     """
-    max_iter, max_wall = _resolve_budget(req.budget)
+    max_iter, _legacy_wall = _resolve_budget(req.budget)
     targets = req.targets.model_dump(exclude_none=True)
-    started = time.monotonic()
 
-    start_dt = _parse_date(req.start_date, end=False)
-    end_dt = _parse_date(req.end_date, end=True)
+    configs, is_open = _config_plan(req)
+    # Immutable hard cost tracker: AI-tokens / USD / max-configs / wall-clock,
+    # caps fixed at construction. The per-round check below never starts a
+    # config/round once any cap is reached ("no one more round past the cap").
+    tracker = _build_cost_tracker(req, max_iter, is_open)
 
-    # (id, RobustInputs) for every COMPLETED iteration — the robust selector
-    # picks the best from this; raw return is never used to choose.
+    # (id, RobustInputs) for every COMPLETED iteration (across ALL explored
+    # configs for an open-universe run) — the robust selector picks the best
+    # from this; raw return is never used to choose.
     completed: list[tuple[str, RobustInputs]] = []
     best_id: Optional[str] = None
     stop_reason: Optional[str] = None
@@ -584,16 +715,19 @@ async def _run_auto_session_impl(
     await _update_autorun(session_id, status="running", currentIteration=0,
                           maxIterations=max_iter, stopReason=None,
                           bestIterationId=_existing.get("bestIterationId"),
-                          startedAt=_existing.get("startedAt") or _now_iso())
+                          startedAt=_existing.get("startedAt") or _now_iso(),
+                          spend=tracker.snapshot())
 
     iteration_index = 0
     for i in range(1, max_iter + 1):
         # --- Budget / cancel checks BEFORE doing any work: never start a
-        # round that would exceed the cap ("no one more round"). ---
+        # round/config that would exceed the cap ("no one more round"). ---
         if cancel_token.is_cancelled:
             stop_reason = None  # cooperative stop (in-process token); not budget
             break
-        if max_wall is not None and (time.monotonic() - started) >= max_wall:
+        if tracker.would_exceed() is not None:
+            # Any hard cap reached (ai-tokens / usd / max-configs / wall-clock):
+            # terminal budget-exhausted, NO further iteration/config appended.
             stop_reason = "budget-exhausted"
             break
         # Durable, worker-safe cooperative stop: the public stop endpoint
@@ -611,33 +745,63 @@ async def _run_auto_session_impl(
             cancel_token.cancel()
             stop_reason = None
             break
+        # Open-universe: the bounded seed universe is finite — exhausting it
+        # within budget is itself a terminal (the search space is spent). The
+        # max-configs cap above normally trips first; this is the backstop.
+        if is_open and (i - 1) >= len(configs):
+            stop_reason = "budget-exhausted"
+            break
 
+        cfg = configs[0] if not is_open else configs[i - 1]
+        tracker.start_config()
         iteration_index = i
         iter_id = str(uuid.uuid4())
-        await _update_autorun(session_id, status="running", currentIteration=i)
-
-        try:
-            gen = await pipeline.generate_strategy(
-                natural_language=next_prompt,
-                model=req.model,
-                previous_script_code=prev_script_code,
-                symbol=req.symbol,
-                timeframe=req.timeframe,
-                start_date=req.start_date,
-                end_date=req.end_date,
+        await _update_autorun(session_id, status="running", currentIteration=i,
+                              spend=tracker.snapshot())
+        if is_open:
+            # Record EVERY explored config (symbol/timeframe) so the
+            # open-universe exploration is visible/auditable in the UI.
+            await asyncio.to_thread(
+                session_store.append_activity_entries, session_id, [
+                    _activity(
+                        "auto-run",
+                        f"Exploring config {i}: {cfg.symbol} {cfg.timeframe}",
+                        iter_id,
+                    ),
+                ]
             )
 
+        # Per-config prompt: open-universe is a deterministic enumerator (no
+        # cross-config refinement / planner — that is J-15 / OUT OF SCOPE);
+        # the pinned path keeps its prior-suggestion refinement chain.
+        gen_prompt = req.natural_language if is_open else next_prompt
+        gen_prev = None if is_open else prev_script_code
+
+        try:
+            usage_sink: list = []
+            gen = await pipeline.generate_strategy(
+                natural_language=gen_prompt,
+                model=req.model,
+                previous_script_code=gen_prev,
+                symbol=cfg.symbol,
+                timeframe=cfg.timeframe,
+                start_date=cfg.start_str,
+                end_date=cfg.end_str,
+                usage_sink=usage_sink,
+            )
+            _drain_usage(tracker, usage_sink)
+
             if getattr(gen, "validation_errors", None) and not gen.script_code:
-                await _record_failed(session_id, i, iter_id, next_prompt, req,
-                                     "; ".join(gen.validation_errors))
+                await _record_failed(session_id, i, iter_id, gen_prompt, req,
+                                     cfg, "; ".join(gen.validation_errors))
                 continue
 
             bt_payload = dict(
                 script_id=gen.script_id,
-                symbol=req.symbol,
-                timeframe=req.timeframe,
-                start_date=start_dt,
-                end_date=end_dt,
+                symbol=cfg.symbol,
+                timeframe=cfg.timeframe,
+                start_date=cfg.start_dt,
+                end_date=cfg.end_dt,
                 initial_capital=req.initial_capital,
                 commission=_COMMISSION,
                 script_code=gen.script_code,
@@ -658,29 +822,32 @@ async def _run_auto_session_impl(
                 )
 
             if result is None:
-                await _record_failed(session_id, i, iter_id, next_prompt, req,
-                                     "; ".join(errors) if errors else "Backtest failed")
+                await _record_failed(session_id, i, iter_id, gen_prompt, req,
+                                     cfg, "; ".join(errors) if errors else "Backtest failed")
                 continue
 
             # Insights — best-effort; a failure must not abort the loop.
             summary, suggestions = "", []
             try:
+                ins_sink: list = []
                 summary, suggestions, _ierr = await pipeline.generate_insights(
                     backtest_result=result_json,
                     strategy_name=gen.strategy_name,
                     strategy_description=gen.strategy_description,
                     script_code=gen.script_code,
-                    natural_language_prompt=next_prompt,
+                    natural_language_prompt=gen_prompt,
                     model=req.model,
-                    symbol=req.symbol,
-                    timeframe=req.timeframe,
-                    start_date=req.start_date,
-                    end_date=req.end_date,
+                    symbol=cfg.symbol,
+                    timeframe=cfg.timeframe,
+                    start_date=cfg.start_str,
+                    end_date=cfg.end_str,
                     initial_capital=req.initial_capital,
                     previous_summary=prev_summary,
                     previous_suggestions=prev_suggestion_titles or None,
                     walk_forward_result=wf_json,
+                    usage_sink=ins_sink,
                 )
+                _drain_usage(tracker, ins_sink)
             except Exception as ins_err:  # noqa: BLE001 - best-effort
                 logger.warning("auto-session insights failed (continuing): %s", ins_err)
 
@@ -692,7 +859,7 @@ async def _run_auto_session_impl(
 
             node = _build_node(
                 iter_id=iter_id,
-                prompt=next_prompt,
+                prompt=gen_prompt,
                 script_code=gen.script_code,
                 script_id=gen.script_id,
                 strategy_name=gen.strategy_name,
@@ -703,6 +870,7 @@ async def _run_auto_session_impl(
                 wf_json=wf_json,
                 insights=insights,
                 req=req,
+                cfg=cfg,
                 robust=score,
             )
             # All store I/O offloaded off the event-loop thread (same as the
@@ -731,20 +899,24 @@ async def _run_auto_session_impl(
                 )
 
             # The best-so-far is always recomputed by the robust objective
-            # (NOT raw return), so a higher-return-but-WFE-failing /
-            # over-leveraged candidate is never marked best.
+            # (NOT raw return) across ALL explored configs, so a
+            # higher-return-but-WFE-failing / over-leveraged candidate is
+            # never marked best.
             best_id = select_best(completed)
             await _update_autorun(session_id, status="running", currentIteration=i,
-                                  bestIterationId=best_id)
+                                  bestIterationId=best_id, spend=tracker.snapshot())
             # Defense in depth: yield a clean loop turn before the next
             # round so back-to-back iterations never starve pending requests.
             await asyncio.sleep(0)
 
-            prev_script_code = gen.script_code
-            prev_summary = summary or prev_summary
-            prev_suggestion_titles = [s.get("title", "") for s in suggestions if s.get("title")]
-            if suggestions and suggestions[0].get("prompt"):
-                next_prompt = suggestions[0]["prompt"]
+            # Prompt-refinement chain is pinned-path only (open-universe is a
+            # deterministic per-config enumerator with no cross-config carry).
+            if not is_open:
+                prev_script_code = gen.script_code
+                prev_summary = summary or prev_summary
+                prev_suggestion_titles = [s.get("title", "") for s in suggestions if s.get("title")]
+                if suggestions and suggestions[0].get("prompt"):
+                    next_prompt = suggestions[0]["prompt"]
 
             if targets and targets_met(inp, targets):
                 stop_reason = "criteria-met"
@@ -757,7 +929,7 @@ async def _run_auto_session_impl(
             break
         except Exception as exc:  # noqa: BLE001 - one bad iter must not hang the loop
             logger.warning("auto-session iteration %d failed (continuing): %s", i, exc)
-            await _record_failed(session_id, i, iter_id, next_prompt, req, str(exc))
+            await _record_failed(session_id, i, iter_id, gen_prompt, req, cfg, str(exc))
             continue
 
     # --- Terminal state ------------------------------------------------------
@@ -782,6 +954,7 @@ async def _run_auto_session_impl(
         currentIteration=iteration_index,
         maxIterations=max_iter,
         bestIterationId=best_id,
+        spend=tracker.snapshot(),
     )
     return final
 
@@ -806,7 +979,7 @@ def _build_node(*, iter_id: str, prompt: str, script_code: str, script_id: str,
                 strategy_name: str, model_used: str, result: Any,
                 result_json: dict, rating_json: Optional[dict],
                 wf_json: Optional[dict], insights: dict,
-                req: AutoSessionRequest, robust: float) -> dict:
+                req: AutoSessionRequest, cfg: _Config, robust: float) -> dict:
     """Build the node_dict in the EXACT shape write_iteration expects for a
     manual run (the canonical key set), so a headless run is
     indistinguishable in the UI from a manual one. The top-level summary
@@ -828,7 +1001,7 @@ def _build_node(*, iter_id: str, prompt: str, script_code: str, script_id: str,
         "maxDrawdown": float(result.max_drawdown),
         "robustScore": robust,
         "modelUsed": model_used,
-        "params": _backtest_params(req),
+        "params": _backtest_params(req, cfg),
         "timestamp": _now_iso(),
         "parentId": None,
         "walkForwardResult": wf_json,
@@ -837,7 +1010,8 @@ def _build_node(*, iter_id: str, prompt: str, script_code: str, script_id: str,
 
 
 async def _record_failed(session_id: str, index: int, iter_id: str, prompt: str,
-                         req: AutoSessionRequest, error: str) -> None:
+                         req: AutoSessionRequest, cfg: _Config,
+                         error: str) -> None:
     """Persist a failed iteration and an error activity entry. The loop
     continues (it counts toward the budget) and still reaches a terminal
     state — it never hangs on a single bad iteration. Store writes are
@@ -858,7 +1032,7 @@ async def _record_failed(session_id: str, index: int, iter_id: str, prompt: str,
         "sharpe": 0.0,
         "maxDrawdown": 0.0,
         "error": error,
-        "params": _backtest_params(req),
+        "params": _backtest_params(req, cfg),
         "timestamp": _now_iso(),
         "parentId": None,
     }
@@ -881,37 +1055,74 @@ async def create_auto_session(req: AutoSessionRequest, request: Request):
     browser interaction), then launches the server-side loop as a detached
     asyncio task and returns 200 right away.
     """
-    # Pinned-config validation. Open-universe (omitting symbol/timeframe) is
-    # J-12 / out of scope this iteration -> reject clearly with a 4xx
-    # (Pydantic already 422s a missing natural_language; never a 500).
-    missing = [
-        name for name, value in (
-            ("symbol", req.symbol),
-            ("timeframe", req.timeframe),
-            ("start_date", req.start_date),
-            ("end_date", req.end_date),
-        )
-        if not value
-    ]
-    if missing:
+    # --- Validation (never a 500: every bad request is a clean 422) ------
+    # Objective: v1 supports ONLY the single robust scalar (the
+    # single-robust-scalar Non-Goal) — any other value is rejected clearly.
+    objective = req.objective or "robust"
+    if objective != "robust":
         raise HTTPException(
             status_code=422,
             detail=(
-                f"Missing required pinned config field(s): {', '.join(missing)}. "
-                "Open-universe search (omitting symbol/timeframe) is not yet "
-                "supported."
+                f"Unsupported objective {req.objective!r}. Only 'robust' is "
+                "supported in this version."
             ),
         )
-    try:
-        _parse_date(req.start_date, end=False)
-        _parse_date(req.end_date, end=True)
-    except ValueError:
-        raise HTTPException(
-            status_code=422,
-            detail="start_date and end_date must be YYYY-MM-DD.",
-        )
+
+    if _is_open_universe(req):
+        # Open-universe (J-12): symbol & timeframe BOTH omitted -> the
+        # bounded seed-universe search. Dates are optional (a fixed
+        # deterministic short window is used when omitted); if EITHER is
+        # supplied BOTH must be valid YYYY-MM-DD.
+        if req.start_date or req.end_date:
+            if not (req.start_date and req.end_date):
+                raise HTTPException(
+                    status_code=422,
+                    detail=("Provide BOTH start_date and end_date, or omit "
+                            "both for the default open-universe window."),
+                )
+            try:
+                _parse_date(req.start_date, end=False)
+                _parse_date(req.end_date, end=True)
+            except ValueError:
+                raise HTTPException(
+                    status_code=422,
+                    detail="start_date and end_date must be YYYY-MM-DD.",
+                )
+    else:
+        # Pinned config: symbol/timeframe/start/end are ALL required. A
+        # partial pin (e.g. timeframe but no symbol) is a malformed pinned
+        # request -> clear 422 (NOT silently promoted to open-universe).
+        missing = [
+            name for name, value in (
+                ("symbol", req.symbol),
+                ("timeframe", req.timeframe),
+                ("start_date", req.start_date),
+                ("end_date", req.end_date),
+            )
+            if not value
+        ]
+        if missing:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Missing required pinned config field(s): "
+                    f"{', '.join(missing)}. Provide all of "
+                    "symbol/timeframe/start_date/end_date for a pinned run, "
+                    "or omit BOTH symbol and timeframe for an open-universe "
+                    "search."
+                ),
+            )
+        try:
+            _parse_date(req.start_date, end=False)
+            _parse_date(req.end_date, end=True)
+        except ValueError:
+            raise HTTPException(
+                status_code=422,
+                detail="start_date and end_date must be YYYY-MM-DD.",
+            )
 
     max_iter, _wall = _resolve_budget(req.budget)
+    configs, _open = _config_plan(req)
     session_id = str(uuid.uuid4())
     now_ms = int(time.time() * 1000)
     nl = req.natural_language.strip()
@@ -919,11 +1130,13 @@ async def create_auto_session(req: AutoSessionRequest, request: Request):
 
     # Create the session in the EXISTING file store BEFORE returning, so it
     # appears immediately in GET /api/sessions (derive_session_tabs keys off
-    # session.json) and is openable. No parallel store / schema fork.
+    # session.json) and is openable. No parallel store / schema fork. The
+    # durable spend is populated by the loop's first status write (within ms)
+    # and survives a worker restart + browser reload from here on.
     await asyncio.to_thread(session_store.write_session_meta, session_id, {
         "name": name,
         "lastAccessedAt": now_ms,
-        "backtestParams": _backtest_params(req),
+        "backtestParams": _backtest_params(req, configs[0]),
         "autoRun": {
             "status": "running",
             "stopReason": None,
@@ -932,6 +1145,17 @@ async def create_auto_session(req: AutoSessionRequest, request: Request):
             "bestIterationId": None,
             "startedAt": _now_iso(),
             "updatedAt": _now_iso(),
+            "spend": None,
+            # Accepted-&-persisted request config (spec IN SCOPE). Written
+            # into the durable autoRun block via the existing
+            # write_session_meta — no parallel store, no schema fork — so it
+            # survives a worker restart + browser reload and is readable from
+            # GET /api/sessions/{id}. The loop's _update_autorun_sync does a
+            # read-merge-write that preserves these keys every round.
+            # history_scope's cross-run *learning* is J-15 / OUT OF SCOPE
+            # this iteration; only accept-&-persist is in scope here.
+            "objective": objective,
+            "historyScope": req.history_scope,
         },
     })
 

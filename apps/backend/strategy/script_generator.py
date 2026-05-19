@@ -21,6 +21,7 @@ from anthropic import Anthropic
 from openai import BadRequestError, OpenAI
 
 from shared.contracts import OHLCV
+from shared.llm_usage import capture_usage
 from shared.model_catalog import (
     DEFAULT_MODEL,
     HAIKU_MODEL,
@@ -247,6 +248,7 @@ class ScriptGenerator:
         ohlcv_data: Optional[list[OHLCV]] = None,
         allow_short: bool = False,
         leverage: float = 1.0,
+        usage_sink: Optional[list] = None,
     ) -> tuple[str, str, str, list[str]]:
         """
         Generate a Strategy class script from natural language.
@@ -410,7 +412,8 @@ class ScriptGenerator:
                         u.prompt_tokens,
                         u.completion_tokens,
                     )
-                
+                capture_usage(usage_sink, effective_model, response, openai=True)
+
                 script_code = response.choices[0].message.content.strip()
 
             else:
@@ -447,6 +450,7 @@ class ScriptGenerator:
                         cache_read,
                         cache_creation,
                     )
+                capture_usage(usage_sink, effective_model, response, openai=False)
 
                 # Extract text
                 for block in response.content:

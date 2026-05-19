@@ -286,6 +286,7 @@ class BacktestPipeline:
         previous_backtest_metrics: Optional[dict] = None,
         allow_short: bool = False,
         leverage: float = 1.0,
+        usage_sink: Optional[list] = None,
     ) -> GenerateStrategyResult:
         """
         Generate a Python Strategy class script from natural language.
@@ -336,6 +337,7 @@ class BacktestPipeline:
                 ohlcv_data=ohlcv_data,
                 allow_short=allow_short,
                 leverage=leverage,
+                usage_sink=usage_sink,
             )
         )
 
@@ -751,6 +753,7 @@ class BacktestPipeline:
         previous_summary: Optional[str] = None,
         previous_suggestions: Optional[list[str]] = None,
         walk_forward_result: Optional[dict] = None,
+        usage_sink: Optional[list] = None,
     ) -> tuple[str, list[dict], list[str]]:
         """
         Generate AI insights (summary + suggestions) from backtest results.
@@ -775,6 +778,7 @@ class BacktestPipeline:
             previous_summary=previous_summary,
             previous_suggestions=previous_suggestions,
             walk_forward_result=walk_forward_result,
+            usage_sink=usage_sink,
         )
 
     async def execute_walk_forward(

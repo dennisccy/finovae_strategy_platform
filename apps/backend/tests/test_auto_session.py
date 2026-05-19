@@ -159,11 +159,22 @@ class FakePipeline:
 
     async def generate_strategy(self, *, natural_language, model,
                                 previous_script_code=None, symbol=None,
-                                timeframe=None, start_date=None, end_date=None):
+                                timeframe=None, start_date=None, end_date=None,
+                                usage_sink=None):
         step = self._step(self.gen_calls)
         self.gen_calls += 1
         if step.get("gen_raise"):
             raise RuntimeError("LLM exploded")
+        # Deterministic fake SDK token usage flowing the PRODUCTION capture
+        # path (a list the loop owns and drains into the cost tracker). A
+        # genuine generation — even one that fails validation — consumed
+        # tokens; only a hard exception (gen_raise) above spends nothing.
+        if usage_sink is not None:
+            usage_sink.append({
+                "model": model,
+                "input_tokens": step.get("gen_in", 100),
+                "output_tokens": step.get("gen_out", 50),
+            })
         if step.get("gen_fail"):
             return GenerateStrategyResult(
                 script_id="", script_code="", strategy_name="",
@@ -210,7 +221,15 @@ class FakePipeline:
         return result, [], None, {"total_ms": 1.0}, wf
 
     async def generate_insights(self, **kwargs):
+        step = self._step(self.insight_calls)
         self.insight_calls += 1
+        sink = kwargs.get("usage_sink")
+        if sink is not None:
+            sink.append({
+                "model": kwargs.get("model", "gpt-5.4-mini"),
+                "input_tokens": step.get("ins_in", 200),
+                "output_tokens": step.get("ins_out", 150),
+            })
         return (
             "Summary of performance.",
             [{"title": "Tighten stop", "description": "d", "prompt": "use a 2% stop"}],
@@ -226,6 +245,18 @@ def _req(**over) -> AutoSessionRequest:
         start_date="2024-01-01",
         end_date="2024-03-01",
         initial_capital=10000.0,
+        model="gpt-5.4-mini",
+    )
+    base.update(over)
+    return AutoSessionRequest(**base)
+
+
+def _open_req(**over) -> AutoSessionRequest:
+    """Open-universe request: NO symbol/timeframe — only objective + budget
+    (and the strategy idea explored across the bounded seed configs)."""
+    base = dict(
+        natural_language="Trend-follow with an EMA crossover",
+        objective="robust",
         model="gpt-5.4-mini",
     )
     base.update(over)
@@ -973,3 +1004,298 @@ def test_stop_endpoint_http_unknown_404_and_idempotent_terminal(store, client):
     after = client.get(f"/api/sessions/{sid}").json()
     assert after["autoRun"] == auto_before, "terminal autoRun must be unchanged"
     assert "stopRequested" not in after["autoRun"], "no mutation of a terminal run"
+
+
+# =============================================================================
+# iter-3 / J-12 — Open-universe: only an objective + budget explores ≥2
+# distinct configs from the BOUNDED seed universe (no blind fan-out), best
+# marked by the robust objective, headless run UI-indistinguishable.
+# =============================================================================
+
+def _distinct_cfgs(sid: str) -> set:
+    cfgs = set()
+    for d in ss.list_iteration_dirs(sid):
+        m = ss.read_iteration_meta(sid, d.name.split("_", 1)[1])
+        cfgs.add((m["params"]["symbol"], m["params"]["timeframe"]))
+    return cfgs
+
+
+async def test_open_universe_runs_multiple_distinct_configs(store):
+    # No symbol/timeframe — only objective + budget. The deterministic
+    # bounded enumerator must explore ≥2 DISTINCT (symbol,timeframe) configs.
+    pipe = FakePipeline([{"total_return": 0.3, "wfe": 0.7, "num_trades": 20}])
+    sid = "sess-open"
+    final = await _run(
+        sid, _open_req(budget={"max_iterations": 5, "max_configs": 3}), pipe
+    )
+
+    assert final["status"] == "complete"
+    assert final["stopReason"] == "budget-exhausted"
+    cfgs = _distinct_cfgs(sid)
+    assert len(cfgs) >= 2, f"expected ≥2 distinct configs, got {cfgs}"
+    # Every explored config is drawn ONLY from the bounded seed universe
+    # (anti-goal: no blind fan-out across the whole exchange list).
+    assert cfgs <= set(auto_session._SEED_UNIVERSE)
+    assert final["bestIterationId"] is not None  # robust-best marked
+    assert final["spend"]["configsRun"] == 3
+    # The exploration is visible/auditable in the activity log.
+    log = ss.read_activity_log(sid)
+    explored = [e for e in log if e["content"].startswith("Exploring config")]
+    assert len(explored) == 3
+
+
+async def test_open_universe_best_is_robust_not_raw_return(store):
+    # config-1: huge raw return but WFE-failing/over-traded -> low robust.
+    # config-2: modest return but walk-forward validated -> high robust.
+    steps = [
+        {"total_return": 5.0, "sharpe": 4.0, "max_drawdown": 0.4,
+         "num_trades": 30, "wfe": 0.0, "oos_return": -0.2,
+         "oos_sharpe": -0.5, "num_windows": 2},
+        {"total_return": 0.2, "sharpe": 1.1, "max_drawdown": 0.08,
+         "num_trades": 25, "wfe": 0.8, "oos_return": 0.15,
+         "oos_sharpe": 1.0, "num_windows": 3},
+    ]
+    sid = "sess-open-best"
+    final = await _run(
+        sid, _open_req(budget={"max_iterations": 5, "max_configs": 2}),
+        FakePipeline(steps),
+    )
+
+    dirs = sorted(ss.list_iteration_dirs(sid), key=lambda d: d.name)
+    assert len(dirs) == 2
+    id1 = dirs[0].name.split("_", 1)[1]
+    id2 = dirs[1].name.split("_", 1)[1]
+    assert final["bestIterationId"] == id2
+    assert final["bestIterationId"] != id1, (
+        "the higher-raw-return WFE-failing config must NOT be best"
+    )
+
+
+async def test_max_configs_cap_stops_open_universe_no_post_cap_config(store):
+    # Seed universe has 6 entries; max_configs=2 must stop at EXACTLY 2 —
+    # "no one more config past the cap".
+    pipe = FakePipeline([{"total_return": 0.3, "wfe": 0.7}])
+    sid = "sess-cfgcap"
+    final = await _run(
+        sid, _open_req(budget={"max_iterations": 9, "max_configs": 2}), pipe
+    )
+    assert final["status"] == "complete"
+    assert final["stopReason"] == "budget-exhausted"
+    assert pipe.gen_calls == 2, "no config may start after the max-configs cap"
+    assert len(ss.list_iteration_dirs(sid)) == 2
+    assert final["spend"]["configsRun"] == 2
+
+
+# =============================================================================
+# iter-3 / J-13 — Hard, immutable AI-token/USD/configs/wall cost tracker.
+# The tracker MUST accumulate the REAL token counts the (fake) SDK usage
+# returned through the production capture path — fails if hardcoded/bypassed.
+# =============================================================================
+
+async def test_hard_token_budget_exhausted_real_usage_and_durable_spend(store):
+    from shared.model_catalog import usd_cost
+
+    # Explicit per-call fake SDK usage (NOT the defaults) so the assertion
+    # is tied to the counts the fake SDK actually returned.
+    step = {"total_return": 0.2, "wfe": 0.7, "num_trades": 20,
+            "gen_in": 80, "gen_out": 20, "ins_in": 120, "ins_out": 80}
+    pipe = FakePipeline([step])
+    sid = "sess-tokbudget"
+    # Tiny token cap; configs not the limiter (max_configs high).
+    final = await _run(
+        sid,
+        _open_req(budget={"max_iterations": 9, "max_configs": 6,
+                          "max_ai_tokens": 150}),
+        pipe,
+    )
+
+    assert final["status"] == "complete"
+    assert final["stopReason"] == "budget-exhausted"
+
+    # Real-usage guard: the recorded spend MUST equal the EXACT token counts
+    # the fake SDK emitted through the capture path — round-1 generate
+    # (80+20) + round-1 insights (120+80). If the loop hardcoded a constant
+    # or never drained the sink, this fails.
+    expected_tokens = (80 + 20) + (120 + 80)
+    expected_usd = (usd_cost("gpt-5.4-mini", 80, 20)
+                    + usd_cost("gpt-5.4-mini", 120, 80))
+    assert final["spend"]["aiTokens"] == expected_tokens
+    assert final["spend"]["usd"] == pytest.approx(expected_usd)
+    assert expected_usd > 0.0
+
+    # No iteration appended after the cap was reached (round 2 never starts).
+    assert len(ss.list_iteration_dirs(sid)) == 1
+    assert pipe.gen_calls == 1
+
+    # Within one-call tolerance: only the single in-flight insights call
+    # crossed the cap (generate was still under it).
+    assert final["spend"]["aiTokens"] <= 150 + max(80 + 20, 120 + 80)
+
+    # Durable: a FRESH read straight off disk (worker-restart / reload
+    # survival proxy) still carries the recorded spend.
+    meta = ss.read_session_meta(sid)
+    assert meta["autoRun"]["stopReason"] == "budget-exhausted"
+    assert meta["autoRun"]["spend"]["aiTokens"] == expected_tokens
+    assert meta["autoRun"]["spend"]["configsRun"] == 1
+
+
+async def test_open_universe_multi_config_runs_in_subprocess_distinct_pids(store):
+    """iter-2 lesson (flagged for iter-3): every backtest of a multi-config
+    run MUST flow through the existing subprocess seam — asserted
+    DETERMINISTICALLY by child_pid != os.getpid(), never a timing bound."""
+    import os as _os
+
+    pipe = FakePipeline([{"total_return": 0.2, "wfe": 0.7}])
+    executor = auto_session._subprocess_backtest_executor(
+        f"{__name__}:_cpu_bound_backtest_child"
+    )
+    sid = "sess-open-subproc"
+    try:
+        final = await run_auto_session(
+            sid,
+            _open_req(budget={"max_iterations": 9, "max_configs": 2}),
+            pipeline=pipe,
+            semaphore=asyncio.Semaphore(1),
+            cancel_token=CancellationToken(),
+            backtest_executor=executor,
+        )
+    finally:
+        auto_session._shutdown_backtest_worker()
+
+    assert final["status"] == "complete"
+    assert len(_distinct_cfgs(sid)) == 2, "≥2 distinct configs explored"
+
+    parent_pid = _os.getpid()
+    dirs = sorted(ss.list_iteration_dirs(sid), key=lambda d: d.name)
+    assert len(dirs) == 2
+    for d in dirs:
+        node = ss.read_iteration_full(sid, d.name.split("_", 1)[1])
+        run_id = (node.get("result") or {}).get("run_id", "")
+        assert run_id.startswith("pid-"), f"unexpected run_id {run_id!r}"
+        assert int(run_id.split("-", 1)[1]) != parent_pid, (
+            "a multi-config backtest ran IN this process (anti-goal: the "
+            "CPU-bound backtest MUST stay in the subprocess seam)"
+        )
+
+
+# --- Endpoint: open-universe accepted; objective/date validation ------------
+
+def test_open_universe_endpoint_accepted_and_listed(store, client, monkeypatch):
+    pipe = FakePipeline([{"total_return": 0.1, "wfe": 0.7}])
+    monkeypatch.setattr(auto_session, "_get_pipeline", lambda: pipe)
+
+    resp = client.post("/api/auto-sessions", json={
+        "natural_language": "EMA crossover trend follow",
+        "objective": "robust",
+        "budget": {"max_iterations": 2, "max_configs": 2},
+    })
+    assert resp.status_code == 200
+    sid = resp.json()["sessionId"]
+    assert sid
+
+    tabs = client.get("/api/sessions").json()["tabs"]
+    assert any(t["id"] == sid for t in tabs)
+
+    data = client.get(f"/api/sessions/{sid}").json()
+    assert data["autoRun"] is not None
+    assert data["autoRun"]["status"] in (
+        "running", "queued", "complete", "stopped"
+    )
+
+
+def test_open_universe_objective_and_history_scope_persisted(
+    store, client, monkeypatch
+):
+    # TC-07 / spec "accepted & PERSISTED": objective + history_scope must be
+    # durably written to the existing session store (readable after a fresh
+    # re-read — the exact path a worker restart / browser reload takes) AND
+    # surfaced in the GET /api/sessions/{id} payload, not merely validated
+    # then discarded. history_scope's cross-run *learning* stays J-15/OUT;
+    # only accept-&-persist is in scope this iteration.
+    pipe = FakePipeline([{"total_return": 0.1, "wfe": 0.7}])
+    monkeypatch.setattr(auto_session, "_get_pipeline", lambda: pipe)
+
+    resp = client.post("/api/auto-sessions", json={
+        "natural_language": "EMA crossover trend follow",
+        "objective": "robust",
+        "history_scope": "this-run",
+        "budget": {"max_iterations": 1, "max_configs": 1},
+    })
+    assert resp.status_code == 200
+    sid = resp.json()["sessionId"]
+
+    # Durable: a fresh re-read of the on-disk session meta carries both
+    # values verbatim (survives a restart/reload — it is a real file read).
+    auto = ss.read_session_meta(sid)["autoRun"]
+    assert auto["objective"] == "robust"
+    assert auto["historyScope"] == "this-run"
+
+    # Readable from the public session payload too (what the UI / QA see).
+    payload_auto = client.get(f"/api/sessions/{sid}").json()["autoRun"]
+    assert payload_auto["objective"] == "robust"
+    assert payload_auto["historyScope"] == "this-run"
+
+
+def test_history_scope_defaults_to_none_when_omitted(store, client, monkeypatch):
+    # Omitted history_scope persists as null (accepted, no implicit value);
+    # objective still defaults to and persists "robust".
+    pipe = FakePipeline([{"total_return": 0.1, "wfe": 0.7}])
+    monkeypatch.setattr(auto_session, "_get_pipeline", lambda: pipe)
+
+    resp = client.post("/api/auto-sessions", json={
+        "natural_language": "EMA crossover trend follow",
+        "budget": {"max_iterations": 1, "max_configs": 1},
+    })
+    assert resp.status_code == 200
+    sid = resp.json()["sessionId"]
+
+    auto = ss.read_session_meta(sid)["autoRun"]
+    assert auto["objective"] == "robust"
+    assert auto["historyScope"] is None
+
+
+def test_unsupported_objective_is_422(client):
+    resp = client.post("/api/auto-sessions", json={
+        "natural_language": "do something",
+        "objective": "sharpe",
+        "budget": {"max_iterations": 1},
+    })
+    assert resp.status_code == 422
+    assert "objective" in resp.json()["detail"]
+
+
+def test_open_universe_partial_dates_is_422_not_500(client):
+    # Open-universe with only one of start/end -> clean 422, never a 500.
+    resp = client.post("/api/auto-sessions", json={
+        "natural_language": "explore",
+        "objective": "robust",
+        "start_date": "2023-01-01",
+        "budget": {"max_iterations": 1},
+    })
+    assert resp.status_code == 422
+
+    # Garbled date with both supplied -> clean 422, never a 500.
+    resp2 = client.post("/api/auto-sessions", json={
+        "natural_language": "explore",
+        "objective": "robust",
+        "start_date": "not-a-date",
+        "end_date": "2023-02-01",
+        "budget": {"max_iterations": 1},
+    })
+    assert resp2.status_code == 422
+
+
+async def test_pinned_path_unchanged_by_open_universe_addition(store):
+    # Regression guard: a pinned request still pins ONE (symbol,timeframe)
+    # every iteration and keeps the prompt-refinement chain (J-07–J-11).
+    pipe = FakePipeline([{"total_return": 0.1, "wfe": 0.7}])
+    sid = "sess-pinned-unchanged"
+    final = await _run(sid, _req(budget={"max_iterations": 3}), pipe)
+
+    assert pipe.gen_calls == 3
+    assert _distinct_cfgs(sid) == {("BTCUSDT", "1h")}
+    assert final["stopReason"] == "budget-exhausted"
+    assert final["spend"]["configsRun"] == 3  # tracker runs for pinned too
+    # No "Exploring config" entries on the pinned path.
+    log = ss.read_activity_log(sid)
+    assert not any(e["content"].startswith("Exploring config") for e in log)

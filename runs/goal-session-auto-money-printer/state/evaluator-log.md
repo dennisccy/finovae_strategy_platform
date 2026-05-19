@@ -124,3 +124,60 @@ J-15 (read-only global-history warm start + `history_scope` opt-out +
 prompt-cached planner), J-16 (robust WFE-gated/drawdown-penalized best over the
 open universe). Carry the stop-endpoint pickle trim (scalar result proxy across
 the child pipe) as a tracked non-blocking optimization.
+
+---
+
+## Iteration 3 — goal-auto-money-printer-iter-3
+
+**Date:** 2026-05-19T17:40:00Z
+**Verdict:** CONTINUE
+**Depth dispatched:** full
+**Journey deltas:**
+- Newly passing: J-12, J-13 (both failing → passing)
+- Re-verified still-passing (live): J-02, J-08
+- Re-verified still-passing (pinned path source-verified + suite green): J-07, J-09, J-10, J-11
+- Carried still-passing (code path not in confined diff): J-01, J-03, J-04, J-05, J-06
+- Newly failing: none
+- Regressed: none
+- Anti-goal violations: none (independently re-verified at source-diff + test level)
+
+**Reasoning:** The indivisible Optimizer-Foundation slice (J-12 open-universe
++ J-13 hard cost tracker) is genuinely implemented, not just summarized. I
+independently re-ran the full backend suite (**183 passed / 1 failed** — only
+the pre-existing out-of-scope `test_directions_cache::test_write_and_read_full_round_trip`;
++33 net-new, zero new regressions) and the iter-3 targeted suites (**59
+passed**), and traced the spec's two mandatory skeptical checks to source.
+(1) The cost tracker is fed **real** captured SDK usage, not pass-by-
+construction: `test_hard_token_budget_exhausted_real_usage_and_durable_spend`
+asserts `aiTokens == (80+20)+(120+80)` — the exact per-call fake SDK counts
+flowing the production `capture_usage → usage_sink (pipeline) → _drain_usage →
+record_usage` chain (verified intact in source), with an explicit "fails if
+hardcoded/never drained" contract + a fresh on-disk re-read. (2) The multi-
+config non-blocking guard is **deterministic** (`child_pid != os.getpid()` via
+the unchanged subprocess seam, no timing bound) — iter-2 lesson correctly
+applied to the new multi-config path. `CostCaps` is a frozen dataclass
+(FrozenInstanceError test), spend is monotonic, `would_exceed()` (`>=`) is
+checked round-top before `start_config()`. `_SEED_UNIVERSE` is a hard-coded
+6-entry constant (no fan-out; `cfgs <= set(_SEED_UNIVERSE)` test). Screenshots
+confirm end states: UT-03 (J-12) 6 distinct seed configs, terminal "budget
+reached", BNB 1H WFE 1.52 ⭐Best over the higher-raw BTC 4H +4.46%/WFE −0.05
+(robust-not-raw); QA-TC10/UT-06 (J-13) amber "budget reached · N/M" +
+"<tok> · $<usd> · <n> cfg" spend, byte-identical after a hard reload (durable).
+contracts.py/sandbox.py/engine/fills/metrics 0-diff (independently confirmed);
+no new infra imports. The audit's B1 (bounded **one-config** LLM overshoot when
+`generate` alone crosses a spend cap) is a documented, non-blocking GAP within
+the spec's explicit "within one-call tolerance" — the load-bearing "no
+unbounded loop / no extra round/config" guarantee holds. Not GOAL_ACHIEVED
+(J-14/J-15/J-16 failing by design — 13/16 passing). Not REGRESSION (no prior
+passing journey broke; J-02/J-08 re-verified live; no critical anti-goal). Not
+STALLED (2 newly passing; clear next step).
+
+**Next-step recommendation:** iter-4 at **full** depth — J-14 (staged
+SCREEN→PROMOTE: cheap SCREEN that does NOT run WF/strongest model; full
+pipeline only on top-k survivors), carrying the tracked B1 fix gated on
+`would_exceed() in {"ai-tokens","usd","wall-clock"}` (NEVER on `"max-configs"`
+— it equals `max_iter` on the pinned path, so a naive skip silently regresses
+the final pinned iteration's insights with no test guarding it). Add an
+`insight_calls`-on-final-pinned-iteration assertion to
+`test_pinned_path_unchanged_by_open_universe_addition` with that fix. J-15
+then J-16 follow.

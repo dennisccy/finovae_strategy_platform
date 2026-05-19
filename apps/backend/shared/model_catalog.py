@@ -58,6 +58,44 @@ OPENAI_MAX_COMPLETION_TOKENS: dict[str, int] = {
 OPENAI_JSON_RESPONSE_FORMAT: dict = {"type": "json_object"}
 
 
+# Per-model USD price table (iter-3 / J-13). Values are USD per SINGLE token
+# = the model's public list price per 1M tokens / 1e6. These are STATIC
+# CONSTANTS tuned here — NOT a paid pricing API / SaaS dependency. USD spend
+# in the cost tracker is derived from the REAL captured token counts × this
+# table. Keep this in sync with MODELS (a test enforces it). An unknown model
+# resolves to (0.0, 0.0) so the AI-token cap stays the binding hard ceiling
+# and nothing crashes.
+MODEL_PRICING: dict[str, tuple[float, float]] = {
+    # model id: (usd_per_input_token, usd_per_output_token)
+    "gpt-5.4-mini": (0.25e-6, 2.00e-6),
+    "claude-haiku-4-5": (1.00e-6, 5.00e-6),
+    "claude-sonnet-4-5-20250929": (3.00e-6, 15.00e-6),
+    "claude-sonnet-4-6": (3.00e-6, 15.00e-6),
+    "claude-opus-4-6": (15.00e-6, 75.00e-6),
+}
+
+
+def model_token_prices(model: str) -> tuple[float, float]:
+    """(usd_per_input_token, usd_per_output_token) for ``model``.
+
+    Unknown model → (0.0, 0.0): USD cannot be derived but the AI-token cap
+    still binds (it is the hard ceiling) and the caller never crashes.
+    """
+    return MODEL_PRICING.get(model, (0.0, 0.0))
+
+
+def usd_cost(model: str, input_tokens: int, output_tokens: int) -> float:
+    """USD cost for a single LLM call from its REAL token counts.
+
+    Negative / ``None`` token counts are clamped to 0 (defensive — spend is
+    monotonic and never negative).
+    """
+    price_in, price_out = model_token_prices(model)
+    it = max(0, int(input_tokens or 0))
+    ot = max(0, int(output_tokens or 0))
+    return it * price_in + ot * price_out
+
+
 def is_openai_model(model: str) -> bool:
     """True when ``model`` should be routed to the OpenAI client."""
     return model.startswith("gpt-")

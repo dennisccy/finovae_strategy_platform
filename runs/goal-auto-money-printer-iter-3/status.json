@@ -1,0 +1,32 @@
+{
+  "phase": "goal-auto-money-printer-iter-3",
+  "status": "complete",
+  "current_step": "closure_passed",
+  "updated_at": "2026-05-19T15:14:57.019696Z",
+  "started_at": "2026-05-19T11:25:15.797394Z",
+  "cli": "claude",
+  "blockers": [],
+  "fixed_blockers": [
+    "TC-07 FIXED: objective + history_scope are now persisted into the durable autoRun block at session creation via the existing session_store.write_session_meta (no new store, no schema fork, no contracts/sandbox/engine change). They survive a restart/reload and are readable from GET /api/sessions/{id}. +2 regression tests (test_open_universe_objective_and_history_scope_persisted, test_history_scope_defaults_to_none_when_omitted) written TDD RED->GREEN. Full backend suite 183 passed / 1 failed (only the pre-existing out-of-scope test_directions_cache failure); zero new regressions."
+  ],
+  "changed_files": [
+    "apps/backend/backend/cost_tracker.py",
+    "apps/backend/shared/llm_usage.py",
+    "apps/backend/shared/model_catalog.py",
+    "apps/backend/backend/auto_session.py",
+    "apps/backend/backend/pipeline.py",
+    "apps/backend/strategy/compiler.py",
+    "apps/backend/strategy/script_generator.py",
+    "apps/backend/strategy/insights_generator.py",
+    "apps/backend/tests/test_auto_session.py",
+    "apps/backend/tests/test_cost_tracker.py",
+    "apps/backend/tests/test_model_pricing.py",
+    "apps/backend/tests/test_usage_capture.py",
+    "apps/frontend/src/hooks/useBacktest.ts",
+    "apps/frontend/src/components/SessionContainer.tsx"
+  ],
+  "tests_run": true,
+  "browser_checks_run": true,
+  "qa_verdict": "PASS",
+  "next_action": "audit"
+}

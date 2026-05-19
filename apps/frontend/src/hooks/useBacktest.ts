@@ -415,6 +415,16 @@ export interface LiveSessionStatus {
 // null for manual sessions.
 export type AutoRunPhase = 'queued' | 'running' | 'complete' | 'stopped'
 
+// Recorded hard-budget spend for a headless auto-session (iter-3 / J-13).
+// Written into the durable `autoRun` block by the backend cost tracker;
+// absent (null/undefined) on legacy sessions created before iter-3.
+export interface AutoRunSpend {
+  aiTokens: number
+  usd: number
+  configsRun: number
+  wallClockSeconds?: number
+}
+
 export interface AutoRunStatus {
   status: AutoRunPhase
   stopReason: 'criteria-met' | 'budget-exhausted' | null
@@ -423,6 +433,7 @@ export interface AutoRunStatus {
   bestIterationId: string | null
   startedAt?: string
   updatedAt?: string
+  spend?: AutoRunSpend | null
 }
 
 // =============================================================================

@@ -12,6 +12,7 @@ from typing import Optional
 from anthropic import Anthropic
 from openai import BadRequestError, OpenAI
 
+from shared.llm_usage import capture_usage
 from shared.model_catalog import (
     DEFAULT_MODEL,
     OPENAI_JSON_RESPONSE_FORMAT,
@@ -258,12 +259,18 @@ Output ONLY the JSON, no explanations."""
 
         return errors
 
-    def compile(self, request: StrategyCompileRequest) -> StrategyCompileResponse:
+    def compile(
+        self,
+        request: StrategyCompileRequest,
+        usage_sink: Optional[list] = None,
+    ) -> StrategyCompileResponse:
         """
         Compile natural language into StrategySpec.
 
         Args:
             request: Compilation request with NL description
+            usage_sink: Optional list — when provided, the REAL SDK token
+                usage for this call is appended (iter-3 cost tracking).
 
         Returns:
             StrategyCompileResponse with spec or errors
@@ -308,7 +315,8 @@ Output ONLY the JSON, no explanations."""
                         u.prompt_tokens,
                         u.completion_tokens,
                     )
-                
+                capture_usage(usage_sink, self.model, response, openai=True)
+
                 response_text = response.choices[0].message.content.strip()
 
             else:
@@ -323,6 +331,8 @@ Output ONLY the JSON, no explanations."""
                         {"role": "user", "content": request.natural_language}
                     ],
                 )
+
+                capture_usage(usage_sink, self.model, response, openai=False)
 
                 # Extract JSON from response
                 response_text = response.content[0].text.strip()

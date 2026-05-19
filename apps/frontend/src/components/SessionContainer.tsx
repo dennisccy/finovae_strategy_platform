@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
-import { Loader2, CheckCircle2, StopCircle } from 'lucide-react'
-import { useBacktest, type LiveSessionStatus, type IterationNode, type AutoRunStatus } from '../hooks/useBacktest'
+import { Loader2, CheckCircle2, StopCircle, CircleDollarSign } from 'lucide-react'
+import { useBacktest, type LiveSessionStatus, type IterationNode, type AutoRunStatus, type AutoRunSpend } from '../hooks/useBacktest'
 import { useDirectionsCache, type RunOneCard } from '../hooks/useDirectionsCache'
 import { fetchCachedDirection } from '../lib/directionsApi'
 import { BacktestConfigBar } from './BacktestConfigBar'
@@ -24,9 +24,28 @@ interface SessionContainerProps {
 }
 
 /**
+ * Compact, data-forward spend readout for the AutoRunBar (iter-3 / J-13):
+ * recorded AI tokens / USD / configs explored under the hard cost budget.
+ * Returns '' when no spend has been recorded yet (legacy/just-created
+ * sessions) so the bar renders unchanged — never a NaN/undefined.
+ */
+function formatSpend(spend: AutoRunSpend): string {
+  const parts: string[] = []
+  if (typeof spend.aiTokens === 'number')
+    parts.push(`${spend.aiTokens.toLocaleString()} tok`)
+  if (typeof spend.usd === 'number') parts.push(`$${spend.usd.toFixed(4)}`)
+  if (typeof spend.configsRun === 'number')
+    parts.push(`${spend.configsRun} cfg`)
+  return parts.join(' · ')
+}
+
+/**
  * Live status strip for a headless (server-driven) auto-session. Advances
- * running → terminal without a manual page reload (J-08) and shows the
- * terminal stop reason (J-09). Hidden for manual sessions (autoRun null).
+ * running → terminal without a manual page reload (J-08), shows the terminal
+ * stop reason (J-09), and surfaces the recorded hard-budget spend (J-13).
+ * `budget-exhausted` is rendered visually distinct (amber + $ icon) from a
+ * `criteria-met` finish (emerald) and a `stopped` run (red). Hidden for
+ * manual sessions (autoRun null).
  */
 function AutoRunBar({ autoRun }: { autoRun: AutoRunStatus }) {
   const { status, stopReason, currentIteration, maxIterations } = autoRun
@@ -41,18 +60,21 @@ function AutoRunBar({ autoRun }: { autoRun: AutoRunStatus }) {
       icon = <StopCircle className="w-3.5 h-3.5 text-red-500" />
       text = 'Automated run stopped'
       tone = 'bg-red-50 border-red-200 text-red-700'
+    } else if (stopReason === 'budget-exhausted') {
+      // Visually distinct from a criteria-met finish: the hard cost budget
+      // was reached and the run was deliberately halted at the cap.
+      icon = <CircleDollarSign className="w-3.5 h-3.5 text-amber-600" />
+      text = `Automated run complete · budget reached · ${currentIteration}/${maxIterations} iterations`
+      tone = 'bg-amber-50 border-amber-200 text-amber-700'
     } else {
       icon = <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-      const reason =
-        stopReason === 'criteria-met'
-          ? 'robust targets met'
-          : stopReason === 'budget-exhausted'
-          ? 'budget reached'
-          : 'finished'
+      const reason = stopReason === 'criteria-met' ? 'robust targets met' : 'finished'
       text = `Automated run complete · ${reason} · ${currentIteration}/${maxIterations} iterations`
       tone = 'bg-emerald-50 border-emerald-200 text-emerald-700'
     }
   }
+
+  const spendText = autoRun.spend ? formatSpend(autoRun.spend) : ''
 
   return (
     <div
@@ -63,6 +85,14 @@ function AutoRunBar({ autoRun }: { autoRun: AutoRunStatus }) {
       {icon}
       <span className="truncate">{text}</span>
       {status === 'queued' && <span className="text-slate-400">(queued)</span>}
+      {spendText && (
+        <span
+          className="ml-auto shrink-0 tabular-nums opacity-75"
+          title="AI tokens / USD / configs spent under the hard budget"
+        >
+          {spendText}
+        </span>
+      )}
     </div>
   )
 }

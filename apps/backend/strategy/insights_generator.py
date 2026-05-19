@@ -19,6 +19,7 @@ from typing import Optional
 from anthropic import Anthropic
 from openai import BadRequestError, OpenAI
 
+from shared.llm_usage import capture_usage
 from shared.model_catalog import (
     DEFAULT_MODEL,
     OPENAI_JSON_RESPONSE_FORMAT,
@@ -145,6 +146,7 @@ class InsightsGenerator:
         previous_summary: str | None = None,
         previous_suggestions: list[str] | None = None,
         walk_forward_result: dict | None = None,
+        usage_sink: list | None = None,
     ) -> tuple[str, list[dict], list[str]]:
         """
         Generate insights from backtest results.
@@ -332,7 +334,8 @@ class InsightsGenerator:
                         u.prompt_tokens,
                         u.completion_tokens,
                     )
-                
+                capture_usage(usage_sink, self.model, response, openai=True)
+
                 raw_text = response.choices[0].message.content.strip()
 
             else:
@@ -370,6 +373,7 @@ class InsightsGenerator:
                         cache_read,
                         cache_creation,
                     )
+                capture_usage(usage_sink, self.model, response, openai=False)
 
                 raw_text = response.content[0].text.strip()
 

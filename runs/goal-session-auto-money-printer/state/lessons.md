@@ -68,3 +68,25 @@ per-round CPU/LLM work under a continuous server-side loop (directly relevant
 to iter-3 Optimizer J-12–J-16, which adds SCREEN/PROMOTE + planner work each
 round); any frontend live-poll/`setTimeout`-chain change (re-arm in `finally`,
 never only on success).
+
+## iter-3 — 2026-05-19T17:40:00Z
+
+**Verdict:** CONTINUE
+**Lesson:** The B1 carried fix ("skip the post-`generate` `insights` call once
+a spend cap is hit, to tighten the one-call tolerance") has a non-obvious
+cross-path trap: `_build_cost_tracker` sets the **configs cap == `max_iter`**
+on the *pinned* path (`auto_session.py:497-507`), so on the **final pinned
+iteration** `would_exceed()` returns the `"max-configs"` sentinel — a naive
+"skip insights whenever `would_exceed()` is truthy" would silently suppress
+that legitimate in-flight iteration's insights and regress J-07–J-11, and
+`test_pinned_path_unchanged_by_open_universe_addition` does **not** assert
+`insight_calls` so nothing would catch it. The correct fix must gate only on
+true spend caps `{"ai-tokens","usd","wall-clock"}` (never `"max-configs"`,
+which only gates *starting* a new config, not finishing an in-flight one) and
+must ship with an `insight_calls`-on-final-pinned-iteration regression
+assertion.
+**Applies to:** any iter touching the `auto_session.py` budget/`would_exceed`
+loop or the post-`generate`→`insights` call sequencing (directly: the J-14
+iteration that carries the B1 fix) — distinguish the `max-configs` sentinel
+from spend caps, and add the pinned-path `insight_calls` guard before changing
+in-flight LLM-call gating.
