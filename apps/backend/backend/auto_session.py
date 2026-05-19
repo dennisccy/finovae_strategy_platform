@@ -112,8 +112,12 @@ def _should_skip_insights(tracker: CostTracker) -> bool:
 # from this set (anti-goal: MUST NOT blindly fan out across the whole exchange
 # symbol list). This is deliberately NOT the 26×6 /api/symbols × /api/timeframes
 # grid, NOT env-driven, and NOT a live exchange enumeration. The deterministic
-# bounded enumerator below walks it in order (the history-surrogate/bandit +
-# LLM planner that would prioritise within it is J-15 / OUT OF SCOPE).
+# bounded enumerator below walks it in fixed order by default; iter-5 / J-15
+# adds a read-only global-history warm start that returns it as a STABLE
+# PERMUTATION (strongest historical (symbol, timeframe) family first) on an
+# effective-"global" open-universe run — still ONLY this bounded set, never a
+# fan-out. The explicit "this-run" opt-out keeps the fixed order; no LLM
+# planner (deterministic surrogate — see _resolve_history_scope/_mine_history).
 _SEED_UNIVERSE: tuple[tuple[str, str], ...] = (
     ("BTC/USDT", "4h"),
     ("ETH/USDT", "4h"),
@@ -128,6 +132,32 @@ _SEED_UNIVERSE: tuple[tuple[str, str], ...] = (
 # OHLCV Parquet cache can serve/cache it cheaply and be reused across configs.
 _OPEN_UNIVERSE_START = "2023-01-01"
 _OPEN_UNIVERSE_END = "2023-06-01"
+
+# --- history_scope effective semantics (J-15, open-universe ONLY) -----------
+# The raw supplied request value is still persisted verbatim (``historyScope``
+# in the autoRun block — null stays null); these are the EFFECTIVE resolved
+# values that actually drive behaviour. Opt-out is the single explicit
+# ``"this-run"``; the documented default ("learns from prior sessions to spend
+# tokens where payoff is highest") is global warm-start, so an omitted /
+# null / unknown-garbage value resolves to ``"global"`` (a garbage value is a
+# clean default, never a 500). The effective value is recorded as the additive
+# ``effectiveHistoryScope`` key on the existing autoRun dict (no schema fork,
+# mirrors iter-4's additive ``stage``).
+_HISTORY_SCOPE_OPT_OUT = "this-run"
+_HISTORY_SCOPE_GLOBAL = "global"
+
+
+def _resolve_history_scope(raw: Any) -> str:
+    """Resolve the RAW supplied ``history_scope`` to its EFFECTIVE value.
+
+    ``"this-run"`` (whitespace-tolerant) is the explicit opt-out. Everything
+    else — ``None``, ``""``, ``"global"``, an unknown/garbage string, or even
+    a non-string — resolves to the documented default ``"global"`` warm-start.
+    Never raises (a garbage value is a clean default, not a 500).
+    """
+    if isinstance(raw, str) and raw.strip() == _HISTORY_SCOPE_OPT_OUT:
+        return _HISTORY_SCOPE_OPT_OUT
+    return _HISTORY_SCOPE_GLOBAL
 
 
 # --- In-process cancellation registry (NO new infra) -------------------------
@@ -386,9 +416,12 @@ class AutoSessionRequest(BaseModel):
     Open-universe (J-12): omit BOTH ``symbol`` and ``timeframe`` and supply
     only ``objective`` + ``budget`` — the deterministic bounded enumerator
     explores ≥2 distinct configs from the seed universe. ``objective`` v1
-    supports only ``"robust"`` (the single-robust-scalar Non-Goal);
-    ``history_scope`` is accepted & persisted but its cross-run *learning*
-    is J-15 / OUT OF SCOPE this iteration."""
+    supports only ``"robust"`` (the single-robust-scalar Non-Goal).
+    ``history_scope`` is accepted & persisted verbatim AND (iter-5 / J-15)
+    now drives cross-run behaviour for an open-universe run: ``"this-run"``
+    opts out (no mining, fixed seed order); anything else — omitted / null /
+    ``"global"`` / unknown — resolves to global read-only warm-start (see
+    :func:`_resolve_history_scope`). It is inert on the pinned path."""
 
     natural_language: str
     symbol: Optional[str] = None
@@ -531,6 +564,174 @@ def _config_plan(req: AutoSessionRequest) -> tuple[list[_Config], bool]:
         [_Config(sym, tf, s, e, sd, ed) for sym, tf in _SEED_UNIVERSE],
         True,
     )
+
+
+# =============================================================================
+# Read-only global-history warm start (J-15, open-universe + effective global)
+#
+# A dependency-light read-only surrogate (no LLM planner — the acceptance is
+# satisfiable deterministically; the spec's explicit core design): mine the
+# EXISTING durable session_store for prior auto-sessions' promoted,
+# walk-forward-bearing iterations, aggregate the best robust score per
+# (symbol, timeframe) family, and reorder the bounded seed enumeration so the
+# historically strongest family is screened/promoted first. Read-only: no
+# write/rename/delete/in-place mutation of any prior artifact (iter-0 / J-02).
+# Best-effort: a missing/corrupt session or iteration is skipped (mirrors the
+# SCREEN/PROMOTE except discipline) — mining never raises out or hangs the
+# run. The "MUST NOT be re-sent uncached every round" anti-goal is satisfied
+# structurally: this runs EXACTLY ONCE per run, off the event-loop thread (no
+# per-round re-mining, no LLM call to cache).
+# =============================================================================
+
+def _mine_history(
+    current_session_id: str,
+) -> tuple[dict[tuple[str, str], float], int]:
+    """Read-only mine of the existing durable store.
+
+    Returns ``(best robust score per (symbol, timeframe) family, number of
+    PRIOR sessions that contributed ≥1 usable promoted iteration)``. Only
+    promoted (``stage == "promote"``), walk-forward-bearing
+    (non-null ``walkForwardResult``), finite-``robustScore`` iterations
+    count. The current run's own session is excluded (cross-run only). Uses
+    ONLY the existing ``session_store`` read helpers; never mutates anything.
+    """
+    family_best: dict[tuple[str, str], float] = {}
+    contributing = 0
+    live_root = session_store.BASE_DIR / "live"
+    try:
+        session_dirs = (
+            sorted(d for d in live_root.iterdir() if d.is_dir())
+            if live_root.exists() else []
+        )
+    except OSError:
+        return {}, 0
+
+    for sdir in session_dirs:
+        sid = sdir.name
+        if sid == current_session_id:
+            continue  # cross-run only — never the current run's own session
+        try:
+            contributed = False
+            for itdir in session_store.list_iteration_dirs(sid):
+                name = itdir.name
+                if "_" not in name:
+                    continue
+                iter_id = name.split("_", 1)[1]
+                meta = session_store.read_iteration_meta(sid, iter_id)
+                if not isinstance(meta, dict):
+                    continue
+                if meta.get("stage") != "promote":
+                    continue
+                if meta.get("walkForwardResult") is None:
+                    continue
+                score = meta.get("robustScore")
+                if not isinstance(score, (int, float)) or isinstance(
+                    score, bool
+                ):
+                    continue
+                score = float(score)
+                if not math.isfinite(score):
+                    continue
+                params = meta.get("params") or {}
+                sym = params.get("symbol")
+                tf = params.get("timeframe")
+                if not sym or not tf:
+                    continue
+                fam = (sym, tf)
+                if fam not in family_best or score > family_best[fam]:
+                    family_best[fam] = score
+                contributed = True
+            if contributed:
+                contributing += 1
+        except Exception:  # noqa: BLE001 - best-effort: skip a bad session
+            continue
+    return family_best, contributing
+
+
+def _reorder_configs(
+    configs: list[_Config], family_best: dict[tuple[str, str], float]
+) -> list[_Config]:
+    """Return ``configs`` as a STABLE PERMUTATION ordered by mined family
+    strength: historically strongest ``(symbol, timeframe)`` first; families
+    with no mined history keep the existing fixed seed order, after all mined
+    ones; equal mined scores preserve the original seed order (stable). It is
+    always a permutation of the SAME bounded set — no symbol/timeframe is
+    added or dropped (no fan-out beyond the seed universe).
+    """
+    indexed = list(enumerate(configs))
+
+    def _key(item: tuple[int, _Config]) -> tuple[int, float, int]:
+        i, cfg = item
+        fam = (cfg.symbol, cfg.timeframe)
+        if fam in family_best:
+            # group 0 (mined) before group 1 (unseen); strongest first;
+            # original index as the stable, deterministic tie-break.
+            return (0, -family_best[fam], i)
+        return (1, 0.0, i)
+
+    return [cfg for _, cfg in sorted(indexed, key=_key)]
+
+
+def _strongest_family(
+    family_best: dict[tuple[str, str], float],
+) -> tuple[tuple[str, str], float]:
+    """The cited family: highest mined robust score, tie-broken by the fixed
+    seed-universe order (then lexicographically) for a deterministic citation.
+    """
+    seed_index = {fam: i for i, fam in enumerate(_SEED_UNIVERSE)}
+
+    def _key(kv: tuple[tuple[str, str], float]) -> tuple[float, int, int]:
+        fam, score = kv
+        return (score, -seed_index.get(fam, len(_SEED_UNIVERSE)),
+                -ord(fam[0][0]) if fam[0] else 0)
+
+    fam, score = max(family_best.items(), key=_key)
+    return fam, score
+
+
+async def _warm_start_configs(
+    session_id: str, configs: list[_Config]
+) -> list[_Config]:
+    """Once-per-run, off-event-loop read-only warm start (open-universe +
+    effective global scope ONLY — the caller guards both).
+
+    Mines prior sessions (via ``asyncio.to_thread`` — the blocking
+    multi-session file walk MUST NOT run on the event-loop thread, iter-2
+    lesson), reorders ``configs`` to a stable permutation by mined family
+    strength, and appends EXACTLY ONE planner-decision activity entry citing
+    the concrete prior evidence. No usable prior history → ``configs``
+    returned unchanged and NO entry appended (byte-identical to the
+    no-warm-start path; J-12/J-13/J-14 preserved). Plain operator language,
+    no API keys/secrets, same entry shape the existing feed already renders.
+    """
+    family_best, n_sessions = await asyncio.to_thread(
+        _mine_history, session_id
+    )
+    if not family_best:
+        # Empty store / no prior promoted iterations → fixed seed order, no
+        # citation. The fallback is byte-identical to today's enumeration.
+        return configs
+
+    reordered = _reorder_configs(configs, family_best)
+    (sym, tf), top_score = _strongest_family(family_best)
+    sessions_word = "session" if n_sessions == 1 else "sessions"
+    await asyncio.to_thread(
+        session_store.append_activity_entries, session_id, [
+            _activity(
+                "auto-run",
+                (f"Warm start (global history): prioritising {sym} {tf} "
+                 f"— prior best robust {top_score:.2f} across "
+                 f"{n_sessions} prior {sessions_word}"),
+                # Run-level decision, not tied to one iteration: an empty
+                # iterationId lands it ungrouped at the TOP of the existing
+                # feed (frontend ActivityLog.groupByIteration), fully
+                # visible, no new component — UI-indistinguishable from the
+                # iter-2/iter-4 auto-run markers it renders identically.
+                "",
+            ),
+        ]
+    )
+    return reordered
 
 
 def _build_cost_tracker(
@@ -1312,9 +1513,29 @@ async def _run_auto_session_impl(
                           maxIterations=max_iter, stopReason=None,
                           bestIterationId=_existing.get("bestIterationId"),
                           startedAt=_existing.get("startedAt") or _now_iso(),
+                          # RAW history_scope, persisted verbatim (null stays
+                          # null). The endpoint already wrote it; preserve
+                          # that exact value (idempotent) and also record it
+                          # when the loop is invoked directly so the durable
+                          # record is coherent regardless of entry path.
+                          historyScope=_existing.get(
+                              "historyScope", req.history_scope),
                           spend=tracker.snapshot())
 
     if is_open:
+        # iter-5 / J-15: resolve the EFFECTIVE history scope (raw value still
+        # persisted verbatim by the endpoint) and record it as the additive
+        # ``effectiveHistoryScope`` autoRun key — open-universe ONLY (the
+        # pinned path stays byte-unchanged: no key, no mine, no reorder).
+        effective_scope = _resolve_history_scope(req.history_scope)
+        await _update_autorun(session_id,
+                              effectiveHistoryScope=effective_scope)
+        if effective_scope == _HISTORY_SCOPE_GLOBAL:
+            # Read-only warm start: mine prior sessions off-thread EXACTLY
+            # ONCE here (before the SCREEN loop), reorder the bounded seed
+            # enumeration, and emit the planner-decision citation. Opt-out
+            # ("this-run") skips this entirely → fixed seed order, no entry.
+            configs = await _warm_start_configs(session_id, configs)
         stop_reason, iteration_index, best_id = await _run_staged_open_universe(
             session_id, req,
             pipeline=pipeline, semaphore=semaphore,
@@ -1562,8 +1783,12 @@ async def create_auto_session(req: AutoSessionRequest, request: Request):
             # survives a worker restart + browser reload and is readable from
             # GET /api/sessions/{id}. The loop's _update_autorun_sync does a
             # read-merge-write that preserves these keys every round.
-            # history_scope's cross-run *learning* is J-15 / OUT OF SCOPE
-            # this iteration; only accept-&-persist is in scope here.
+            # ``historyScope`` is the RAW supplied value, persisted verbatim
+            # (null stays null). From iter-5 / J-15 it ALSO drives behaviour:
+            # the loop resolves the EFFECTIVE scope (_resolve_history_scope)
+            # and records it as the additive ``effectiveHistoryScope`` key
+            # (open-universe only) — read-only global warm-start vs the
+            # explicit ``"this-run"`` opt-out.
             "objective": objective,
             "historyScope": req.history_scope,
         },

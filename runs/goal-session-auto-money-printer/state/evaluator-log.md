@@ -250,3 +250,75 @@ demo / leaderboard) last — its robust-best invariant is already preserved here
 closure-verdict remediation `./scripts/automation/ui-test-design-phase.sh
 goal-auto-money-printer-iter-4` then `phase-closure-check.sh …` to regenerate the
 two transient stub artifacts — no code/test/journey work implied.
+
+---
+
+## Iteration 5 — goal-auto-money-printer-iter-5
+
+**Date:** 2026-05-19T21:15:00Z
+**Verdict:** CONTINUE
+**Depth dispatched:** full
+**Journey deltas:**
+- Newly passing: J-15 (failing → passing)
+- Re-verified still-passing (live browser QA this iter): J-02, J-08, J-10, J-12, J-13, J-14
+- Re-verified still-passing (pinned/robust-best source-traced + suite green): J-07, J-09
+- Carried still-passing (code path not in confined 2-file diff; suite 200p/1f): J-01, J-03, J-04, J-05, J-06, J-11
+- Newly failing: none
+- Regressed: none
+- Anti-goal violations: none (independently re-verified at source-diff + write-primitive-scan + test + screenshot level)
+
+**Reasoning:** The J-15 read-only global-history warm-start + `history_scope`
+opt-out slice is genuinely implemented as a deterministic surrogate (no LLM,
+the spec's explicit core design), not just summarized — I traced every
+load-bearing claim to source. (1) **Read-only proven structurally**: a
+write-primitive scan of the *entire* added `auto_session.py` diff finds ZERO
+file-mutation calls (`open(...w`/`json.dump`/`unlink`/`rename`/`shutil`/
+`derive_session_tabs`) — the only writes anywhere are `append_activity_entries`
++ `_update_autorun` on the *current* run; `_mine_history` enumerates
+`BASE_DIR/live` and uses only `list_iteration_dirs`+`read_iteration_meta`
+(pure reads), excludes the current session, promote∧WF∧finite filter,
+best-effort `except`. Corroborated by live 38-file byte-identical hash + unit
+`test_history_mining_is_read_only_*` + UT-11 screenshot (S-1 detail intact,
+values match). (2) **Opt-out** `_resolve_history_scope`: only whitespace-
+stripped `"this-run"` opts out; None/""/garbage/non-string → `"global"`, never
+raises (clean default, no 500); UT-06 screenshot shows the `this-run` run
+screening `BTC/USDT 4h` first (fixed `_SEED_UNIVERSE[0]`, NO citation) vs the
+`global` run's `ETH/USDT 4h`-first reorder + amber citation — the J-15
+observable differential is visually verifiable. (3) **Once-per-run / not-
+re-sent-uncached**: `_warm_start_configs` calls `asyncio.to_thread(_mine_history)`
+exactly once at line 1538, guarded by `is_open ∧ effective=="global"`, before
+the SCREEN loop (iter-2 off-thread lesson honoured); no LLM anywhere so the
+prompt-caching anti-goal is satisfied structurally exactly as the spec reasons.
+(4) `_reorder_configs` is `sorted()` of the same list (bounded-seed permutation,
+set/len unit-asserted — no fan-out). (5) Pinned `else:` branch byte-untouched
+(no key/mine/reorder/citation); robust-best `select_best`/`robust_score` over
+promoted unchanged (unit + live TC-02: warm-start `ETH/USDT 4h` screened first
+but `BTC/USDT 4h` promoted-best). Frozen-files + frontend git diff independently
+empty. Suite **independently re-run**: `test_auto_session` 53 passed, full
+**200 passed / 1 failed** (only the pre-existing tolerated `test_directions_cache`;
+iter-4 188p/1f → +12 passing, 0 new regressions). No skip/xfail added; 12 new
+tests + 2 consciously-strengthened. The reviewer's lone MINOR (a third stale
+"J-15/OUT" comment) was genuinely fixed by the auditor (verified: zero residual
+"J-15/OUT"/"walks it in order" text at `_SEED_UNIVERSE`). Review PASS_WITH_NOTES,
+QA PASS (19/19 + UI-PASS), browser-QA PASS (12/13; UT-07 P2 empty-store skip
+justified — non-isolated durable store correctly honours the no-`/tmp` anti-goal;
+its deterministic form is the passing isolated-store unit
+`test_no_prior_history_fallback_is_fixed_seed_order`), audit PASS. NOT
+GOAL_ACHIEVED — J-16 still `failing` (the spec itself anticipates this at L121;
+J-16 not independently demonstrated, only its invariant preserved; the agent
+rule forbids GOAL_ACHIEVED with any failing journey). NOT REGRESSION (no prior
+passing journey broke; no critical anti-goal). NOT STALLED (J-15 newly passing,
+J-16 clear/tractable).
+
+**Next-step recommendation:** iter-6 = **J-16** at **full** depth — the deep
+overfit-gating stress demonstration / leaderboard: an open-universe run where a
+higher raw-return but WFE-failing / over-leveraged candidate is provably NOT
+marked best, surfaced in the leaderboard / activity feed. Its robust-best
+invariant is only *preserved* here (warm-start changes SCREEN order, never
+selection), not *demonstrated as a journey* — iter-6 must exercise it under a
+deliberately overfit-tempting open universe. Full pipeline (consistent with
+every Optimizer-layer iter 2–5) since J-16 is the last journey and gates
+GOAL_ACHIEVED. **Outer-loop, not iter-6 developer:** the recorded iter-4
+closure carryover (regenerate the two transient `ui-test-design-phase.sh`
+stub artifacts for `goal-auto-money-printer-iter-4`) remains orchestrator work
+and must not flip any journey/anti-goal verdict.

@@ -113,3 +113,29 @@ verdict.
 or the closure verdict is CLOSURE-FAIL — check whether the block is an
 implementation/journey/anti-goal failure or a transient downstream
 pipeline-artifact gap before considering REGRESSION/ESCALATE.
+
+## iter-5 — 2026-05-19T21:15:00Z
+
+**Verdict:** CONTINUE
+**Lesson:** Two non-obvious takeaways from the J-15 verification. (1) For a
+"read-only mine of prior artifacts" anti-goal, a *write-primitive scan of the
+entire added diff* (`grep -E '\.write\(|open\([^)]*[\"'"'"']w|json\.dump|\.unlink|
+\.rename|shutil\.|os\.remove|derive_session_tabs'` over `git diff HEAD`) is a
+**stronger** structural proof than a content-hash before/after assertion alone
+— hashes only verify the *one* run that's tested, the scan forecloses every
+*possible* future write at source level. The only legitimate writes were
+`session_store.append_activity_entries` + `_update_autorun` on the **current**
+session. Use this scan as the first check on any future "read-only X" claim.
+(2) The durable-store anti-goal (`BACKTEST_STORE_DIR` MUST NOT be `/tmp`)
+implicitly *prevents* a browser-QA test plan from achieving an "empty store"
+precondition without restarting the backend with a different env — `~113`
+prior sessions accumulate by design. When a J-15-style test needs a known
+initial state (empty history, single F1 family, etc.), ship the assertion as a
+deterministic isolated-store **unit test** with the `store` fixture; do NOT
+expect browser-QA to produce empty/isolated state, and do NOT mark the unit
+proof as a "fallback" — it's the primary proof, the live browser run is the
+observable corroboration.
+**Applies to:** Any future iter touching `session_store` reads, claiming
+read-only behaviour on prior artifacts, or whose test plan presupposes
+isolated/empty durable-store state. Especially iter-6 (J-16 leaderboard /
+overfit-gating) which will read promoted iterations across the same store.

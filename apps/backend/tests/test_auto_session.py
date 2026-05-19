@@ -1348,12 +1348,13 @@ def test_open_universe_endpoint_accepted_and_listed(store, client, monkeypatch):
 def test_open_universe_objective_and_history_scope_persisted(
     store, client, monkeypatch
 ):
-    # TC-07 / spec "accepted & PERSISTED": objective + history_scope must be
-    # durably written to the existing session store (readable after a fresh
-    # re-read — the exact path a worker restart / browser reload takes) AND
-    # surfaced in the GET /api/sessions/{id} payload, not merely validated
-    # then discarded. history_scope's cross-run *learning* stays J-15/OUT;
-    # only accept-&-persist is in scope this iteration.
+    # iter-5: the RAW supplied history_scope is still persisted verbatim to
+    # the durable store (survives a worker restart / browser reload) and
+    # surfaced in GET /api/sessions/{id}. From iter-5 `history_scope:
+    # "this-run"` ALSO changes behaviour (opt-out), not just metadata:
+    # persistence is asserted here; the deterministic opt-out behaviour (no
+    # mining, no planner-decision citation, fixed seed order) is asserted
+    # below and end-to-end in test_this_run_opt_out_no_mining_no_citation_*.
     pipe = FakePipeline([{"total_return": 0.1, "wfe": 0.7}])
     monkeypatch.setattr(auto_session, "_get_pipeline", lambda: pipe)
 
@@ -1377,10 +1378,23 @@ def test_open_universe_objective_and_history_scope_persisted(
     assert payload_auto["objective"] == "robust"
     assert payload_auto["historyScope"] == "this-run"
 
+    # iter-5 opt-out behaviour (deterministic regardless of how far the
+    # background loop progressed): a "this-run" run NEVER emits a
+    # planner-decision / warm-start citation.
+    assert not any(
+        e["type"] == "auto-run" and e["content"].startswith("Warm start")
+        for e in ss.read_activity_log(sid)
+    ), "history_scope:'this-run' (opt-out) must never emit a warm-start entry"
+
 
 def test_history_scope_defaults_to_none_when_omitted(store, client, monkeypatch):
-    # Omitted history_scope persists as null (accepted, no implicit value);
-    # objective still defaults to and persists "robust".
+    # iter-5: the RAW supplied value still persists verbatim — omitting
+    # history_scope persists `null` (no implicit value written into the
+    # request record); objective still defaults to/persists "robust". The
+    # *effective* scope of an omitted value is now "global" (warm-start),
+    # asserted positively with prior history present in
+    # test_default_omitted_history_scope_resolves_to_global. Here the store
+    # is empty so the correct no-prior-history fallback is NO citation.
     pipe = FakePipeline([{"total_return": 0.1, "wfe": 0.7}])
     monkeypatch.setattr(auto_session, "_get_pipeline", lambda: pipe)
 
@@ -1394,6 +1408,13 @@ def test_history_scope_defaults_to_none_when_omitted(store, client, monkeypatch)
     auto = ss.read_session_meta(sid)["autoRun"]
     assert auto["objective"] == "robust"
     assert auto["historyScope"] is None
+
+    # Empty store -> effective-global resolves but mining finds nothing, so
+    # the byte-identical no-prior-history fallback emits NO citation.
+    assert not any(
+        e["type"] == "auto-run" and e["content"].startswith("Warm start")
+        for e in ss.read_activity_log(sid)
+    )
 
 
 def test_unsupported_objective_is_422(client):
@@ -1629,3 +1650,448 @@ async def test_promote_stage_reuses_screened_strategy_full_pipeline(store):
     assert pipe.insight_models == ["claude-sonnet-4-6"] * k
     # Best is a promoted iteration chosen by the robust objective.
     assert final["bestIterationId"] in {n["id"] for n in promote_nodes}
+
+
+# =============================================================================
+# iter-5 / J-15 — Read-only global-history warm start + history_scope opt-out.
+#
+# A second open-universe run with effective `history_scope: "global"` (the
+# default) warm-starts from prior sessions: a READ-ONLY miner of the existing
+# durable store reorders the bounded-seed SCREEN enumeration so the historically
+# strongest (symbol, timeframe) family is screened/promoted first, and emits ONE
+# planner-decision activity entry citing the prior-session evidence. A
+# `history_scope: "this-run"` run opts out entirely (no mining, no citation,
+# fixed seed order). Prior artifacts are never mutated; the once-per-run /
+# robust-best / pinned / budget invariants all still hold.
+# =============================================================================
+
+import hashlib  # noqa: E402 - iter-5 read-only-proof helper
+
+# Default-unscreened seed family (index 5; the fixed SCREEN prefix is the first
+# _SCREEN_SET_SIZE=4 seeds). Without warm-start it is NEVER screened/promoted;
+# with warm-start it is moved to the front — the causal J-15 signal.
+_F1_DEFAULT_UNSCREENED = auto_session._SEED_UNIVERSE[5]  # ("ETH/USDT", "1h")
+
+
+def _seed_prior_promoted(sid: str, family: tuple[str, str], robust: float,
+                         *, wfe: float = 0.7, extra_noise: bool = False) -> None:
+    """Seed a PRIOR auto-session with one promoted, walk-forward-bearing
+    iteration for ``family`` via the REAL store write path (exactly the
+    bytes ``write_iteration`` persists for a real promoted node — meta.json
+    carries params/stage/walkForwardResult/robustScore). Optionally adds a
+    screen-only + an error iteration that the miner MUST ignore."""
+    sym, tf = family
+    ss.write_session_meta(sid, {
+        "name": f"prior {sid}", "lastAccessedAt": 1,
+        "autoRun": {"status": "complete", "stopReason": "budget-exhausted"},
+    })
+    ss.write_iteration(sid, 1, {
+        "id": f"{sid}-promote-1", "prompt": "p", "scriptCode": "c",
+        "scriptId": "s1", "strategyName": "S", "status": "complete",
+        "result": {"run_id": "r", "total_return": 0.2}, "rating": None,
+        "insights": {"summary": "", "suggestions": []},
+        "totalReturn": 0.2, "winRate": 0.5, "numTrades": 20, "sharpe": 1.2,
+        "maxDrawdown": 0.1, "robustScore": robust, "modelUsed": "gpt-5.4-mini",
+        "params": {"symbol": sym, "timeframe": tf, "start_date": "2023-01-01",
+                   "end_date": "2023-06-01", "initial_capital": 10000.0,
+                   "exchange": "binance", "allow_short": False, "leverage": 1},
+        "timestamp": "2026-01-01T00:00:00+00:00", "parentId": None,
+        "walkForwardResult": {"wfe": wfe, "num_windows": 3,
+                              "combined_oos_return": 0.15,
+                              "combined_oos_sharpe": 1.0},
+        "walkForwardStatus": "complete", "stage": "promote",
+    })
+    if extra_noise:
+        # screen-only: huge robust but stage!=promote -> miner MUST ignore.
+        ss.write_iteration(sid, 2, {
+            "id": f"{sid}-screen-1", "status": "complete",
+            "params": {"symbol": "SOL/USDT", "timeframe": "4h"},
+            "robustScore": 999.0, "walkForwardResult": None, "stage": "screen",
+        })
+        # promoted but walk-forward MISSING -> miner MUST ignore.
+        ss.write_iteration(sid, 3, {
+            "id": f"{sid}-promote-nowf", "status": "complete",
+            "params": {"symbol": "BNB/USDT", "timeframe": "1h"},
+            "robustScore": 888.0, "walkForwardResult": None, "stage": "promote",
+        })
+        # error iteration -> miner MUST ignore.
+        ss.write_iteration(sid, 4, {
+            "id": f"{sid}-err", "status": "error",
+            "params": {"symbol": "BTC/USDT", "timeframe": "4h"},
+            "robustScore": None, "error": "boom",
+        })
+
+
+def _snapshot_dir(root) -> dict:
+    """relpath -> (sha256, mtime_ns) for every file under ``root`` — the
+    read-only-proof fingerprint (content AND mtime AND the exact file set)."""
+    snap: dict = {}
+    for p in sorted(root.rglob("*")):
+        if p.is_file():
+            snap[str(p.relative_to(root))] = (
+                hashlib.sha256(p.read_bytes()).hexdigest(),
+                p.stat().st_mtime_ns,
+            )
+    return snap
+
+
+def _screen_families_in_order(sid: str) -> list[tuple[str, str]]:
+    """The SCREEN enumeration as the operator sees it: families in
+    activity-feed SCREEN-marker order."""
+    fams: list[tuple[str, str]] = []
+    for e in ss.read_activity_log(sid):
+        if e["type"] == "auto-run" and e["content"].startswith("SCREEN config"):
+            # "SCREEN config N: SYM TF"
+            tail = e["content"].split(": ", 1)[1]
+            sym, tf = tail.split(" ")
+            fams.append((sym, tf))
+    return fams
+
+
+def _warm_start_entries(sid: str) -> list[dict]:
+    return [e for e in ss.read_activity_log(sid)
+            if e["type"] == "auto-run"
+            and e["content"].startswith("Warm start")]
+
+
+# --- Pure helpers (deterministic, no loop) ---------------------------------
+
+def test_resolve_history_scope_semantics():
+    r = auto_session._resolve_history_scope
+    # Opt-out is the explicit "this-run" only (whitespace-tolerant).
+    assert r("this-run") == "this-run"
+    assert r("  this-run  ") == "this-run"
+    # Default / explicit-global / unknown-garbage all resolve to global
+    # (the documented default; opt-out is the explicit "this-run").
+    assert r(None) == "global"
+    assert r("") == "global"
+    assert r("global") == "global"
+    assert r("GLOBAL") == "global"
+    assert r("totally-bogus") == "global"
+    assert r(123) == "global"  # type: ignore[arg-type]  # no crash, no 500
+
+
+def test_reorder_configs_is_stable_bounded_permutation():
+    configs, is_open = auto_session._config_plan(_open_req())
+    assert is_open and len(configs) == len(auto_session._SEED_UNIVERSE)
+    seed = list(auto_session._SEED_UNIVERSE)
+    fam_best = {seed[5]: 0.9, seed[2]: 0.4}  # idx5 strongest, idx2 next
+    order = auto_session._reorder_configs(configs, fam_best)
+    fams = [(c.symbol, c.timeframe) for c in order]
+    # Permutation of the SAME bounded seed universe — no add/drop/fan-out.
+    assert set(fams) == set(seed)
+    assert len(fams) == len(seed)
+    # Strongest mined family first, then next mined.
+    assert fams[0] == seed[5]
+    assert fams[1] == seed[2]
+    # Unseen families keep the original fixed seed order, after the mined.
+    assert fams[2:] == [f for f in seed if f not in fam_best]
+    # Ties preserve original seed order (stable).
+    tie = {seed[3]: 0.5, seed[1]: 0.5}
+    tied = [(c.symbol, c.timeframe)
+            for c in auto_session._reorder_configs(configs, tie)]
+    assert tied[0] == seed[1] and tied[1] == seed[3]  # seed-1 precedes seed-3
+
+
+def test_mine_history_read_only_filters_and_excludes_current(store):
+    _seed_prior_promoted("prior-A", _F1_DEFAULT_UNSCREENED, 0.81,
+                         extra_noise=True)
+    # The CURRENT run's own session has a promoted iter — MUST be excluded.
+    _seed_prior_promoted("cur", ("BTC/USDT", "4h"), 5.0)
+
+    fam_best, n_sessions = auto_session._mine_history("cur")
+
+    assert fam_best == {_F1_DEFAULT_UNSCREENED: 0.81}, (
+        "only the promoted WF-bearing iter counts; screen-only / no-WF / "
+        "error iters and the current session are excluded"
+    )
+    assert n_sessions == 1
+
+
+# --- End-to-end behaviour (deterministic via awaited _run) -----------------
+
+async def test_global_warm_start_reorders_and_cites_prior(store):
+    # Run #1 already finished: a prior session whose promoted best family is
+    # F1 (a DEFAULT-UNSCREENED seed). Run #2 with history_scope:"global".
+    _seed_prior_promoted("run1", _F1_DEFAULT_UNSCREENED, 0.78)
+    f1 = _F1_DEFAULT_UNSCREENED
+    # F1 also has the top in-sample Sharpe so, once warm-start moves it into
+    # the SCREEN prefix, it ranks #1 and is the FIRST promoted family.
+    by_cfg = {f1: {"sharpe": 3.0, "total_return": 0.3, "wfe": 0.8,
+                   "num_trades": 25, "num_windows": 3}}
+    pipe = FakePipeline([{"total_return": 0.1, "sharpe": 0.5, "wfe": 0.6,
+                          "num_trades": 15}], by_cfg=by_cfg)
+    sid = "run2-global"
+    final = await _run(
+        sid,
+        _open_req(history_scope="global",
+                  budget={"max_iterations": 9, "max_configs": 6}),
+        pipe,
+    )
+
+    assert final["status"] == "complete"
+    # Effective scope observable; raw persisted value verbatim.
+    assert final["effectiveHistoryScope"] == "global"
+    assert ss.read_session_meta(sid)["autoRun"]["historyScope"] == "global"
+
+    # Exactly ONE planner-decision citation, citing the concrete prior
+    # evidence (family + mined robust + prior-session count). No secrets.
+    warm = _warm_start_entries(sid)
+    assert len(warm) == 1
+    content = warm[0]["content"]
+    assert "ETH/USDT" in content and "1h" in content
+    assert "0.78" in content
+    assert "1 prior session" in content
+    assert "key" not in content.lower() and "secret" not in content.lower()
+
+    # The SCREEN enumeration is a permutation of the bounded seed with F1
+    # first (warm-start moved a default-unscreened family into the prefix).
+    screen_fams = _screen_families_in_order(sid)
+    assert len(screen_fams) == auto_session._SCREEN_SET_SIZE
+    assert screen_fams[0] == f1
+    assert set(screen_fams) <= set(auto_session._SEED_UNIVERSE)
+
+    # First promoted config's family == F1 (J-15 acceptance).
+    _, promote_nodes = _nodes_by_stage(sid)
+    assert promote_nodes, "warm-started F1 must be screened AND promoted"
+    first_promoted = min(
+        promote_nodes,
+        key=lambda n: next(i for i, d in enumerate(ss.list_iteration_dirs(sid))
+                            if d.name.endswith("_" + n["id"])),
+    )
+    assert (first_promoted["params"]["symbol"],
+            first_promoted["params"]["timeframe"]) == f1
+
+
+async def test_this_run_opt_out_no_mining_no_citation_fixed_order(store):
+    # Strong prior history for a default-unscreened family exists, but
+    # history_scope:"this-run" opts out ENTIRELY: no mining, no citation,
+    # byte-identical fixed seed order — F1 is NOT screened/promoted.
+    _seed_prior_promoted("run1", _F1_DEFAULT_UNSCREENED, 0.95)
+
+    calls: list = []
+    real_mine = auto_session._mine_history
+    monkeypatch_target = auto_session
+
+    def _counting_mine(sid):
+        calls.append(sid)
+        return real_mine(sid)
+
+    monkeypatch_target._mine_history = _counting_mine
+    try:
+        pipe = FakePipeline([{"total_return": 0.2, "sharpe": 1.5, "wfe": 0.7,
+                              "num_trades": 20}])
+        sid = "run3-thisrun"
+        final = await _run(
+            sid,
+            _open_req(history_scope="this-run",
+                      budget={"max_iterations": 9, "max_configs": 6}),
+            pipe,
+        )
+    finally:
+        monkeypatch_target._mine_history = real_mine
+
+    assert final["status"] == "complete"
+    assert final["effectiveHistoryScope"] == "this-run"
+    assert ss.read_session_meta(sid)["autoRun"]["historyScope"] == "this-run"
+
+    # Opt-out: the miner is NEVER invoked.
+    assert calls == [], "history_scope:'this-run' must not mine prior sessions"
+    # No planner-decision / warm-start citation at all.
+    assert _warm_start_entries(sid) == []
+    # SCREEN order is byte-identical to today's fixed _SEED_UNIVERSE prefix.
+    screen_fams = _screen_families_in_order(sid)
+    assert screen_fams == list(
+        auto_session._SEED_UNIVERSE[:auto_session._SCREEN_SET_SIZE]
+    )
+    # F1 (default-unscreened) is NEITHER screened NOR promoted (proves the
+    # warm-start reorder in the global test was the actual cause).
+    assert _F1_DEFAULT_UNSCREENED not in _distinct_cfgs(sid)
+
+
+async def test_default_omitted_history_scope_resolves_to_global(store):
+    # Omitted history_scope: raw persists as null, the EFFECTIVE scope is
+    # "global" and warm-start is ACTIVE when prior history exists.
+    _seed_prior_promoted("run1", _F1_DEFAULT_UNSCREENED, 0.66)
+    by_cfg = {_F1_DEFAULT_UNSCREENED: {"sharpe": 3.0, "total_return": 0.3,
+                                       "wfe": 0.8, "num_trades": 25}}
+    pipe = FakePipeline([{"total_return": 0.1, "sharpe": 0.4, "wfe": 0.5,
+                          "num_trades": 12}], by_cfg=by_cfg)
+    sid = "run2-default"
+    final = await _run(
+        sid, _open_req(budget={"max_iterations": 9, "max_configs": 6}), pipe
+    )
+
+    assert final["effectiveHistoryScope"] == "global"
+    # Raw supplied value persists verbatim (null stays null).
+    assert ss.read_session_meta(sid)["autoRun"]["historyScope"] is None
+    warm = _warm_start_entries(sid)
+    assert len(warm) == 1 and "0.66" in warm[0]["content"]
+    assert _screen_families_in_order(sid)[0] == _F1_DEFAULT_UNSCREENED
+
+
+async def test_no_prior_history_fallback_is_fixed_seed_order(store):
+    # Empty store + effective-global (default): mining finds nothing, so the
+    # SCREEN enumeration is BYTE-IDENTICAL to today's fixed _SEED_UNIVERSE
+    # and NO citation is emitted (J-12/J-13/J-14 preserved unchanged).
+    pipe = FakePipeline([{"total_return": 0.2, "sharpe": 1.5, "wfe": 0.7,
+                          "num_trades": 20}])
+    sid = "run-nohist"
+    final = await _run(
+        sid, _open_req(budget={"max_iterations": 9, "max_configs": 6}), pipe
+    )
+    assert final["status"] == "complete"
+    assert final["effectiveHistoryScope"] == "global"
+    assert _warm_start_entries(sid) == []
+    assert _screen_families_in_order(sid) == list(
+        auto_session._SEED_UNIVERSE[:auto_session._SCREEN_SET_SIZE]
+    )
+
+
+async def test_history_mining_is_read_only_no_prior_artifact_mutation(store):
+    # iter-0 lesson / J-02 guard: snapshot a content+mtime fingerprint of
+    # EVERY prior-session file before run #2, assert byte-identical after —
+    # no mutate / delete / rename / add to any prior artifact.
+    _seed_prior_promoted("run1", _F1_DEFAULT_UNSCREENED, 0.71,
+                         extra_noise=True)
+    run1_dir = ss.BASE_DIR / "live" / "run1"
+    before = _snapshot_dir(run1_dir)
+    assert before, "prior session must have files to fingerprint"
+
+    pipe = FakePipeline([{"total_return": 0.2, "sharpe": 1.5, "wfe": 0.7,
+                          "num_trades": 20}])
+    await _run(
+        "run2-readonly",
+        _open_req(history_scope="global",
+                  budget={"max_iterations": 9, "max_configs": 6}),
+        pipe,
+    )
+
+    after = _snapshot_dir(run1_dir)
+    assert after == before, (
+        "global-history mining MUST be read-only — no prior-session file "
+        "content, mtime, name, or set may change"
+    )
+
+
+async def test_warm_start_mined_exactly_once_per_run(store):
+    # The mine+reorder+citation happens EXACTLY ONCE per run (not per
+    # SCREEN/PROMOTE candidate). Asserted by a call-count wrapper.
+    _seed_prior_promoted("run1", _F1_DEFAULT_UNSCREENED, 0.8)
+    calls: list = []
+    real_mine = auto_session._mine_history
+
+    def _counting(sid):
+        calls.append(sid)
+        return real_mine(sid)
+
+    auto_session._mine_history = _counting
+    try:
+        pipe = FakePipeline([{"total_return": 0.2, "sharpe": 1.5, "wfe": 0.7,
+                              "num_trades": 20}])
+        await _run(
+            "run2-once",
+            _open_req(history_scope="global",
+                      budget={"max_iterations": 9, "max_configs": 6}),
+            pipe,
+        )
+    finally:
+        auto_session._mine_history = real_mine
+
+    assert calls == ["run2-once"], (
+        f"miner must run exactly once per run, got {len(calls)} call(s) "
+        "(not per SCREEN/PROMOTE candidate)"
+    )
+
+
+async def test_warm_start_changes_order_not_robust_best_selection(store):
+    # A historically-favoured family that PROMOTES worse than another
+    # candidate is NOT selected best. Warm-start changes SCREEN order only;
+    # select_best/robust_score over promoted iters is unchanged (J-09/J-16).
+    f_fav = _F1_DEFAULT_UNSCREENED               # mined-strongest -> screened 1st
+    f_good = auto_session._SEED_UNIVERSE[0]      # genuinely-best promoted
+    _seed_prior_promoted("run1", f_fav, 0.99)    # favoured by history
+    by_cfg = {
+        # Favoured family: top in-sample Sharpe (so it IS promoted first)
+        # but WFE-failing + over-leveraged-style -> robust gate-fails.
+        f_fav: {"sharpe": 3.0, "total_return": 5.0, "max_drawdown": 0.5,
+                "num_trades": 30, "wfe": 0.0, "oos_return": -0.3,
+                "oos_sharpe": -0.6, "num_windows": 2},
+        # Another family: 2nd in-sample Sharpe, walk-forward validated ->
+        # highest robust score (the expected best).
+        f_good: {"sharpe": 2.0, "total_return": 0.2, "max_drawdown": 0.07,
+                 "num_trades": 25, "wfe": 0.85, "oos_return": 0.16,
+                 "oos_sharpe": 1.1, "num_windows": 3},
+    }
+    sid = "run2-robustbest"
+    final = await _run(
+        sid,
+        _open_req(history_scope="global",
+                  budget={"max_iterations": 9, "max_configs": 6}),
+        FakePipeline([{"sharpe": 0.3, "total_return": 0.0, "num_trades": 5}],
+                     by_cfg=by_cfg),
+    )
+
+    # Warm-start cited the mined-strongest favoured family...
+    warm = _warm_start_entries(sid)
+    assert len(warm) == 1
+    assert f_fav[0] in warm[0]["content"]
+    # ...and it WAS promoted first (order changed)...
+    _, promote_nodes = _nodes_by_stage(sid)
+    promoted = {(n["params"]["symbol"], n["params"]["timeframe"]): n
+                for n in promote_nodes}
+    assert f_fav in promoted and f_good in promoted
+    # ...but the robust winner (f_good) is best, NOT the favoured family.
+    assert final["bestIterationId"] == promoted[f_good]["id"]
+    assert final["bestIterationId"] != promoted[f_fav]["id"], (
+        "a history-favoured but WFE-failing promoted candidate MUST NOT be "
+        "marked best — warm-start changes order, never selection"
+    )
+
+
+async def test_garbage_history_scope_clean_default_no_crash(store):
+    # Unknown/garbage history_scope is a clean default (effective global),
+    # NOT a 500 / crash: the run still reaches a terminal state and (with
+    # prior history) warm-starts like the default.
+    _seed_prior_promoted("run1", _F1_DEFAULT_UNSCREENED, 0.5)
+    pipe = FakePipeline([{"total_return": 0.2, "sharpe": 1.5, "wfe": 0.7,
+                          "num_trades": 20}])
+    sid = "run2-garbage"
+    final = await _run(
+        sid,
+        _open_req(history_scope="not-a-real-scope",
+                  budget={"max_iterations": 9, "max_configs": 6}),
+        pipe,
+    )
+    assert final["status"] == "complete"
+    assert final["effectiveHistoryScope"] == "global"
+    # Raw garbage value persists verbatim (accepted, never raised).
+    assert ss.read_session_meta(sid)["autoRun"]["historyScope"] == \
+        "not-a-real-scope"
+    assert len(_warm_start_entries(sid)) == 1
+
+
+async def test_corrupt_prior_session_dir_skipped_best_effort(store):
+    # A corrupt prior session must be skipped without aborting the run
+    # (mining is best-effort, mirrors the SCREEN/PROMOTE except discipline);
+    # a valid prior session still drives the warm start.
+    _seed_prior_promoted("good", _F1_DEFAULT_UNSCREENED, 0.6)
+    bad_iter = ss.BASE_DIR / "live" / "corrupt" / "iterations" / "001_x"
+    bad_iter.mkdir(parents=True)
+    (bad_iter / "meta.json").write_text("{ not json", encoding="utf-8")
+    (ss.BASE_DIR / "live" / "corrupt" / "session.json").write_text(
+        "{ also not json", encoding="utf-8"
+    )
+
+    pipe = FakePipeline([{"total_return": 0.2, "sharpe": 1.5, "wfe": 0.7,
+                          "num_trades": 20}])
+    sid = "run2-corrupt"
+    final = await _run(
+        sid,
+        _open_req(history_scope="global",
+                  budget={"max_iterations": 9, "max_configs": 6}),
+        pipe,
+    )
+    assert final["status"] == "complete"  # never raised / hung
+    warm = _warm_start_entries(sid)
+    assert len(warm) == 1 and "ETH/USDT" in warm[0]["content"]
