@@ -33,12 +33,15 @@ written into the activity log or any session artifact.
 from __future__ import annotations
 
 import asyncio
+import importlib
 import logging
 import math
+import multiprocessing
+import queue
 import time
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
@@ -66,6 +69,226 @@ _COMMISSION = 0.00075
 # window for the robust objective; WF is reused from the pipeline (no fork).
 _WFV_IS_MONTHS = 2
 _WFV_OOS_MONTHS = 1
+
+
+# --- In-process cancellation registry (NO new infra) -------------------------
+# Maps a live session_id -> its CancellationToken so the public stop endpoint
+# can reach the running loop in THIS worker. It is populated in
+# create_auto_session and removed on EVERY terminal path (criteria-met,
+# budget-exhausted, stopped, crash). It is intentionally best-effort and
+# worker-local: a stop is ALSO recorded durably in session.json so it is
+# honoured even when the live token is not in the handling worker (multi-
+# WEB_CONCURRENCY) or after a restart.
+_CANCEL_REGISTRY: dict[str, CancellationToken] = {}
+
+
+def _register_cancel(session_id: str, token: CancellationToken) -> None:
+    _CANCEL_REGISTRY[session_id] = token
+
+
+def _unregister_cancel(session_id: str) -> None:
+    """Idempotent removal — safe to call on any terminal path and twice."""
+    _CANCEL_REGISTRY.pop(session_id, None)
+
+
+# =============================================================================
+# CPU-bound backtest process isolation  (anti-goal: the background job MUST
+# NOT block the API event loop / starve other requests)
+# =============================================================================
+#
+# The deterministic next-bar engine runs the RestrictedPython signal bar by
+# bar — pure-Python, CPU-bound, GIL-holding work. ``pipeline.execute_backtest``
+# already offloads it via ``asyncio.to_thread``, but a *thread* shares this
+# worker's GIL: during a CONTINUOUS headless loop that thread holds the GIL
+# almost the whole run, so every OTHER ``asyncio.to_thread`` file-IO request
+# (the ``GET /api/sessions`` poll, the stop endpoint's session-store read) is
+# GIL-starved for tens of seconds (QA: GET /api/sessions up to 33.7 s).
+#
+# Fix: run the backtest in a CHILD PROCESS. The child has its OWN GIL, so the
+# API worker's event loop + every file-IO thread stay responsive while a run
+# is active. The existing :class:`~backend.pipeline.BacktestPipeline` is
+# reused VERBATIM inside the child — no sandbox/engine bypass, ``pipeline.py``
+# is NOT modified. ``multiprocessing`` is the Python stdlib (the same kind of
+# in-process offload primitive as the ThreadPoolExecutor already used here) —
+# NOT new external infrastructure (no Celery/Redis/DB/broker).
+#
+# One long-lived ``spawn`` child is reused across iterations (the pipeline is
+# constructed once child-side, mirroring the parent's singleton). The
+# one-backtest-per-worker semaphore already serialises submissions. Stop is
+# honoured cooperatively: cancelling terminates the child and the loop's
+# existing ``except PipelineError`` path maps it to terminal ``stopped``.
+
+# Module-level "spawn" context (fork + threads + asyncio is unsafe).
+_MP_CTX = multiprocessing.get_context("spawn")
+
+# The single reusable backtest child, keyed by its target ref so a test can
+# run a deterministic CPU-bound stand-in through the SAME seam the real
+# pipeline uses. Worker-local; serialised by the backtest semaphore.
+_BT_WORKER: Optional["_BacktestWorker"] = None
+
+# Real production child target. Resolved & invoked INSIDE the child only.
+_REAL_BACKTEST_REF = "backend.auto_session:_real_pipeline_backtest"
+
+# Sentinel result-tuple shape (matches pipeline.execute_backtest + the two
+# pre-encoded JSON projections the loop needs):
+#   (result, errors, rating, timings, wf, result_json, rating_json, wf_json)
+
+_CHILD_PIPELINE: Any = None  # child-process-local BacktestPipeline singleton
+
+
+def _real_pipeline_backtest(payload: dict) -> tuple:
+    """CHILD-process entry: run ONE backtest with the REAL pipeline.
+
+    Builds (once) and reuses a child-local :class:`BacktestPipeline` — the
+    exact same compile/sandbox/fetch/engine/walk-forward code a manual run
+    uses (no bypass). The CPU-bound encode is done HERE too so the parent
+    event-loop thread does zero heavy work for this iteration.
+    """
+    global _CHILD_PIPELINE
+    if _CHILD_PIPELINE is None:
+        from backend.pipeline import BacktestPipeline
+        _CHILD_PIPELINE = BacktestPipeline()
+    result, errors, rating, timings, wf = asyncio.run(
+        _CHILD_PIPELINE.execute_backtest(**payload)
+    )
+    if result is None:
+        return (None, errors, None, timings, None, None, None, None)
+    result_json, rating_json, wf_json = _serialize_artifacts(result, rating, wf)
+    return (result, errors, rating, timings, wf,
+            result_json, rating_json, wf_json)
+
+
+def _worker_main(target_ref: str, in_q: Any, out_q: Any) -> None:
+    """CHILD-process loop: resolve ``target_ref`` once, then serve backtest
+    payloads until the process is terminated. Never raises out — a failed
+    backtest is reported as an ``("err", traceback)`` message so the parent
+    never hangs waiting on the queue."""
+    mod_name, _, attr = target_ref.partition(":")
+    try:
+        fn = getattr(importlib.import_module(mod_name), attr)
+    except Exception as exc:  # noqa: BLE001 - report import failure to parent
+        # Drain one request so the parent's get() returns instead of hanging.
+        try:
+            in_q.get()
+        except Exception:  # noqa: BLE001
+            pass
+        out_q.put(("err", f"backtest worker import failed: {exc!r}"))
+        return
+    while True:
+        payload = in_q.get()
+        if payload is None:  # graceful shutdown sentinel
+            return
+        try:
+            out_q.put(("ok", fn(payload)))
+        except BaseException as exc:  # noqa: BLE001 - must report, never hang
+            import traceback
+            out_q.put(("err", f"{exc!r}\n{traceback.format_exc()}"))
+
+
+class _BacktestWorker:
+    """A single long-lived ``spawn`` child running one backtest at a time.
+
+    Daemon process: it never outlives the API worker and cannot leak past a
+    server restart. Reused across iterations for throughput; terminated (and
+    lazily respawned) on cancellation."""
+
+    def __init__(self, target_ref: str):
+        self.target_ref = target_ref
+        self._in: Any = _MP_CTX.Queue()
+        self._out: Any = _MP_CTX.Queue()
+        self._proc = _MP_CTX.Process(
+            target=_worker_main,
+            args=(target_ref, self._in, self._out),
+            daemon=True,
+        )
+        self._proc.start()
+
+    def is_alive(self) -> bool:
+        return self._proc.is_alive()
+
+    def submit(self, payload: dict) -> None:
+        self._in.put(payload)
+
+    def get(self, timeout: float) -> tuple:
+        """Blocking queue read (raises ``queue.Empty`` on timeout). Always
+        called via ``asyncio.to_thread`` so it never blocks the event loop;
+        it parks on an OS pipe (GIL released) — not CPU-bound."""
+        return self._out.get(timeout=timeout)
+
+    def kill(self) -> None:
+        try:
+            self._proc.terminate()
+        except Exception:  # noqa: BLE001 - best-effort
+            pass
+        try:
+            self._proc.join(5)
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _ensure_worker(target_ref: str) -> "_BacktestWorker":
+    """Return a live worker for ``target_ref`` (respawn if dead / mismatched).
+    Serialised by the backtest semaphore — no concurrent creation."""
+    global _BT_WORKER
+    w = _BT_WORKER
+    if w is None or not w.is_alive() or w.target_ref != target_ref:
+        if w is not None:
+            w.kill()
+        w = _BacktestWorker(target_ref)
+        _BT_WORKER = w
+    return w
+
+
+def _shutdown_backtest_worker() -> None:
+    """Terminate the reusable child (idempotent). Used on cancellation and by
+    tests' teardown so no child lingers across the suite."""
+    global _BT_WORKER
+    w = _BT_WORKER
+    _BT_WORKER = None
+    if w is not None:
+        w.kill()
+
+
+async def _run_backtest_in_subprocess(
+    target_ref: str, payload: dict, cancel_token: CancellationToken
+) -> tuple:
+    """Run ONE backtest in the child process and return the 8-tuple.
+
+    Cooperative cancel: while waiting we poll ``cancel_token``; on cancel the
+    child is terminated and ``PipelineError`` is raised so the loop's existing
+    ``except PipelineError`` path drives the run to terminal ``stopped``. The
+    parent only ever parks a thread-pool thread on an OS pipe for ≤0.2 s — the
+    event loop and other file-IO requests stay responsive throughout."""
+    worker = _ensure_worker(target_ref)
+    worker.submit(payload)
+    while True:
+        if cancel_token.is_cancelled:
+            _shutdown_backtest_worker()
+            raise PipelineError("Operation cancelled")
+        try:
+            kind, value = await asyncio.to_thread(worker.get, 0.2)
+        except queue.Empty:
+            if not worker.is_alive():
+                _shutdown_backtest_worker()
+                raise RuntimeError("Backtest worker exited unexpectedly")
+            continue
+        if kind == "ok":
+            return value
+        _shutdown_backtest_worker()  # poisoned child — respawn next iteration
+        raise RuntimeError(f"Backtest subprocess error: {value}")
+
+
+def _subprocess_backtest_executor(
+    target_ref: str = _REAL_BACKTEST_REF,
+) -> Callable[[dict, CancellationToken], Any]:
+    """Build the ``backtest_executor`` create_auto_session passes into the
+    loop. A test can pass a different ``target_ref`` to drive a deterministic
+    CPU-bound stand-in through the exact same process-isolation seam."""
+
+    async def _exec(payload: dict, cancel_token: CancellationToken) -> tuple:
+        return await _run_backtest_in_subprocess(target_ref, payload, cancel_token)
+
+    return _exec
 
 
 # =============================================================================
@@ -251,6 +474,42 @@ def _serialize_artifacts(
     return result_json, rating_json, wf_json
 
 
+async def _perform_backtest(
+    *,
+    pipeline: Any,
+    backtest_executor: Optional[Callable[[dict, CancellationToken], Any]],
+    payload: dict,
+    cancel_token: CancellationToken,
+) -> tuple:
+    """Run ONE backtest + artifact encode, returning
+    ``(result, errors, rating, wf, result_json, rating_json, wf_json)``.
+
+    * ``backtest_executor`` set (real run): the CPU-bound pure-Python engine
+      runs in a CHILD PROCESS so it never holds this worker's GIL — the event
+      loop and every other ``asyncio.to_thread`` request stay responsive while
+      a headless run is active (anti-goal). The child also did the JSON encode.
+    * ``backtest_executor`` is ``None`` (unit tests' fake pipeline): UNCHANGED
+      in-process behaviour — await the (fake) pipeline, then offload only the
+      JSON encode via ``asyncio.to_thread`` exactly as before.
+    """
+    if backtest_executor is not None:
+        (result, errors, rating, _timings, wf,
+         result_json, rating_json, wf_json) = await backtest_executor(
+            payload, cancel_token
+        )
+        return result, errors, rating, wf, result_json, rating_json, wf_json
+
+    result, errors, rating, _timings, wf = await pipeline.execute_backtest(
+        **payload, cancel_token=cancel_token
+    )
+    if result is None:
+        return None, errors, None, None, None, None, None
+    result_json, rating_json, wf_json = await asyncio.to_thread(
+        _serialize_artifacts, result, rating, wf
+    )
+    return result, errors, rating, wf, result_json, rating_json, wf_json
+
+
 # =============================================================================
 # Core loop  (directly unit-testable: pass a fake pipeline + Semaphore + token)
 # =============================================================================
@@ -262,6 +521,36 @@ async def run_auto_session(
     pipeline: Any,
     semaphore: asyncio.Semaphore,
     cancel_token: CancellationToken,
+    backtest_executor: Optional[Callable[[dict, CancellationToken], Any]] = None,
+) -> dict:
+    """Run the loop to a terminal state and ALWAYS clean up the in-process
+    cancellation registry entry for ``session_id`` — on every terminal path
+    (criteria-met / budget-exhausted / stopped) and even if the loop crashes
+    (the ``finally`` runs regardless). The thin wrapper exists so the
+    registry invariant holds for one obvious reason in one place.
+
+    ``backtest_executor`` (set by :func:`create_auto_session` for the real
+    run) offloads the CPU-bound backtest to a child process. Left ``None``
+    (unit tests injecting a fake pipeline) the backtest runs in-process,
+    exactly as before — so the existing suite's behaviour is unchanged."""
+    try:
+        return await _run_auto_session_impl(
+            session_id, req,
+            pipeline=pipeline, semaphore=semaphore, cancel_token=cancel_token,
+            backtest_executor=backtest_executor,
+        )
+    finally:
+        _unregister_cancel(session_id)
+
+
+async def _run_auto_session_impl(
+    session_id: str,
+    req: AutoSessionRequest,
+    *,
+    pipeline: Any,
+    semaphore: asyncio.Semaphore,
+    cancel_token: CancellationToken,
+    backtest_executor: Optional[Callable[[dict, CancellationToken], Any]] = None,
 ) -> dict:
     """Run the server-side iterate loop to a terminal state.
 
@@ -302,10 +591,25 @@ async def run_auto_session(
         # --- Budget / cancel checks BEFORE doing any work: never start a
         # round that would exceed the cap ("no one more round"). ---
         if cancel_token.is_cancelled:
-            stop_reason = None  # cooperative stop (J-11 plumbing); not budget
+            stop_reason = None  # cooperative stop (in-process token); not budget
             break
         if max_wall is not None and (time.monotonic() - started) >= max_wall:
             stop_reason = "budget-exhausted"
+            break
+        # Durable, worker-safe cooperative stop: the public stop endpoint
+        # records `autoRun.stopRequested` in session.json, so the loop honours
+        # a stop even when the live in-process token is not in THIS worker
+        # (multi-WEB_CONCURRENCY) or after a restart. Read off the event-loop
+        # thread (same as the manual session_routes path) so this never blocks
+        # the loop (B1 anti-goal). Cancel the live token too so the in-flight
+        # pipeline path (which already checks the token) winds down and the
+        # existing terminal logic maps this to `status="stopped"`.
+        _persisted = await asyncio.to_thread(
+            session_store.read_session_meta, session_id
+        )
+        if ((_persisted or {}).get("autoRun") or {}).get("stopRequested"):
+            cancel_token.cancel()
+            stop_reason = None
             break
 
         iteration_index = i
@@ -328,34 +632,35 @@ async def run_auto_session(
                                      "; ".join(gen.validation_errors))
                 continue
 
+            bt_payload = dict(
+                script_id=gen.script_id,
+                symbol=req.symbol,
+                timeframe=req.timeframe,
+                start_date=start_dt,
+                end_date=end_dt,
+                initial_capital=req.initial_capital,
+                commission=_COMMISSION,
+                script_code=gen.script_code,
+                strategy_name=gen.strategy_name,
+                strategy_description=gen.strategy_description,
+                wfv_enabled=True,
+                wfv_is_months=_WFV_IS_MONTHS,
+                wfv_oos_months=_WFV_OOS_MONTHS,
+            )
             async with semaphore:
                 cancel_token.check()
-                result, errors, rating, _timings, wf = await pipeline.execute_backtest(
-                    script_id=gen.script_id,
-                    symbol=req.symbol,
-                    timeframe=req.timeframe,
-                    start_date=start_dt,
-                    end_date=end_dt,
-                    initial_capital=req.initial_capital,
-                    commission=_COMMISSION,
-                    script_code=gen.script_code,
-                    strategy_name=gen.strategy_name,
-                    strategy_description=gen.strategy_description,
+                (result, errors, rating, wf,
+                 result_json, rating_json, wf_json) = await _perform_backtest(
+                    pipeline=pipeline,
+                    backtest_executor=backtest_executor,
+                    payload=bt_payload,
                     cancel_token=cancel_token,
-                    wfv_enabled=True,
-                    wfv_is_months=_WFV_IS_MONTHS,
-                    wfv_oos_months=_WFV_OOS_MONTHS,
                 )
 
             if result is None:
                 await _record_failed(session_id, i, iter_id, next_prompt, req,
                                      "; ".join(errors) if errors else "Backtest failed")
                 continue
-
-            # CPU-bound encoding offloaded — never on the event-loop thread.
-            result_json, rating_json, wf_json = await asyncio.to_thread(
-                _serialize_artifacts, result, rating, wf
-            )
 
             # Insights — best-effort; a failure must not abort the loop.
             summary, suggestions = "", []
@@ -458,6 +763,7 @@ async def run_auto_session(
     # --- Terminal state ------------------------------------------------------
     if cancel_token.is_cancelled and stop_reason is None:
         final_status = "stopped"
+        stop_reason = "stopped"  # visible, non-null reason for a stopped run
     else:
         if stop_reason is None:
             # Loop fell out of the for-range: the iteration cap was reached.
@@ -639,6 +945,15 @@ async def create_auto_session(req: AutoSessionRequest, request: Request):
 
     pipeline = _get_pipeline()
     cancel_token = CancellationToken()
+    # Register BEFORE launching the detached task so the public stop endpoint
+    # can reach this run's token the instant the session is listed. The token
+    # is removed on every terminal path by run_auto_session's `finally`.
+    _register_cancel(session_id, cancel_token)
+
+    # Real run: the CPU-bound backtest is offloaded to a child process so it
+    # never holds this API worker's GIL (anti-goal: GET /api/sessions and the
+    # stop endpoint must stay responsive while a headless run is active).
+    backtest_executor = _subprocess_backtest_executor()
 
     async def _runner() -> None:
         try:
@@ -647,11 +962,17 @@ async def create_auto_session(req: AutoSessionRequest, request: Request):
                 pipeline=pipeline,
                 semaphore=semaphore,
                 cancel_token=cancel_token,
+                backtest_executor=backtest_executor,
             )
         except Exception as exc:  # noqa: BLE001 - background task must not crash silently
             logger.exception("auto-session %s crashed: %s", session_id, exc)
+            # run_auto_session's finally already unregistered; this is
+            # defence-in-depth for the runner crash/exception path.
+            _unregister_cancel(session_id)
             try:
-                await _update_autorun(session_id, status="stopped", stopReason=None)
+                await _update_autorun(
+                    session_id, status="stopped", stopReason="stopped"
+                )
             except Exception:  # noqa: BLE001
                 pass
 
@@ -661,3 +982,51 @@ async def create_auto_session(req: AutoSessionRequest, request: Request):
     asyncio.create_task(_runner())
 
     return AutoSessionResponse(sessionId=session_id, status="running")
+
+
+@router.post("/{session_id}/stop")
+async def stop_auto_session(session_id: str):
+    """Cooperatively request cancellation of a running headless auto-session.
+
+    Returns promptly — it NEVER awaits loop completion or blocks the event
+    loop. The loop owns the terminal transition; this endpoint only requests
+    the stop two ways:
+
+    * cancels the live in-process ``CancellationToken`` if it is in THIS
+      worker (fast path — the in-flight pipeline checks it and winds down);
+    * records ``autoRun.stopRequested`` durably in session.json so the loop's
+      per-round read honours the stop even when the live token is not in the
+      handling worker (multi-WEB_CONCURRENCY) or after a restart.
+
+    Unknown / non-auto session -> clean 404. Already-terminal session ->
+    idempotent no-op (no error, no extra iteration, no state regression).
+    """
+    meta = await asyncio.to_thread(session_store.read_session_meta, session_id)
+    auto = (meta or {}).get("autoRun")
+    if not meta or not isinstance(auto, dict):
+        raise HTTPException(
+            status_code=404,
+            detail=f"Auto-session {session_id} not found.",
+        )
+
+    status = auto.get("status")
+    if status in ("complete", "stopped"):
+        # Idempotent: do NOT write anything — a terminal run must not regress
+        # and no extra iteration may be triggered.
+        return {
+            "sessionId": session_id,
+            "status": status,
+            "stopReason": auto.get("stopReason"),
+        }
+
+    # Fast path: cancel the live token if this worker is handling the run.
+    token = _CANCEL_REGISTRY.get(session_id)
+    if token is not None:
+        token.cancel()
+
+    # Durable, worker-safe signal — honoured by the loop's per-round read even
+    # with no live token here. Reuses the existing _update_autorun mechanism
+    # (no parallel store, no schema fork, no new infra).
+    await _update_autorun(session_id, stopRequested=True)
+
+    return {"sessionId": session_id, "status": "stopping"}

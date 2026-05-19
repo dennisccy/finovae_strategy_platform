@@ -98,13 +98,13 @@ export function SessionContainer({
     loadCachedAsStartingPoint,
     isAutoRunning,
     autoRunProgress,
-    startAutoRun,
-    stopAutoRun,
+    startAutoSession,
+    stopAutoSession,
     runWalkForward,
     sessionStatus,
     workerCount,
     autoRun,
-  } = useBacktest(sessionId)
+  } = useBacktest(sessionId, isActive)
 
   // Directions cache
   const {
@@ -214,10 +214,12 @@ export function SessionContainer({
     editAndRerun(iterationId, iteration.scriptCode, lastUsedModel)
   }, [iterationHistory, editAndRerun, lastUsedModel])
 
-  // Auto run from any card — starts auto-run loop from that specific node
+  // Auto run from any card — starts a SERVER-DRIVEN auto-session pinned to
+  // that completed iteration's config (no in-browser loop). The new backend
+  // session appears in the session list via App.tsx's discovery poll.
   const handleStartAutoRunFromCard = useCallback((iterationId: string) => {
-    startAutoRun(autoRunCount, lastUsedModel, iterationId)
-  }, [autoRunCount, lastUsedModel, startAutoRun])
+    startAutoSession(iterationId, autoRunCount, lastUsedModel)
+  }, [autoRunCount, lastUsedModel, startAutoSession])
 
   const canAutoRun = iterationHistory.some(
     n => n.status === 'complete' && (n.insights?.suggestions?.length ?? 0) > 0
@@ -238,9 +240,9 @@ export function SessionContainer({
         onStartAutoRun={() => {
           const baseline = [...iterationHistory].reverse()
             .find(n => n.status === 'complete' && (n.insights?.suggestions?.length ?? 0) > 0)
-          if (baseline) startAutoRun(autoRunCount, lastUsedModel, baseline.id)
+          if (baseline) startAutoSession(baseline.id, autoRunCount, lastUsedModel)
         }}
-        onStopAutoRun={stopAutoRun}
+        onStopAutoRun={stopAutoSession}
         workerCount={workerCount}
       />
 

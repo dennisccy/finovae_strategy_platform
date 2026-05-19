@@ -4,19 +4,19 @@
       "id": "J-01",
       "name": "Run a backtest from natural language",
       "status": "passing",
-      "last_verified_iter": "goal-auto-money-printer-iter-1",
-      "last_passing_iter": "goal-auto-money-printer-iter-1",
+      "last_verified_iter": "goal-auto-money-printer-iter-2",
+      "last_passing_iter": "goal-auto-money-printer-iter-2",
       "first_seen_iter": "goal-auto-money-printer-iter-0",
-      "last_evidence_path": "reports/qa/goal-auto-money-printer-iter-1-evidence/UT-13-state.png"
+      "last_evidence_path": "reports/qa/goal-auto-money-printer-iter-2-evidence/TC-21-manual-backtest.png"
     },
     "J-02": {
       "id": "J-02",
       "name": "Inspect and browse run history",
       "status": "passing",
-      "last_verified_iter": "goal-auto-money-printer-iter-1",
-      "last_passing_iter": "goal-auto-money-printer-iter-1",
+      "last_verified_iter": "goal-auto-money-printer-iter-2",
+      "last_passing_iter": "goal-auto-money-printer-iter-2",
       "first_seen_iter": "goal-auto-money-printer-iter-0",
-      "last_evidence_path": "reports/qa/goal-auto-money-printer-iter-1-evidence/TC-19-J02-rebind-proof.png"
+      "last_evidence_path": "reports/qa/goal-auto-money-printer-iter-2-evidence/TC-19-right-panel-rebind.png"
     },
     "J-03": {
       "id": "J-03",
@@ -58,46 +58,46 @@
       "id": "J-07",
       "name": "Start a headless automated session via the API (pinned config)",
       "status": "passing",
-      "last_verified_iter": "goal-auto-money-printer-iter-1",
-      "last_passing_iter": "goal-auto-money-printer-iter-1",
+      "last_verified_iter": "goal-auto-money-printer-iter-2",
+      "last_passing_iter": "goal-auto-money-printer-iter-2",
       "first_seen_iter": "goal-auto-money-printer-iter-0",
-      "last_evidence_path": "reports/qa/goal-auto-money-printer-iter-1-evidence/TC-17-02-sessionlist.png"
+      "last_evidence_path": "reports/qa/goal-auto-money-printer-iter-2-qa.md#TC-01"
     },
     "J-08": {
       "id": "J-08",
       "name": "Track the automated run live in the UI",
       "status": "passing",
-      "last_verified_iter": "goal-auto-money-printer-iter-1",
-      "last_passing_iter": "goal-auto-money-printer-iter-1",
+      "last_verified_iter": "goal-auto-money-printer-iter-2",
+      "last_passing_iter": "goal-auto-money-printer-iter-2",
       "first_seen_iter": "goal-auto-money-printer-iter-0",
-      "last_evidence_path": "reports/qa/goal-auto-money-printer-iter-1-evidence/TC-17-J08-autorunbar-terminal.png"
+      "last_evidence_path": "reports/qa/goal-auto-money-printer-iter-2-evidence/TC-20-no-stale-terminal.png"
     },
     "J-09": {
       "id": "J-09",
       "name": "Automated chain stops on robust target or budget; best is marked",
       "status": "passing",
-      "last_verified_iter": "goal-auto-money-printer-iter-1",
-      "last_passing_iter": "goal-auto-money-printer-iter-1",
+      "last_verified_iter": "goal-auto-money-printer-iter-2",
+      "last_passing_iter": "goal-auto-money-printer-iter-2",
       "first_seen_iter": "goal-auto-money-printer-iter-0",
-      "last_evidence_path": "reports/qa/goal-auto-money-printer-iter-1-evidence/TC-18-J09-terminal-best.png"
+      "last_evidence_path": "reports/qa/goal-auto-money-printer-iter-2-evidence/TC-17-stopped.png"
     },
     "J-10": {
       "id": "J-10",
       "name": "Backend is the single source of truth (button rewired, survives reload)",
-      "status": "failing",
-      "last_verified_iter": "goal-auto-money-printer-iter-0",
-      "last_passing_iter": null,
+      "status": "passing",
+      "last_verified_iter": "goal-auto-money-printer-iter-2",
+      "last_passing_iter": "goal-auto-money-printer-iter-2",
       "first_seen_iter": "goal-auto-money-printer-iter-0",
-      "last_evidence_path": "reports/qa/goal-auto-money-printer-iter-0-evidence/UT-J-07-to-16-no-auto-sessions-api.png"
+      "last_evidence_path": "reports/qa/goal-auto-money-printer-iter-2-evidence/TC-16-after-reload.png"
     },
     "J-11": {
       "id": "J-11",
       "name": "Stop a running automated session",
-      "status": "failing",
-      "last_verified_iter": "goal-auto-money-printer-iter-0",
-      "last_passing_iter": null,
+      "status": "passing",
+      "last_verified_iter": "goal-auto-money-printer-iter-2",
+      "last_passing_iter": "goal-auto-money-printer-iter-2",
       "first_seen_iter": "goal-auto-money-printer-iter-0",
-      "last_evidence_path": "reports/qa/goal-auto-money-printer-iter-0-evidence/UT-J-07-to-16-no-auto-sessions-api.png"
+      "last_evidence_path": "reports/qa/goal-auto-money-printer-iter-2-evidence/TC-17-stopped.png"
     },
     "J-12": {
       "id": "J-12",
@@ -146,5 +146,5 @@
     }
   },
   "anti_goal_violations": [],
-  "updated_at": "2026-05-19T07:20:00Z"
+  "updated_at": "2026-05-19T12:30:00Z"
 }

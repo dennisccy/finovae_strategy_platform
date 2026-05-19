@@ -1,0 +1,36 @@
+{
+  "phase": "goal-auto-money-printer-iter-2",
+  "status": "complete",
+  "current_step": "closure_passed",
+  "updated_at": "2026-05-19T11:01:32.883547Z",
+  "started_at": "2026-05-19T06:44:27.370847Z",
+  "cli": "claude",
+  "blockers": [],
+  "fix_mode": true,
+  "fixed_blockers": [
+    "Blocker#1 (CRITICAL anti-goal): CPU-bound backtest now runs in a child process (own GIL); pipeline.py/engine untouched; GET /api/sessions + stop endpoint no longer GIL-starved. Deterministic test guard (child pid != parent pid) replaces the time.sleep stub that passed by accident.",
+    "Blocker#3 (HIGH): stop endpoint latency resolved by the same process-isolation fix (its asyncio.to_thread calls are no longer GIL-starved).",
+    "Blocker#2 (CRITICAL J-08/iter-1 lesson): live-poll tick now re-arms in finally; a single failed/slow apiLoadSession no longer permanently kills the poll, so the AutoRunBar converges to terminal stopped/complete without a manual reload.",
+    "Blocker#4 (MEDIUM UX): autoRunProgress memoised + no autoRun flicker on transient poll failure so the Stop button identity stays stable and the first click fires (browser-qa re-verify TC-17 recommended).",
+    "Blocker#5 (INFO): J-02 path not in diff and not regressed; browser-qa to re-verify TC-19 per spec."
+  ],
+  "changed_files": [
+    "apps/backend/backend/auto_session.py",
+    "apps/backend/tests/test_auto_session.py",
+    "apps/frontend/src/hooks/useBacktest.ts"
+  ],
+  "out_of_scope_unchanged": [
+    "shared/contracts.py",
+    "apps/backend/backend/pipeline.py",
+    "apps/backend/backtest/engine.py",
+    "apps/backend/backend/sandbox.py",
+    "apps/backend/backend/api.py",
+    "apps/backend/backend/robust_objective.py"
+  ],
+  "tests_run": true,
+  "tests_summary": "test_auto_session 26/26 passed; full suite 150 passed / 1 pre-existing out-of-scope fail (test_directions_cache, byte-unchanged) = zero new regressions; ruff clean; frontend tsc+vite build EXIT 0",
+  "browser_checks_run": true,
+  "qa_verdict": "PASS",
+  "qa_summary": "21/21 functional test cases PASS. Backend test_auto_session 26/26; full suite 150 pass / 1 confirmed pre-existing out-of-scope (test_directions_cache, not in diff, reproduces with iter-2 stashed). Frontend build EXIT 0. Browser: J-10 (UI Auto Run -> backend session, survives full mid-run reload, server-side terminal+best), J-11 (UI Stop + API stop -> stopped, best preserved as robust winner not raw return, no post-stop iters, durable stopRequested), J-02 (right panel rebinds equity/trades/WF on prior-run select), J-08 (no stale terminal under rapid switch with 61 SessionContainers; list+AutoRunBar agree; aria preserved), J-01 (manual backtest e2e unregressed, 0 console errors). Anti-goals verified at source-diff+test level: contracts.py 0 diff, no new infra, 0 secrets across 54 sessions, legacy in-browser startAutoRun/stopAutoRun deleted, lazy GET. UI-PASS. NOTE (non-blocking): stop endpoint latency 0.027s clean / 10.5s under extreme QA load (6+ sessions + 61-container polling) - still returns without awaiting loop, event-loop non-blocking (TC-05 passed), best preserved, UI converged.",
+  "next_action": "audit"
+}

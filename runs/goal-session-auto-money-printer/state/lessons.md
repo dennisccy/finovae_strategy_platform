@@ -44,3 +44,27 @@ J-10 MUST harden AutoRunBar ownership (re-derive per-session status on
 mount/switch), not just rewire the button. Also: any evaluator reading a
 reconciled UI-test artifact must cross-check source diffs + QA MODE-2, not the
 top headline.
+
+## iter-2 — 2026-05-19T12:30:00Z
+
+**Verdict:** CONTINUE
+**Lesson:** A timing-based "event loop not blocked" guard that stubs the
+backtest with `await asyncio.to_thread(time.sleep, …)` is a FALSE guard:
+`time.sleep` *releases* the GIL, so it can never reproduce the real
+starvation. The actual root cause was that the RestrictedPython engine is
+pure-Python GIL-holding CPU work, and `asyncio.to_thread` offload still shares
+the API worker's GIL — so a *continuous* headless loop starves every other
+file-IO thread (the `/api/sessions` poll, the stop endpoint). The correct fix
+required real process isolation: a `multiprocessing` `spawn` child running the
+unmodified `BacktestPipeline` (`auto_session.py:121-291`), and a guard that
+deterministically asserts `child_pid != os.getpid()` (not a timing bound).
+Separately: the iter-1 lesson held — the live poll's `tick` re-armed only on
+the fully-successful path, so a single GIL-starved `apiLoadSession()→null`
+permanently froze the AutoRunBar until a manual reload; the fix was re-arming
+in a `finally`.
+**Applies to:** any iter touching the headless/automated loop or
+`auto_session.py`; any iter asserting "event loop non-blocking" or adding
+per-round CPU/LLM work under a continuous server-side loop (directly relevant
+to iter-3 Optimizer J-12–J-16, which adds SCREEN/PROMOTE + planner work each
+round); any frontend live-poll/`setTimeout`-chain change (re-arm in `finally`,
+never only on success).

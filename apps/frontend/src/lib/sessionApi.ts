@@ -177,6 +177,51 @@ export async function deleteSessionFromStore(sessionId: string): Promise<void> {
 }
 
 // =============================================================================
+// Headless auto-session (server-driven Auto Run — J-10 / J-11)
+// =============================================================================
+
+export interface AutoSessionStartConfig {
+  natural_language: string
+  symbol: string
+  timeframe: string
+  start_date: string
+  end_date: string
+  initial_capital: number
+  model: string
+  budget: { max_iterations: number }
+}
+
+/**
+ * Start a fully server-driven auto-session (POST /api/auto-sessions). The
+ * backend creates a NEW session, drives the generate→backtest→insights→iterate
+ * loop itself, and persists durable status — it keeps running even if the
+ * browser tab is closed/reloaded. Returns the new backend session id.
+ */
+export async function startAutoSession(
+  config: AutoSessionStartConfig
+): Promise<{ sessionId: string; status: string }> {
+  const res = await apiFetch('/api/auto-sessions', {
+    method: 'POST',
+    body: JSON.stringify(config),
+  })
+  return (await res.json()) as { sessionId: string; status: string }
+}
+
+/**
+ * Request cancellation of a running server-driven auto-session
+ * (POST /api/auto-sessions/{id}/stop). The endpoint returns promptly; the
+ * loop transitions to the durable `stopped` state cooperatively. A 404
+ * (unknown) or an idempotent terminal no-op must not surface as a UI error.
+ */
+export async function stopAutoSession(sessionId: string): Promise<void> {
+  try {
+    await apiFetch(`/api/auto-sessions/${sessionId}/stop`, { method: 'POST' })
+  } catch (e) {
+    console.warn('[sessionApi] stopAutoSession failed:', e)
+  }
+}
+
+// =============================================================================
 // Archive
 // =============================================================================
 

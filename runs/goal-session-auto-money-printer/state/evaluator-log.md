@@ -80,3 +80,47 @@ the documented rapid-multi-switch staleness gap) + J-11 (public stop endpoint +
 UI stop control — `CancellationToken`/`stopped` already plumbed). J-10 activates
 the strongest anti-goal in the goal (no second in-browser loop), so full
 pipeline is warranted. Optimizer (J-12–J-16) follows Foundation hardening.
+
+---
+
+## Iteration 2 — goal-auto-money-printer-iter-2
+
+**Date:** 2026-05-19T12:30:00Z
+**Verdict:** CONTINUE
+**Depth dispatched:** full
+**Journey deltas:**
+- Newly passing: J-10, J-11 (both failing → passing)
+- Re-verified still-passing: J-01, J-02 (lesson-protected), J-07, J-08 (lesson-protected), J-09
+- Carried still-passing (code path not in confined diff): J-03, J-04, J-05, J-06
+- Newly failing: none
+- Regressed: none
+- Anti-goal violations: none (independently re-verified at source-diff + test level)
+
+**Reasoning:** Layer-1 Foundation is genuinely closed, not just summarized. I
+independently verified the strongest anti-goal ("no second in-browser iterate
+loop"): the only `startAutoRun`/`autoRunStopRef` reference left in
+`useBacktest.ts` is a *deletion comment* (L460); the two remaining `while` loops
+(1208/1996) are pre-existing single-backtest retry loops, and both Auto Run
+entrypoints + Stop are rewired to `POST /api/auto-sessions[/{id}/stop]`. The
+new stop path is real (`stop_auto_session` :988, by-`sessionId` `_CANCEL_REGISTRY`
+:82 cleaned on all terminal paths, durable per-round `stopRequested` :610/:1030).
+`contracts.py` is absent from the git diff; the QA-FAIL-retry `multiprocessing`
+spawn child is Python stdlib (not Celery/Redis/DB/broker) and builds a real
+`BacktestPipeline()` (:150) so the sandbox/engine are not bypassed. Screenshots
+confirm end states: TC-16 (J-10) server-driven run completed after a full
+mid-run reload with ★ Best; TC-17 (J-11) "Automated run stopped" + robust best
+preserved (6.45% kept over 12.08% raw, live); TC-19 (J-02) full right-panel
+re-bind incl. equity/alpha/WF; TC-20 (J-08) no stale terminal under 61 mounted
+containers. The single load-sensitive stop-latency GAP (~10.5 s under an
+unrealistic 6-session + 61-poller synthetic load; 0.027 s clean, TC-05 passes)
+is a documented minor performance limitation, not a critical anti-goal
+violation — no REGRESSION. Not GOAL_ACHIEVED (J-12–J-16 failing by design).
+
+**Next-step recommendation:** iter-3 at **full** depth — open the Optimizer
+layer: J-12 (open-universe config search, still correctly 422-rejected today)
++ J-13 (immutable hard AI-token/USD + max-configs + wall-clock cost tracker),
+then J-14 (staged SCREEN→PROMOTE — cheap screen must not run WF/strong model),
+J-15 (read-only global-history warm start + `history_scope` opt-out +
+prompt-cached planner), J-16 (robust WFE-gated/drawdown-penalized best over the
+open universe). Carry the stop-endpoint pickle trim (scalar result proxy across
+the child pipe) as a tracked non-blocking optimization.

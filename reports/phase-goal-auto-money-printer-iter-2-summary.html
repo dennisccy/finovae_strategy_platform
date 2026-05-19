@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<title>goal-auto-money-printer-iter-2 — Iteration Summary</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  margin: 0; padding: 0; color: #1f2328; background: #f6f8fa; line-height: 1.5;
+}
+.container { max-width: 880px; margin: 0 auto; padding: 24px 16px 80px; }
+.hero {
+  background: white; border: 1px solid #d0d7de; border-radius: 8px;
+  padding: 28px; margin-bottom: 16px; text-align: center;
+}
+.hero.pass { border-top: 6px solid #1a7f37; }
+.hero.fail { border-top: 6px solid #cf222e; }
+.hero.inprogress { border-top: 6px solid #d4a72c; }
+.hero h1 { margin: 0 0 6px 0; font-size: 1.6rem; }
+.hero h2 { margin: 0 0 14px 0; font-size: 1rem; color: #57606a; font-weight: 500; }
+.badge-row { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin-bottom: 10px; }
+.badge {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 6px 14px; border-radius: 999px; font-weight: 600; font-size: 0.95rem;
+}
+.badge.pass { background: #dafbe1; color: #1a7f37; }
+.badge.fail { background: #ffebe9; color: #cf222e; }
+.badge.inprogress { background: #fff8c5; color: #9a6700; }
+.signal-badge { padding: 6px 14px; border-radius: 999px; font-weight: 600; font-size: 0.9rem; }
+.signal-badge.improving { background: #dafbe1; color: #1a7f37; }
+.signal-badge.holding { background: #ddf4ff; color: #0969da; }
+.signal-badge.stalling { background: #fff8c5; color: #9a6700; }
+.signal-badge.regressing { background: #ffebe9; color: #cf222e; }
+.signal-badge.na { background: #f6f8fa; color: #57606a; }
+.meta { color: #57606a; font-size: 0.875rem; margin: 10px 0 16px; }
+.journey-row {
+  display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin: 12px 0 4px;
+}
+.journey-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 10px; border-radius: 999px; font-size: 0.85rem;
+  background: #f6f8fa; border: 1px solid #d0d7de;
+}
+.journey-pill.passing, .journey-pill.already_passing { background: #dafbe1; color: #1a7f37; border-color: #b4e2c0; }
+.journey-pill.failing, .journey-pill.regressed { background: #ffebe9; color: #cf222e; border-color: #f1aeb0; }
+.journey-pill.partial { background: #fff8c5; color: #9a6700; border-color: #eed888; }
+.journey-pill.unknown { background: #f6f8fa; color: #57606a; }
+.hero-image { margin-top: 18px; }
+.hero-image img { max-width: 100%; height: auto; border-radius: 6px; border: 1px solid #d0d7de; }
+details {
+  background: white; border: 1px solid #d0d7de; border-radius: 8px;
+  margin-bottom: 12px;
+}
+details > summary {
+  cursor: pointer; padding: 14px 18px; font-weight: 600; font-size: 1.05rem;
+  list-style: none; user-select: none; display: flex; align-items: center; gap: 8px;
+}
+details > summary::-webkit-details-marker { display: none; }
+details > summary::before {
+  content: '▶'; transition: transform 0.15s; font-size: 0.75rem; color: #57606a;
+}
+details[open] > summary::before { transform: rotate(90deg); }
+.accordion-body { padding: 0 18px 18px; }
+.accordion-body h3 { font-size: 0.95rem; color: #57606a; margin: 16px 0 6px; }
+.why-text { background: #f6f8fa; padding: 10px 12px; border-radius: 6px; margin: 4px 0 12px; }
+ul.bullets { margin: 6px 0 14px; padding-left: 22px; }
+ul.bullets li { margin-bottom: 4px; }
+ol.steps { padding-left: 0; list-style: none; counter-reset: step; }
+ol.steps > li {
+  counter-increment: step; padding: 12px 0 12px 44px;
+  border-top: 1px solid #eaeef2; position: relative;
+}
+ol.steps > li:first-child { border-top: none; }
+ol.steps > li::before {
+  content: counter(step); position: absolute; left: 0; top: 14px;
+  width: 30px; height: 30px; border-radius: 50%;
+  background: #0969da; color: white; display: flex;
+  align-items: center; justify-content: center; font-size: 0.85rem; font-weight: 600;
+}
+.step-shot { margin-top: 10px; }
+.step-shot img { max-width: 100%; height: auto; border-radius: 6px; border: 1px solid #d0d7de; }
+.next-step-box {
+  background: #ddf4ff; padding: 12px 16px; border-radius: 6px;
+  border-left: 4px solid #0969da; margin: 12px 0;
+}
+.drill-table { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
+.drill-table th, .drill-table td {
+  text-align: left; padding: 8px 6px; border-bottom: 1px solid #eaeef2;
+}
+.drill-table th { background: #f6f8fa; }
+.verdict-cell.PASS, .verdict-cell.CLOSURE-PASS, .verdict-cell.GOAL_ACHIEVED { color: #1a7f37; font-weight: 600; }
+.verdict-cell.FAIL, .verdict-cell.CLOSURE-FAIL, .verdict-cell.REGRESSION { color: #cf222e; font-weight: 600; }
+.verdict-cell.CONTINUE, .verdict-cell.ESCALATE, .verdict-cell.STALLED { color: #9a6700; font-weight: 600; }
+.verdict-cell.SKIPPED, .verdict-cell.UNKNOWN, .verdict-cell.IN-PROGRESS { color: #57606a; }
+.footer-note { text-align: center; color: #6e7781; font-size: 0.8rem; margin-top: 24px; }
+.iter-card {
+  background: white; border: 1px solid #d0d7de; border-radius: 8px;
+  padding: 16px 18px; margin-bottom: 12px; display: flex; align-items: center; gap: 14px;
+}
+.iter-card .left { flex-shrink: 0; }
+.iter-card .body { flex: 1 1 auto; }
+.iter-card .body .title { font-weight: 600; }
+.iter-card .body .sub { color: #57606a; font-size: 0.88rem; margin-top: 2px; }
+.iter-card a.open { color: #0969da; text-decoration: none; font-weight: 500; }
+.iter-card a.open:hover { text-decoration: underline; }
+.matrix { width: 100%; border-collapse: collapse; margin: 12px 0 22px; font-size: 0.88rem; }
+.matrix th, .matrix td { padding: 6px 8px; border: 1px solid #d0d7de; text-align: center; }
+.matrix th:first-child, .matrix td:first-child { text-align: left; }
+.matrix .cell-passing, .matrix .cell-already_passing { background: #dafbe1; color: #1a7f37; }
+.matrix .cell-failing, .matrix .cell-regressed { background: #ffebe9; color: #cf222e; }
+.matrix .cell-partial { background: #fff8c5; color: #9a6700; }
+.matrix .cell-unknown { background: #f6f8fa; color: #57606a; }
+.no-summary {
+  background: #fff8c5; border: 1px solid #eed888; padding: 14px 18px;
+  border-radius: 8px; color: #9a6700; margin-bottom: 14px;
+}
+</style>
+</head><body><div class='container'>
+<section class='hero inprogress'><div class='badge-row'><div class='badge inprogress'><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+<circle cx="12" cy="12" r="11" fill="#d4a72c"/>
+<path d="M12 6v6l4 2.5" stroke="white" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+</svg><span>CONTINUE</span></div><span class='signal-badge improving'>Direction: improving</span></div><h1>Iteration 2  ·  session auto-money-printer</h1><h2>Auto Run rewired to a server-driven backend session that survives a browser reload and is stoppable from the UI.</h2><div class='meta'>2026-05-19 · goal-full</div><div class='meta'>Journeys: 11/16 passing</div><div class='journey-row'><span class='journey-pill passing' title='Run a backtest from natural language'>J-01 · passing</span><span class='journey-pill passing' title='Inspect and browse run history'>J-02 · passing</span><span class='journey-pill passing' title='Walk-forward validation'>J-03 · passing</span><span class='journey-pill passing' title='AI insights'>J-04 · passing</span><span class='journey-pill passing' title='Reference data loads'>J-05 · passing</span><span class='journey-pill passing' title='Warm-cache re-run works end-to-end'>J-06 · passing</span><span class='journey-pill passing' title='Start a headless automated session via the API (pinned config)'>J-07 · passing</span><span class='journey-pill passing' title='Track the automated run live in the UI'>J-08 · passing</span><span class='journey-pill passing' title='Automated chain stops on robust target or budget; best is marked'>J-09 · passing</span><span class='journey-pill passing' title='Backend is the single source of truth (button rewired, survives reload)'>J-10 · passing</span><span class='journey-pill passing' title='Stop a running automated session'>J-11 · passing</span><span class='journey-pill failing' title='Open-universe run from only an objective + budget'>J-12 · failing</span><span class='journey-pill failing' title='AI-token/cost budget is hard-enforced'>J-13 · failing</span><span class='journey-pill failing' title='Staged screening — full cost only on survivors'>J-14 · failing</span><span class='journey-pill failing' title='Learns from global history (warm start) and is opt-out-able'>J-15 · failing</span><span class='journey-pill failing' title='Robust objective gates overfit'>J-16 · failing</span></div></section>
+<details open><summary>What was done</summary><div class='accordion-body'><ul class='bullets'><li>Rewired both UI &quot;Auto Run&quot; entrypoints (config-bar trigger + per-card action) to start a server-driven backend auto-session via `POST /api/auto-sessions`; the search now keeps running if the browser tab is closed or reloaded (J-10).</li><li>Added `POST /api/auto-sessions/{id}/stop` + a by-`sessionId` in-process cancel registry (cleaned on all 4 terminal paths) + a durable, worker/restart-safe per-round stop signal in the session file store (no new infra, no schema fork); the UI Stop control is wired to it (J-11).</li><li>On stop: terminal `status=&quot;stopped&quot;` with a non-null reason, no iterations appended past the stop, and `bestIterationId` stays selected by the existing robust objective (never re-derived by raw return).</li><li>Deleted the legacy in-browser `startAutoRun`/`stopAutoRun` iterate loop and its solely-owned state/refs — no second in-browser generate→backtest→insights loop remains (verified by source diff per the iter-1 lesson).</li><li>Hardened `AutoRunBar`/`SessionContainer` ownership: each session&#x27;s `autoRun` status is authoritatively re-derived from the backend on mount and on session switch, so the session-list spinner and the status strip cannot disagree (iter-1 mandatory lesson).</li><li>QA-FAIL retry fixes: moved the CPU-bound backtest into a stdlib `multiprocessing` child process (its own GIL — event loop no longer starved; pipeline/engine/sandbox/`contracts.py` unchanged), self-healing live-poll re-arm in `finally`, and a stable Stop-button identity.</li><li>Verified target journeys J-10 and J-11 pass browser QA — 21/21 QA functional cases and 17/17 browser tests PASS; backend `test_auto_session` 26/26, full suite 150 passed / 1 pre-existing out-of-scope fail (zero new regressions), frontend build EXIT 0.</li></ul></div></details>
+<details open><summary>What's left + Next step</summary><div class='accordion-body'><h3>Still open</h3><ul class='bullets'><li>Journey J-12 (Open-universe run from only an objective + budget) failing — out of scope this iter; still correctly 422-rejected.</li><li>Journey J-13 (AI-token/cost budget is hard-enforced) failing.</li><li>Journey J-14 (Staged screening — full cost only on survivors) failing.</li><li>Journey J-15 (Learns from global history / warm start, opt-out-able) failing.</li><li>Journey J-16 (Robust objective gates overfit) failing.</li><li>Non-blocking UX-REGRESSION-WARN: the activity-log message tells operators to look for an &quot;Auto: …&quot; session, but the `Auto:` prefix is transient (~12–15 s) before the backend overwrites it with the strategy name — reword the message or preserve the prefix (deferred; capability not lost: running session reachable via the pulsing amber dot + &quot;running&quot; badge).</li><li>Non-blocking audit GAP: `POST /api/auto-sessions/{id}/stop` latency ~0.027 s clean but ~10.5 s under an unrealistic synthetic load (6+ sessions + 61 live-polling containers) — trim the multi-MB result pickle to a scalar proxy across the child pipe (tracked for iter-3).</li><li>Known limitation (by design): a new &quot;Auto: …&quot; session is discovered via the existing App.tsx ~5 s poll — select it from the Sessions dropdown to watch it.</li></ul><h3>Next step</h3><div class='next-step-box'>Open the **Optimizer layer at full depth**, starting with the Optimizer Foundation: **J-12** (open-universe config search — currently still correctly 422-rejected by `create_auto_session`, so this is genuine net-new backend work) and **J-13** (the immutable, hard-enforced AI-token/USD + max-configs + wall-clock cost tracker), then **J-14** (staged SCREEN→PROMOTE — cheap screen must NOT run walk-forward or the strong model), **J-15** (read-only global-history warm start with the `history_scope` opt-out + prompt-cached planner context), and **J-16** (robust WFE-gated/drawdown-penalized/min-trades best selection over the open universe). Full pipeline (audit + ux-regression + closure) is warranted: this is the heaviest remaining scope and activates several strong anti-goals (hard budget / no blind fan-out / SCREEN cheapness / prompt caching / robust-best). Carry forward as a tracked, non-blocking item the stop-endpoint pickle trimming (scalar result proxy across the child pipe) to remove the load-sensitive latency tail.</div></div></details>
+<details open><summary>Direction signal</summary><div class='accordion-body'><div class='why-text'><strong>Why:</strong> This iter rewired both UI &quot;Auto Run&quot; entrypoints to `POST /api/auto-sessions` and deleted the legacy in-browser iterate loop in `useBacktest.ts`, landing J-10 (survives mid-run reload) and J-11 (stoppable, robust best preserved) as newly-passing with browser + source + unit evidence. No prior-passing journey regressed — the two lesson-protected journeys J-02 (right-panel re-bind) and J-08 (no stale terminal) were explicitly re-verified — and zero anti-goals were violated. The Optimizer layer (J-12–J-16) remains failing by design and is the evaluator&#x27;s next target; all three iters so far moved journeys forward, so direction is healthy.</div><h3>Trend</h3><ul class='bullets'><li>Newly passing this iter: J-10, J-11</li><li>Newly passing in last 3 iters total: J-01, J-03, J-04, J-05, J-06 (iter-0 baseline); J-02, J-07, J-08, J-09 (iter-1); J-10, J-11 (iter-2)</li><li>Regressions in last 3 iters: none</li><li>Anti-goal violations in last 3 iters: none (0)</li><li>Iters with no journey state change: 0 of last 3</li></ul><h3>Latest evaluator reasoning</h3><div class='why-text'>The Layer-1 Foundation is genuinely closed. J-10 (backend single source of truth — both &quot;Auto Run&quot; entrypoints rewired to `POST /api/auto-sessions`, the legacy in-browser iterate loop deleted, run survives a mid-run reload) and J-11 (public stop endpoint + by-`sessionId` cancel registry + durable worker/restart-safe stop signal; `stopped` terminal with reason; robust `bestIterationId` preserved) both newly pass with browser + source + unit evidence. Every required-still-passing journey holds; the two lesson-protected journeys (J-02 right-panel re-bind, J-08 no-stale-terminal) were explicitly re-verified PASS at browser **and** source-diff level.</div></div></details>
+<details open><summary>Quick verify (5 min)</summary><div class='accordion-body'><ol class='steps'><li><span class='step-action'>Open `http://localhost:3691` in your browser.</span></li><li><span class='step-action'>In the config bar set Symbol `BTC/USDT`, Timeframe `1 Hour`, Start `2024-01-01`, End `2024-02-01`, Capital `10000`. In the left box type `Buy when RSI crosses below 30, sell when it crosses above 70` and press **Enter** (or click the blue paper-plane Send button).</span></li><li><span class='step-action'>Set the small number box right of the Auto Run button to `2`, then click the violet **&quot;Auto Run (2)&quot;** button.</span></li><li><span class='step-action'>Click the **Sessions** button (top-right); within ~5 seconds a new **&quot;Auto: …&quot;** row appears with a pulsing amber dot and a `running` badge. Click that row.</span></li><li><span class='step-action'>While it still reads **&quot;Automated run · iteration X/2&quot;**, hard-reload the page (Ctrl+Shift+R). Then click **Sessions** and re-open the same **&quot;Auto: …&quot;** session.</span></li></ol></div></details>
+<details><summary>Artifacts</summary><div class='accordion-body'><table class='drill-table'><thead><tr><th>Report</th><th>Verdict</th><th>Path</th></tr></thead><tbody><tr><td>Iter spec</td><td><span class='verdict-cell —'>—</span></td><td><a href='../docs/phases/goal-auto-money-printer-iter-2.md'>docs/phases/goal-auto-money-printer-iter-2.md</a></td></tr><tr><td>Dev handoff</td><td><span class='verdict-cell —'>—</span></td><td><a href='../docs/handoffs/goal-auto-money-printer-iter-2-dev.md'>docs/handoffs/goal-auto-money-printer-iter-2-dev.md</a></td></tr><tr><td>Dev handoff (frontend)</td><td><span class='verdict-cell —'>—</span></td><td><a href='../docs/handoffs/goal-auto-money-printer-iter-2-frontend.md'>docs/handoffs/goal-auto-money-printer-iter-2-frontend.md</a></td></tr><tr><td>Review</td><td><span class='verdict-cell PASS_WITH_NOTES'>PASS_WITH_NOTES</span></td><td><a href='reviews/goal-auto-money-printer-iter-2-review.md'>reports/reviews/goal-auto-money-printer-iter-2-review.md</a></td></tr><tr><td>Browser QA</td><td><span class='verdict-cell PASS'>PASS</span></td><td><a href='phase-goal-auto-money-printer-iter-2-ui-test-results.md'>reports/phase-goal-auto-money-printer-iter-2-ui-test-results.md</a></td></tr><tr><td>Implementation summary</td><td><span class='verdict-cell —'>—</span></td><td><a href='phase-goal-auto-money-printer-iter-2-implementation-summary.md'>reports/phase-goal-auto-money-printer-iter-2-implementation-summary.md</a></td></tr><tr><td>User-visible changes</td><td><span class='verdict-cell —'>—</span></td><td><a href='phase-goal-auto-money-printer-iter-2-user-visible-changes.md'>reports/phase-goal-auto-money-printer-iter-2-user-visible-changes.md</a></td></tr><tr><td>What to click</td><td><span class='verdict-cell —'>—</span></td><td><a href='phase-goal-auto-money-printer-iter-2-what-to-click.md'>reports/phase-goal-auto-money-printer-iter-2-what-to-click.md</a></td></tr><tr><td>UI surface map</td><td><span class='verdict-cell —'>—</span></td><td><a href='phase-goal-auto-money-printer-iter-2-ui-surface-map.md'>reports/phase-goal-auto-money-printer-iter-2-ui-surface-map.md</a></td></tr><tr><td>UI test plan</td><td><span class='verdict-cell —'>—</span></td><td><a href='phase-goal-auto-money-printer-iter-2-ui-test-plan.md'>reports/phase-goal-auto-money-printer-iter-2-ui-test-plan.md</a></td></tr><tr><td>UX regression</td><td><span class='verdict-cell UX-REGRESSION-WARN'>UX-REGRESSION-WARN</span></td><td><a href='phase-goal-auto-money-printer-iter-2-ux-regression.md'>reports/phase-goal-auto-money-printer-iter-2-ux-regression.md</a></td></tr><tr><td>QA</td><td><span class='verdict-cell PASS'>PASS</span></td><td><a href='qa/goal-auto-money-printer-iter-2-qa.md'>reports/qa/goal-auto-money-printer-iter-2-qa.md</a></td></tr><tr><td>Audit</td><td><span class='verdict-cell PASS_WITH_GAPS'>PASS_WITH_GAPS</span></td><td><a href='../docs/handoffs/goal-auto-money-printer-iter-2-audit.md'>docs/handoffs/goal-auto-money-printer-iter-2-audit.md</a></td></tr><tr><td>Closure</td><td><span class='verdict-cell CLOSURE-PASS'>CLOSURE-PASS</span></td><td><a href='phase-goal-auto-money-printer-iter-2-closure-verdict.md'>reports/phase-goal-auto-money-printer-iter-2-closure-verdict.md</a></td></tr><tr><td>Goal evaluation</td><td><span class='verdict-cell CONTINUE'>CONTINUE</span></td><td><a href='../runs/goal-session-auto-money-printer/iter-2/eval.md'>runs/goal-session-auto-money-printer/iter-2/eval.md</a></td></tr><tr><td>Journey history</td><td><span class='verdict-cell —'>—</span></td><td><a href='../runs/goal-session-auto-money-printer/state/journey-history.json'>runs/goal-session-auto-money-printer/state/journey-history.json</a></td></tr></tbody></table></div></details>
+<div class='footer-note'>Generated 2026-05-19 12:14 by <code>render_iteration_summary.py</code> · source: <a href='phase-goal-auto-money-printer-iter-2-iteration-summary.md'>phase-goal-auto-money-printer-iter-2-iteration-summary.md</a></div>
+</div></body></html>
