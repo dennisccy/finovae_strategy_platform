@@ -141,6 +141,37 @@ function App() {
     }, 1000)
   }, [tabsLoaded, liveSessions])
 
+  // Discover backend-created sessions (e.g. a headless POST /api/auto-sessions
+  // run started from a script with no browser interaction) WITHOUT a manual
+  // page reload. The tab list is otherwise fetched only on mount, so a new
+  // headless session never appears in the Sessions dropdown until reload
+  // (browser-qa UT-03). Poll the derived list and merge in any IDs we don't
+  // know yet; also refetch on window focus. Strictly additive — never
+  // removes, renames, reorders, or persists tabs, and never changes the
+  // active session, so manual/in-browser sessions and J-02/J-08 are untouched.
+  useEffect(() => {
+    if (!tabsLoaded) return
+    let cancelled = false
+
+    const mergeNewTabs = async () => {
+      const tabs = await fetchSessionTabs()
+      if (cancelled || tabs.length === 0) return
+      setLiveSessions(prev => {
+        const known = new Set(prev.map(s => s.id))
+        const additions = tabs.filter(t => !known.has(t.id))
+        return additions.length === 0 ? prev : [...prev, ...additions]
+      })
+    }
+
+    const interval = setInterval(mergeNewTabs, 5000)
+    window.addEventListener('focus', mergeNewTabs)
+    return () => {
+      cancelled = true
+      clearInterval(interval)
+      window.removeEventListener('focus', mergeNewTabs)
+    }
+  }, [tabsLoaded])
+
   const handleNameChange = useCallback((sessionId: string, name: string) => {
     setLiveSessions(prev => prev.map(s => s.id === sessionId ? { ...s, name } : s))
   }, [])

@@ -3,83 +3,83 @@
     "J-01": {
       "id": "J-01",
       "name": "Run a backtest from natural language",
-      "status": "already_passing",
-      "last_verified_iter": "goal-auto-money-printer-iter-0",
-      "last_passing_iter": "goal-auto-money-printer-iter-0",
+      "status": "passing",
+      "last_verified_iter": "goal-auto-money-printer-iter-1",
+      "last_passing_iter": "goal-auto-money-printer-iter-1",
       "first_seen_iter": "goal-auto-money-printer-iter-0",
-      "last_evidence_path": "reports/qa/goal-auto-money-printer-iter-0-evidence/UT-J-01-result.png"
+      "last_evidence_path": "reports/qa/goal-auto-money-printer-iter-1-evidence/UT-13-state.png"
     },
     "J-02": {
       "id": "J-02",
       "name": "Inspect and browse run history",
-      "status": "partial",
-      "last_verified_iter": "goal-auto-money-printer-iter-0",
-      "last_passing_iter": null,
+      "status": "passing",
+      "last_verified_iter": "goal-auto-money-printer-iter-1",
+      "last_passing_iter": "goal-auto-money-printer-iter-1",
       "first_seen_iter": "goal-auto-money-printer-iter-0",
-      "last_evidence_path": "reports/qa/goal-auto-money-printer-iter-0-evidence/UT-J-02-result.png"
+      "last_evidence_path": "reports/qa/goal-auto-money-printer-iter-1-evidence/TC-19-J02-rebind-proof.png"
     },
     "J-03": {
       "id": "J-03",
       "name": "Walk-forward validation",
-      "status": "already_passing",
-      "last_verified_iter": "goal-auto-money-printer-iter-0",
-      "last_passing_iter": "goal-auto-money-printer-iter-0",
+      "status": "passing",
+      "last_verified_iter": "goal-auto-money-printer-iter-1",
+      "last_passing_iter": "goal-auto-money-printer-iter-1",
       "first_seen_iter": "goal-auto-money-printer-iter-0",
-      "last_evidence_path": "reports/qa/goal-auto-money-printer-iter-0-evidence/UT-J-03-result.png"
+      "last_evidence_path": "reports/qa/goal-auto-money-printer-iter-1-evidence/UT-14-wf-result.png"
     },
     "J-04": {
       "id": "J-04",
       "name": "AI insights",
-      "status": "already_passing",
-      "last_verified_iter": "goal-auto-money-printer-iter-0",
-      "last_passing_iter": "goal-auto-money-printer-iter-0",
+      "status": "passing",
+      "last_verified_iter": "goal-auto-money-printer-iter-1",
+      "last_passing_iter": "goal-auto-money-printer-iter-1",
       "first_seen_iter": "goal-auto-money-printer-iter-0",
-      "last_evidence_path": "reports/qa/goal-auto-money-printer-iter-0-evidence/UT-J-04-result.png"
+      "last_evidence_path": "reports/qa/goal-auto-money-printer-iter-1-evidence/UT-14-walkforward.png"
     },
     "J-05": {
       "id": "J-05",
       "name": "Reference data loads",
-      "status": "already_passing",
-      "last_verified_iter": "goal-auto-money-printer-iter-0",
-      "last_passing_iter": "goal-auto-money-printer-iter-0",
+      "status": "passing",
+      "last_verified_iter": "goal-auto-money-printer-iter-1",
+      "last_passing_iter": "goal-auto-money-printer-iter-1",
       "first_seen_iter": "goal-auto-money-printer-iter-0",
-      "last_evidence_path": "reports/qa/goal-auto-money-printer-iter-0-evidence/UT-J-05-result.png"
+      "last_evidence_path": "reports/qa/goal-auto-money-printer-iter-1-evidence/UT-15-legacy-autorun.png"
     },
     "J-06": {
       "id": "J-06",
       "name": "Warm-cache re-run works end-to-end",
-      "status": "already_passing",
-      "last_verified_iter": "goal-auto-money-printer-iter-0",
-      "last_passing_iter": "goal-auto-money-printer-iter-0",
+      "status": "passing",
+      "last_verified_iter": "goal-auto-money-printer-iter-1",
+      "last_passing_iter": "goal-auto-money-printer-iter-1",
       "first_seen_iter": "goal-auto-money-printer-iter-0",
-      "last_evidence_path": "reports/qa/goal-auto-money-printer-iter-0-evidence/UT-J-06-result.png"
+      "last_evidence_path": "reports/qa/goal-auto-money-printer-iter-1-evidence/UT-13-state.png"
     },
     "J-07": {
       "id": "J-07",
       "name": "Start a headless automated session via the API (pinned config)",
-      "status": "failing",
-      "last_verified_iter": "goal-auto-money-printer-iter-0",
-      "last_passing_iter": null,
+      "status": "passing",
+      "last_verified_iter": "goal-auto-money-printer-iter-1",
+      "last_passing_iter": "goal-auto-money-printer-iter-1",
       "first_seen_iter": "goal-auto-money-printer-iter-0",
-      "last_evidence_path": "reports/qa/goal-auto-money-printer-iter-0-evidence/UT-J-07-to-16-no-auto-sessions-api.png"
+      "last_evidence_path": "reports/qa/goal-auto-money-printer-iter-1-evidence/TC-17-02-sessionlist.png"
     },
     "J-08": {
       "id": "J-08",
       "name": "Track the automated run live in the UI",
-      "status": "failing",
-      "last_verified_iter": "goal-auto-money-printer-iter-0",
-      "last_passing_iter": null,
+      "status": "passing",
+      "last_verified_iter": "goal-auto-money-printer-iter-1",
+      "last_passing_iter": "goal-auto-money-printer-iter-1",
       "first_seen_iter": "goal-auto-money-printer-iter-0",
-      "last_evidence_path": "reports/qa/goal-auto-money-printer-iter-0-evidence/UT-J-07-to-16-no-auto-sessions-api.png"
+      "last_evidence_path": "reports/qa/goal-auto-money-printer-iter-1-evidence/TC-17-J08-autorunbar-terminal.png"
     },
     "J-09": {
       "id": "J-09",
       "name": "Automated chain stops on robust target or budget; best is marked",
-      "status": "failing",
-      "last_verified_iter": "goal-auto-money-printer-iter-0",
-      "last_passing_iter": null,
+      "status": "passing",
+      "last_verified_iter": "goal-auto-money-printer-iter-1",
+      "last_passing_iter": "goal-auto-money-printer-iter-1",
       "first_seen_iter": "goal-auto-money-printer-iter-0",
-      "last_evidence_path": "reports/qa/goal-auto-money-printer-iter-0-evidence/UT-J-07-to-16-no-auto-sessions-api.png"
+      "last_evidence_path": "reports/qa/goal-auto-money-printer-iter-1-evidence/TC-18-J09-terminal-best.png"
     },
     "J-10": {
       "id": "J-10",
@@ -146,5 +146,5 @@
     }
   },
   "anti_goal_violations": [],
-  "updated_at": "2026-05-19T01:45:00Z"
+  "updated_at": "2026-05-19T07:20:00Z"
 }

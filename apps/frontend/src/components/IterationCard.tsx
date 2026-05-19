@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Trash2, RotateCw, Zap } from 'lucide-react'
+import { Trash2, RotateCw, Zap, Star } from 'lucide-react'
 import type { IterationNode } from '../hooks/useBacktest'
 
 interface IterationCardProps {
@@ -9,6 +9,23 @@ interface IterationCardProps {
   onRerun?: (id: string) => void
   onStartAutoRun?: (id: string) => void
   isLatest?: boolean
+  /** Marked best of the (headless) auto-session by the robust objective. */
+  isBest?: boolean
+}
+
+/** Small "Best" marker shown on the auto-session's robust-best iteration.
+ * Exported so the expanded IterationDetailView header renders the exact
+ * same badge as the compact tree (consistent styling + tooltip). */
+export function BestBadge() {
+  return (
+    <span
+      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[10px] font-semibold flex-shrink-0"
+      title="Best iteration — selected by the robust walk-forward objective"
+    >
+      <Star className="w-3 h-3 fill-amber-500 text-amber-500" />
+      Best
+    </span>
+  )
 }
 
 function formatLondonTime(timestamp: string): string {
@@ -34,7 +51,7 @@ const statusConfig = {
   error: { label: 'Error', dotClass: 'bg-red-500', bgClass: 'bg-red-50 border-red-200' },
 }
 
-export function IterationCard({ iteration, onSelect, onDelete, onRerun, onStartAutoRun, isLatest = false }: IterationCardProps) {
+export function IterationCard({ iteration, onSelect, onDelete, onRerun, onStartAutoRun, isLatest = false, isBest = false }: IterationCardProps) {
   const [pendingDelete, setPendingDelete] = useState(false)
   const config = statusConfig[iteration.status]
   const isInProgress = iteration.status === 'generating' || iteration.status === 'executing'
@@ -82,6 +99,7 @@ export function IterationCard({ iteration, onSelect, onDelete, onRerun, onStartA
               <h4 className="text-xs font-semibold text-slate-700 truncate">
                 {iteration.strategyName || (iteration.status === 'generating' ? 'AI crafting strategy...' : 'Executing...')}
               </h4>
+              {isBest && <BestBadge />}
             </div>
 
             {/* Show prompt snippet if still generating/executing and no strategyName yet */}
@@ -222,9 +240,12 @@ export function IterationCard({ iteration, onSelect, onDelete, onRerun, onStartA
       </div>
 
       {/* Strategy name */}
-      <h4 className="text-sm font-semibold text-slate-800 truncate">
-        {iteration.strategyName || 'Generating...'}
-      </h4>
+      <div className="flex items-center gap-2">
+        <h4 className="text-sm font-semibold text-slate-800 truncate">
+          {iteration.strategyName || 'Generating...'}
+        </h4>
+        {isBest && <BestBadge />}
+      </div>
 
       {/* Change summary */}
       {iteration.changeSummary && (

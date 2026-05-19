@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react'
 import { AlertTriangle, ArrowLeft, Check, ChevronDown, ChevronRight, Code, Copy, GitCompare } from 'lucide-react'
 import type { IterationNode, WalkForwardConfig } from '../hooks/useBacktest'
+import { BestBadge } from './IterationCard'
 import { RatingPanel } from './RatingPanel'
 import { MetricsCard } from './MetricsCard'
 import { EquityChart } from './EquityChart'
@@ -13,6 +14,8 @@ interface IterationDetailViewProps {
   previousIteration?: IterationNode
   onBack: () => void
   onRunWalkForward?: (iterationId: string, config: WalkForwardConfig, onProgress?: (w: number, t: number) => void) => void
+  /** True when this is the headless auto-session's robust-best iteration. */
+  isBest?: boolean
 }
 
 function DiffView({ lines }: { lines: DiffLine[] }) {
@@ -55,7 +58,7 @@ function formatLondonTime(timestamp: string): string {
   return `${get('year')}-${get('month')}-${get('day')} ${get('hour')}:${get('minute')}:${get('second')}`
 }
 
-export function IterationDetailView({ iteration, previousIteration, onBack, onRunWalkForward }: IterationDetailViewProps) {
+export function IterationDetailView({ iteration, previousIteration, onBack, onRunWalkForward, isBest = false }: IterationDetailViewProps) {
   const [codeExpanded, setCodeExpanded] = useState(false)
   const [showDiff, setShowDiff] = useState(true)
   const [copied, setCopied] = useState(false)
@@ -104,9 +107,12 @@ export function IterationDetailView({ iteration, previousIteration, onBack, onRu
               <ArrowLeft className="w-4 h-4" />
             </button>
             <div className="min-w-0">
-              <h2 className="text-base lg:text-lg font-semibold text-slate-800 truncate">
-                {iteration.strategyName}
-              </h2>
+              <div className="flex items-center gap-2 min-w-0">
+                <h2 className="text-base lg:text-lg font-semibold text-slate-800 truncate">
+                  {iteration.strategyName}
+                </h2>
+                {isBest && <BestBadge />}
+              </div>
               <p className="text-xs text-slate-500 truncate">
                 {iteration.prompt.length > 50 ? iteration.prompt.slice(0, 50) + '...' : iteration.prompt}
               </p>

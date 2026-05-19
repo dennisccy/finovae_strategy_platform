@@ -176,6 +176,13 @@ async def get_session(session_id: str):
         "sessionId": session_id,
         "backtestParams": meta.get("backtestParams", {}),
         "selectedIterationId": meta.get("selectedIterationId"),
+        # Small headless auto-session status block (status/stopReason/best/
+        # counters) read straight from session.json meta. This is NOT a
+        # per-iteration result/rating payload, so the lazy-load anti-goal
+        # (the list/open path must not eager-parse iteration result.json /
+        # rating.json) stays intact — heavy iteration detail is still
+        # fetched on demand via GET /{session_id}/iterations/{id}.
+        "autoRun": meta.get("autoRun"),
         "activityLog": activity,
         "iterationHistory": iterations,
     }

@@ -419,6 +419,22 @@ export interface LiveSessionStatus {
   hasError: boolean
 }
 
+// Headless auto-session status block. Mirrors the small `autoRun` object the
+// backend persists into session.json (durable file store) and returns from
+// GET /api/sessions/{id}. Present only for backend-owned (headless) sessions;
+// null for manual sessions.
+export type AutoRunPhase = 'queued' | 'running' | 'complete' | 'stopped'
+
+export interface AutoRunStatus {
+  status: AutoRunPhase
+  stopReason: 'criteria-met' | 'budget-exhausted' | null
+  currentIteration: number
+  maxIterations: number
+  bestIterationId: string | null
+  startedAt?: string
+  updatedAt?: string
+}
+
 // =============================================================================
 // Hook
 // =============================================================================
@@ -443,9 +459,11 @@ export function useBacktest(sessionId: string) {
   // lightweight — heavy result/rating/scriptCode is fetched on selection).
   const [detailLoading, setDetailLoading] = useState(false)
   const [detailError, setDetailError] = useState<string | null>(null)
-  // ids whose full detail has been merged in (skip refetch) and the id of an
-  // in-flight fetch (dedupe concurrent triggers for the same node).
-  const loadedDetailIdsRef = useRef<Set<string>>(new Set())
+  // id of an in-flight detail fetch (dedupe concurrent triggers for the same
+  // node). Detail-present is read off the node's own `result`, not a
+  // hook-lifetime id set — a long-lived "already loaded" ref goes stale when
+  // the history is re-hydrated/polled back to lightweight (result: null) and
+  // would then permanently block re-fetch of the selected run (J-02).
   const loadingDetailIdRef = useRef<string | null>(null)
 
   // Auto-run state
@@ -453,6 +471,14 @@ export function useBacktest(sessionId: string) {
   const [autoRunProgress, setAutoRunProgress] = useState<{ current: number; max: number } | null>(null)
   const autoRunStopRef = useRef(false)
   const autoRunIterationIdsRef = useRef<Set<string>>(new Set())
+
+  // Headless (server-driven) auto-session status. Set from the durable
+  // session.json `autoRun` block on hydration and refreshed by lightweight
+  // polling while the run is active. When non-null the session is
+  // backend-owned: the backend is the single writer of its artifacts, so the
+  // frontend save effects are suppressed (read-only live monitoring view).
+  const [autoRun, setAutoRun] = useState<AutoRunStatus | null>(null)
+  const backendOwnedRef = useRef(false)
 
   // Worker count (fetched from /api/config; controls auto-run concurrency)
   const [workerCount, setWorkerCount] = useState(1)
@@ -506,6 +532,11 @@ export function useBacktest(sessionId: string) {
       if (raw) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const data = raw as any
+        // A non-null `autoRun` block ⇒ this session was created by the
+        // headless controller and the backend owns its artifacts.
+        const auto = (data.autoRun ?? null) as AutoRunStatus | null
+        backendOwnedRef.current = !!auto
+        setAutoRun(auto)
         const migrated = migrateSession({
           iterationHistory: Array.isArray(data.iterationHistory) ? data.iterationHistory : [],
           activityLog: Array.isArray(data.activityLog) ? data.activityLog : [],
@@ -600,7 +631,11 @@ export function useBacktest(sessionId: string) {
 
   // Save completed/errored iterations when they change
   useEffect(() => {
-    if (!isHydrated) return
+    // Backend-owned (headless) sessions: the server is the single writer of
+    // its iteration/activity/meta artifacts. Persisting the lightweight
+    // polled view back would overwrite the server's full result.json /
+    // rating.json with nulls — suppress all client writes for them.
+    if (!isHydrated || backendOwnedRef.current) return
     let savedAny = false
     iterationHistory.forEach((node, idx) => {
       if (node.status !== 'complete' && node.status !== 'error') return
@@ -624,7 +659,7 @@ export function useBacktest(sessionId: string) {
 
   // Activity log: append new entries immediately; debounced rewrite for updates
   useEffect(() => {
-    if (!isHydrated) return
+    if (!isHydrated || backendOwnedRef.current) return
     const prev = savedActivityCountRef.current
     const curr = activityLog.length
 
@@ -650,7 +685,7 @@ export function useBacktest(sessionId: string) {
 
   // Meta save: debounced 2s on params / selectedIteration change
   useEffect(() => {
-    if (!isHydrated) return
+    if (!isHydrated || backendOwnedRef.current) return
     if (metaSaveTimerRef.current) clearTimeout(metaSaveTimerRef.current)
     const params = backtestParams
     const selId = selectedIterationId
@@ -663,6 +698,7 @@ export function useBacktest(sessionId: string) {
   // Beacon save on page unload (fire-and-forget, survives page close)
   useEffect(() => {
     const handleBeforeUnload = () => {
+      if (backendOwnedRef.current) return
       beaconSaveSession(sessionId, {
         backtestParams: backtestParamsRef.current,
         selectedIterationId: selectedIterationIdRef.current,
@@ -672,25 +708,122 @@ export function useBacktest(sessionId: string) {
     return () => window.removeEventListener('beforeunload', handleBeforeUnload)
   }, [sessionId])
 
+  // Live tracking for headless auto-sessions (J-08): while the server-driven
+  // run is active, poll the lightweight session/open path and merge changes
+  // in — no manual page reload. Polling stops the moment the run reaches a
+  // terminal state. The merge MUST preserve any already-lazy-loaded heavy
+  // detail (result/rating/insights/scriptCode/WF): the polled list path is
+  // lightweight (those fields are null) and must never downgrade a node the
+  // user has open.
+  useEffect(() => {
+    if (!isHydrated) return
+    const phase = autoRun?.status
+    if (phase !== 'running' && phase !== 'queued') return
+
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout> | null = null
+
+    const tick = async () => {
+      const raw = await apiLoadSession(sessionId)
+      if (cancelled || !raw) return
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const data = raw as any
+      const nextAuto = (data.autoRun ?? null) as AutoRunStatus | null
+      if (nextAuto) {
+        backendOwnedRef.current = true
+        setAutoRun(nextAuto)
+      }
+
+      const incoming: IterationNode[] = (
+        Array.isArray(data.iterationHistory) ? data.iterationHistory : []
+      ).filter((n: IterationNode) => n.status === 'complete')
+
+      setIterationHistory(prev => {
+        const prevById = new Map(prev.map(n => [n.id, n]))
+        const merged: IterationNode[] = prev.map(n => {
+          const inc = incoming.find(i => i.id === n.id)
+          if (!inc) return n
+          // Refresh lightweight meta from the poll but PRESERVE locally
+          // lazy-loaded heavy fields (mirror loadIterationDetail precedence).
+          return {
+            ...inc,
+            prompt: n.prompt || inc.prompt || '',
+            scriptCode: n.scriptCode || inc.scriptCode || '',
+            scriptId: n.scriptId || inc.scriptId || '',
+            result: n.result ?? null,
+            rating: n.rating ?? null,
+            insights: n.insights ?? inc.insights ?? null,
+            walkForwardResult: n.walkForwardResult ?? null,
+            walkForwardStatus: n.walkForwardStatus ?? inc.walkForwardStatus,
+          }
+        })
+        for (const inc of incoming) {
+          if (!prevById.has(inc.id)) {
+            merged.push({
+              ...inc,
+              prompt: inc.prompt ?? '',
+              scriptCode: inc.scriptCode ?? '',
+              scriptId: inc.scriptId ?? '',
+              result: inc.result ?? null,
+              rating: inc.rating ?? null,
+              insights: inc.insights ?? null,
+            })
+          }
+        }
+        // Keep the save-version map aligned (defence-in-depth: save effects
+        // are already suppressed for backend-owned sessions).
+        merged.forEach(m => {
+          if (m.status === 'complete' || m.status === 'error') {
+            savedIterationVersionRef.current.set(
+              m.id, `${m.status}:${m.insights?.suggestions?.length ?? 0}`
+            )
+          }
+        })
+        iterationHistoryRef.current = merged
+        return merged
+      })
+
+      if (Array.isArray(data.activityLog)) {
+        savedActivityCountRef.current = data.activityLog.length
+        setActivityLog(data.activityLog as ActivityEntry[])
+      }
+      if (incoming.length > 0) setPhase('results')
+
+      if (!cancelled) timer = setTimeout(tick, 2500)
+    }
+
+    timer = setTimeout(tick, 2500)
+    return () => {
+      cancelled = true
+      if (timer) clearTimeout(timer)
+    }
+  }, [isHydrated, sessionId, autoRun?.status])
+
   // Derived live session status for multi-session UI
   const sessionStatus: LiveSessionStatus = useMemo(() => {
-    const completedNodes = iterationHistory.filter(n => n.status === 'complete' && n.result)
+    // Lightweight nodes carry totalReturn even before heavy detail loads, so
+    // key off it (not n.result) — otherwise a headless session shows no best
+    // return in the list until a run is opened.
+    const completedNodes = iterationHistory.filter(n => n.status === 'complete')
     const bestReturn = completedNodes.length > 0
       ? Math.max(...completedNodes.map(n => n.totalReturn))
       : null
     const firstComplete = iterationHistory.find(n => n.status === 'complete')
     const name = firstComplete?.strategyName || `Session`
+    // A live headless run also drives the session-list activity dot
+    // (running → terminal) without a manual reload.
+    const headlessActive = autoRun?.status === 'running' || autoRun?.status === 'queued'
     return {
       id: sessionId,
       name,
       isLoading,
-      isAutoRunning,
+      isAutoRunning: isAutoRunning || headlessActive,
       isFetchingSession: !isHydrated,
       iterationCount: iterationHistory.length,
       bestReturn,
       hasError: iterationHistory.some(n => n.status === 'error'),
     }
-  }, [sessionId, isLoading, isAutoRunning, isHydrated, iterationHistory])
+  }, [sessionId, isLoading, isAutoRunning, isHydrated, iterationHistory, autoRun?.status])
 
   const addLogEntry = useCallback((entry: Omit<ActivityEntry, 'id' | 'timestamp'>) => {
     const newEntry: ActivityEntry = {
@@ -1547,7 +1680,6 @@ export function useBacktest(sessionId: string) {
           id, `${merged.status}:${merged.insights?.suggestions?.length ?? 0}`
         )
       }
-      loadedDetailIdsRef.current.add(id)
       iterationHistoryRef.current = nextHistory
       setIterationHistory(prev => apply(prev))
     } catch (e) {
@@ -1566,7 +1698,13 @@ export function useBacktest(sessionId: string) {
     const id = selectedIterationId
     if (!id) return
     const node = iterationHistory.find(n => n.id === id)
-    if (!node || node.result || loadedDetailIdsRef.current.has(id)) return
+    // Re-bind on every selection whose rendered node lacks heavy detail.
+    // `node.result` is the authoritative "already have detail" signal;
+    // loadingDetailIdRef dedupes an in-flight fetch (loadIterationDetail
+    // re-checks both). This is what makes J-02 re-bind the RIGHT analysis
+    // panel (trades/equity/WF) for a selected prior run instead of the
+    // detail staying pinned to the latest run.
+    if (!node || node.result || loadingDetailIdRef.current === id) return
     loadIterationDetail(id)
   }, [isHydrated, selectedIterationId, iterationHistory, loadIterationDetail])
 
@@ -2283,5 +2421,6 @@ export function useBacktest(sessionId: string) {
     runWalkForward,
     sessionStatus,
     workerCount,
+    autoRun,
   }
 }

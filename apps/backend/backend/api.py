@@ -122,8 +122,10 @@ app.add_middleware(
 
 from backend.session_routes import router as session_router  # noqa: E402
 from backend.directions_routes import router as directions_router  # noqa: E402
+from backend.auto_session import router as auto_session_router  # noqa: E402
 app.include_router(session_router)
 app.include_router(directions_router)
+app.include_router(auto_session_router)
 
 # Global pipeline instance
 _pipeline: Optional[BacktestPipeline] = None

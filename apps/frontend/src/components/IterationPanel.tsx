@@ -19,6 +19,8 @@ interface IterationPanelProps {
   detailError?: string | null
   /** Retry the lazy detail fetch for the currently selected run. */
   onRetryDetail?: () => void
+  /** Iteration marked best by the headless auto-session robust objective. */
+  bestIterationId?: string | null
 }
 
 // =============================================================================
@@ -85,18 +87,20 @@ function buildIterationTree(iterations: IterationNode[]): TreeNode[] {
 interface IterationTreeItemProps {
   node: TreeNode
   latestId: string | null
+  bestId: string | null
   onSelect: (id: string) => void
   onDelete: (id: string) => void
   onRerun: (id: string) => void
   onStartAutoRun: (id: string) => void
 }
 
-function IterationTreeItem({ node, latestId, onSelect, onDelete, onRerun, onStartAutoRun }: IterationTreeItemProps) {
+function IterationTreeItem({ node, latestId, bestId, onSelect, onDelete, onRerun, onStartAutoRun }: IterationTreeItemProps) {
   return (
     <div className="relative">
       <IterationCard
         iteration={node.iteration}
         isLatest={node.iteration.id === latestId}
+        isBest={node.iteration.id === bestId}
         onSelect={onSelect}
         onDelete={onDelete}
         onRerun={onRerun}
@@ -109,6 +113,7 @@ function IterationTreeItem({ node, latestId, onSelect, onDelete, onRerun, onStar
               key={child.iteration.id}
               node={child}
               latestId={latestId}
+              bestId={bestId}
               onSelect={onSelect}
               onDelete={onDelete}
               onRerun={onRerun}
@@ -125,7 +130,7 @@ function IterationTreeItem({ node, latestId, onSelect, onDelete, onRerun, onStar
 // IterationPanel
 // =============================================================================
 
-export function IterationPanel({ iterations, selectedId, onSelect, onDelete, onRerun, onStartAutoRun, onRunWalkForward, detailLoading, detailError, onRetryDetail }: IterationPanelProps) {
+export function IterationPanel({ iterations, selectedId, onSelect, onDelete, onRerun, onStartAutoRun, onRunWalkForward, detailLoading, detailError, onRetryDetail, bestIterationId = null }: IterationPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const isUserScrolledUp = useRef(false)
   const lastScrollHeight = useRef(0)
@@ -190,10 +195,12 @@ export function IterationPanel({ iterations, selectedId, onSelect, onDelete, onR
 
         return (
           <IterationDetailView
+            key={selected.id}
             iteration={selected}
             previousIteration={previousIteration}
             onBack={() => onSelect(null)}
             onRunWalkForward={onRunWalkForward}
+            isBest={selected.id === bestIterationId}
           />
         )
       }
@@ -279,6 +286,7 @@ export function IterationPanel({ iterations, selectedId, onSelect, onDelete, onR
             key={root.iteration.id}
             node={root}
             latestId={latestId}
+            bestId={bestIterationId}
             onSelect={onSelect}
             onDelete={onDelete}
             onRerun={onRerun}

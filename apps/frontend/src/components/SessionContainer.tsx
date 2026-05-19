@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
-import { useBacktest, type LiveSessionStatus, type IterationNode } from '../hooks/useBacktest'
+import { Loader2, CheckCircle2, StopCircle } from 'lucide-react'
+import { useBacktest, type LiveSessionStatus, type IterationNode, type AutoRunStatus } from '../hooks/useBacktest'
 import { useDirectionsCache, type RunOneCard } from '../hooks/useDirectionsCache'
 import { fetchCachedDirection } from '../lib/directionsApi'
 import { BacktestConfigBar } from './BacktestConfigBar'
@@ -20,6 +21,50 @@ interface SessionContainerProps {
   onLastUsedModelChange: (model: string) => void
   onStatusChange: (status: LiveSessionStatus) => void
   onNameChange: (name: string) => void
+}
+
+/**
+ * Live status strip for a headless (server-driven) auto-session. Advances
+ * running → terminal without a manual page reload (J-08) and shows the
+ * terminal stop reason (J-09). Hidden for manual sessions (autoRun null).
+ */
+function AutoRunBar({ autoRun }: { autoRun: AutoRunStatus }) {
+  const { status, stopReason, currentIteration, maxIterations } = autoRun
+  const active = status === 'running' || status === 'queued'
+
+  let icon = <Loader2 className="w-3.5 h-3.5 animate-spin text-primary-600" />
+  let text = `Automated run · iteration ${currentIteration}/${maxIterations}`
+  let tone = 'bg-primary-50 border-primary-200 text-primary-700'
+
+  if (!active) {
+    if (status === 'stopped') {
+      icon = <StopCircle className="w-3.5 h-3.5 text-red-500" />
+      text = 'Automated run stopped'
+      tone = 'bg-red-50 border-red-200 text-red-700'
+    } else {
+      icon = <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+      const reason =
+        stopReason === 'criteria-met'
+          ? 'robust targets met'
+          : stopReason === 'budget-exhausted'
+          ? 'budget reached'
+          : 'finished'
+      text = `Automated run complete · ${reason} · ${currentIteration}/${maxIterations} iterations`
+      tone = 'bg-emerald-50 border-emerald-200 text-emerald-700'
+    }
+  }
+
+  return (
+    <div
+      className={`flex items-center gap-2 px-4 py-1.5 border-b text-xs font-medium ${tone}`}
+      role="status"
+      aria-live="polite"
+    >
+      {icon}
+      <span className="truncate">{text}</span>
+      {status === 'queued' && <span className="text-slate-400">(queued)</span>}
+    </div>
+  )
 }
 
 export function SessionContainer({
@@ -58,6 +103,7 @@ export function SessionContainer({
     runWalkForward,
     sessionStatus,
     workerCount,
+    autoRun,
   } = useBacktest(sessionId)
 
   // Directions cache
@@ -198,6 +244,9 @@ export function SessionContainer({
         workerCount={workerCount}
       />
 
+      {/* Headless auto-session live status (J-08/J-09) */}
+      {autoRun && <AutoRunBar autoRun={autoRun} />}
+
       {/* Main Content */}
       <main className="flex flex-col lg:flex-row flex-1 lg:h-[calc(100vh-105px)] overflow-hidden">
         {/* Left Panel - Activity Log */}
@@ -238,6 +287,7 @@ export function SessionContainer({
             detailLoading={detailLoading}
             detailError={detailError}
             onRetryDetail={retryDetailLoad}
+            bestIterationId={autoRun?.bestIterationId ?? null}
           />
         </div>
       </main>
