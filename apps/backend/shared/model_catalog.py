@@ -84,6 +84,22 @@ def model_token_prices(model: str) -> tuple[float, float]:
     return MODEL_PRICING.get(model, (0.0, 0.0))
 
 
+def cheapest_model() -> str:
+    """Model id with the lowest per-token cost in :data:`MODEL_PRICING`.
+
+    Resolved from the price table at call time (the combined input+output
+    per-token price), NOT a hardcoded literal — so the auto-session SCREEN
+    stage always uses the cheapest catalog model even if the table changes
+    or a cheaper model is added (J-14: cheap-first model routing). Ties break
+    deterministically on the model id so the choice is stable. The table is
+    kept in sync with ``MODELS`` by ``tests/test_model_pricing.py``.
+    """
+    return min(
+        MODEL_PRICING,
+        key=lambda m: (MODEL_PRICING[m][0] + MODEL_PRICING[m][1], m),
+    )
+
+
 def usd_cost(model: str, input_tokens: int, output_tokens: int) -> float:
     """USD cost for a single LLM call from its REAL token counts.
 

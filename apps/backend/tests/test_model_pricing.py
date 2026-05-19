@@ -13,6 +13,7 @@ import pytest
 from shared.model_catalog import (
     MODEL_PRICING,
     MODELS,
+    cheapest_model,
     model_token_prices,
     usd_cost,
 )
@@ -51,3 +52,22 @@ def test_unknown_model_costs_zero_and_does_not_crash():
 def test_usd_cost_clamps_negative_or_none_token_counts():
     assert usd_cost("gpt-5.4-mini", -5, -10) == 0.0
     assert usd_cost("gpt-5.4-mini", None, None) == 0.0  # type: ignore[arg-type]
+
+
+def test_cheapest_model_is_resolved_from_the_price_table_not_a_literal():
+    """J-14 SCREEN routing: the cheapest model MUST be derived from
+    MODEL_PRICING (lowest combined per-token cost), not a hardcoded id —
+    so it tracks the table if pricing changes / a cheaper model is added."""
+    expected = min(
+        MODEL_PRICING,
+        key=lambda m: (MODEL_PRICING[m][0] + MODEL_PRICING[m][1], m),
+    )
+    chosen = cheapest_model()
+    assert chosen == expected
+    # It is a real catalog model and is genuinely the cheapest entry.
+    assert chosen in {m.id for m in MODELS}
+    cheapest_cost = sum(MODEL_PRICING[chosen])
+    for model_id, (p_in, p_out) in MODEL_PRICING.items():
+        assert cheapest_cost <= p_in + p_out, (
+            f"{model_id} is cheaper than the resolved cheapest {chosen}"
+        )

@@ -1,0 +1,21 @@
+{
+  "phase": "goal-auto-money-printer-iter-4",
+  "status": "blocked",
+  "current_step": "closure_failed",
+  "updated_at": "2026-05-19T18:12:38.068812Z",
+  "started_at": "2026-05-19T15:36:04.869079Z",
+  "cli": "claude",
+  "blockers": [],
+  "changed_files": [
+    "apps/backend/shared/model_catalog.py",
+    "apps/backend/backend/auto_session.py",
+    "apps/backend/tests/test_auto_session.py",
+    "apps/backend/tests/test_model_pricing.py",
+    "docs/handoffs/goal-auto-money-printer-iter-4-dev.md",
+    "docs/handoffs/goal-auto-money-printer-iter-4-frontend.md",
+    "reports/phase-goal-auto-money-printer-iter-4-implementation-summary.md"
+  ],
+  "tests_run": true,
+  "browser_checks_run": true,
+  "next_action": "audit"
+}

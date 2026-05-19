@@ -146,23 +146,48 @@ class FakePipeline:
       cancel_raise=True   -> execute_backtest raises PipelineError (cancelled)
       otherwise: result/wf metric overrides for that iteration.
     The last step repeats if the loop runs longer than `steps`.
+
+    iter-4 extension (additive, legacy behaviour byte-unchanged when the new
+    args are unused): an optional ``by_cfg`` maps ``(symbol, timeframe)`` ->
+    a step dict so the staged SCREEN→PROMOTE path is exercised
+    deterministically regardless of call order (a SCREEN and the later
+    PROMOTE of the same config read the SAME dict; SCREEN vs PROMOTE is told
+    apart by ``wfv_enabled`` — SCREEN passes ``False`` so it never gets WF).
+    Per-call introspection lists (``gen_models`` / ``insight_models`` /
+    ``bt_wfv`` / ``bt_cfgs``) let the staged tests assert the cheap-model,
+    no-WF SCREEN vs the req.model, WF PROMOTE without timing/order guesses.
     """
 
-    def __init__(self, steps):
+    def __init__(self, steps, by_cfg=None):
         self.steps = steps
+        self.by_cfg = by_cfg or {}
         self.gen_calls = 0
         self.bt_calls = 0
         self.insight_calls = 0
+        # Additive per-call introspection (legacy tests never read these).
+        self.gen_models: list = []
+        self.gen_cfgs: list = []
+        self.bt_wfv: list = []
+        self.bt_cfgs: list = []
+        self.insight_models: list = []
 
     def _step(self, idx):
         return self.steps[min(idx, len(self.steps) - 1)]
+
+    def _cfg_step(self, symbol, timeframe, counter):
+        key = (symbol, timeframe)
+        if key in self.by_cfg:
+            return self.by_cfg[key]
+        return self._step(counter)
 
     async def generate_strategy(self, *, natural_language, model,
                                 previous_script_code=None, symbol=None,
                                 timeframe=None, start_date=None, end_date=None,
                                 usage_sink=None):
-        step = self._step(self.gen_calls)
+        step = self._cfg_step(symbol, timeframe, self.gen_calls)
         self.gen_calls += 1
+        self.gen_models.append(model)
+        self.gen_cfgs.append((symbol, timeframe))
         if step.get("gen_raise"):
             raise RuntimeError("LLM exploded")
         # Deterministic fake SDK token usage flowing the PRODUCTION capture
@@ -196,8 +221,10 @@ class FakePipeline:
                                strategy_description, cancel_token=None,
                                wfv_enabled=False, wfv_is_months=6,
                                wfv_oos_months=3):
-        step = self._step(self.bt_calls)
+        step = self._cfg_step(symbol, timeframe, self.bt_calls)
         self.bt_calls += 1
+        self.bt_wfv.append(wfv_enabled)
+        self.bt_cfgs.append((symbol, timeframe))
         if step.get("cancel_raise"):
             raise PipelineError("Operation cancelled")
         if step.get("bt_raise"):
@@ -223,6 +250,7 @@ class FakePipeline:
     async def generate_insights(self, **kwargs):
         step = self._step(self.insight_calls)
         self.insight_calls += 1
+        self.insight_models.append(kwargs.get("model"))
         sink = kwargs.get("usage_sink")
         if sink is not None:
             sink.append({
@@ -1020,70 +1048,156 @@ def _distinct_cfgs(sid: str) -> set:
     return cfgs
 
 
+# --- Staged-form helpers (J-14): count the stage markers in the feed -------
+
+def _stage_markers(sid: str) -> tuple[list[dict], list[dict]]:
+    """Return (SCREEN, PROMOTE) auto-run stage-marker activity entries — the
+    one-per-config staging markers the operator sees in the existing feed."""
+    log = ss.read_activity_log(sid)
+    screen = [e for e in log
+              if e["type"] == "auto-run" and e["content"].startswith("SCREEN")]
+    promote = [e for e in log
+               if e["type"] == "auto-run" and e["content"].startswith("PROMOTE")]
+    return screen, promote
+
+
+def _nodes_by_stage(sid: str) -> tuple[list[dict], list[dict]]:
+    """Return (screen_nodes, promote_nodes) full iteration nodes, by the
+    persisted ``stage`` marker — proves screened-only vs promoted at the
+    durable-artifact level."""
+    screen, promote = [], []
+    for d in ss.list_iteration_dirs(sid):
+        node = ss.read_iteration_full(sid, d.name.split("_", 1)[1])
+        (promote if node.get("stage") == "promote" else screen).append(node)
+    return screen, promote
+
+
 async def test_open_universe_runs_multiple_distinct_configs(store):
-    # No symbol/timeframe — only objective + budget. The deterministic
-    # bounded enumerator must explore ≥2 DISTINCT (symbol,timeframe) configs.
-    pipe = FakePipeline([{"total_return": 0.3, "wfe": 0.7, "num_trades": 20}])
+    # STAGED FORM (J-12 invariant re-asserted under SCREEN→PROMOTE, NOT
+    # loosened): no symbol/timeframe — only objective + budget. The cheap
+    # SCREEN stage screens several bounded-seed configs; only a small top-k
+    # (k < screened) is PROMOTEd to the full pipeline.
+    pipe = FakePipeline([{"total_return": 0.3, "sharpe": 1.5, "wfe": 0.7,
+                          "num_trades": 20}])
     sid = "sess-open"
     final = await _run(
-        sid, _open_req(budget={"max_iterations": 5, "max_configs": 3}), pipe
+        sid, _open_req(budget={"max_iterations": 9, "max_configs": 6}), pipe
     )
 
     assert final["status"] == "complete"
     assert final["stopReason"] == "budget-exhausted"
+
+    # J-12 invariant (staged form): ≥2 DISTINCT seed configs explored,
+    # drawn ONLY from the bounded seed universe (no blind fan-out).
     cfgs = _distinct_cfgs(sid)
     assert len(cfgs) >= 2, f"expected ≥2 distinct configs, got {cfgs}"
-    # Every explored config is drawn ONLY from the bounded seed universe
-    # (anti-goal: no blind fan-out across the whole exchange list).
     assert cfgs <= set(auto_session._SEED_UNIVERSE)
-    assert final["bestIterationId"] is not None  # robust-best marked
-    assert final["spend"]["configsRun"] == 3
-    # The exploration is visible/auditable in the activity log.
-    log = ss.read_activity_log(sid)
-    explored = [e for e in log if e["content"].startswith("Exploring config")]
-    assert len(explored) == 3
+
+    # J-14: ≥3 cheap SCREEN markers, exactly k PROMOTE markers, k < screened.
+    screen, promote = _stage_markers(sid)
+    assert len(screen) == auto_session._SCREEN_SET_SIZE >= 3
+    k = len(promote)
+    assert 0 < k < len(screen), f"k={k} must be < screened={len(screen)}"
+    assert k == auto_session._PROMOTE_TOP_K
+
+    # Best is marked and is a PROMOTED iteration (robust over WF-bearing
+    # promoted iterations only — the cheap screen proxy never leaks in).
+    screen_nodes, promote_nodes = _nodes_by_stage(sid)
+    assert len(screen_nodes) == len(screen)
+    assert len(promote_nodes) == k
+    assert final["bestIterationId"] is not None
+    assert final["bestIterationId"] in {n["id"] for n in promote_nodes}
+    # Staged max_configs semantics: a "config" against the cap is one
+    # PROMOTE (expensive) candidate; SCREEN is cheap and not counted.
+    assert final["spend"]["configsRun"] == k
 
 
 async def test_open_universe_best_is_robust_not_raw_return(store):
-    # config-1: huge raw return but WFE-failing/over-traded -> low robust.
-    # config-2: modest return but walk-forward validated -> high robust.
-    steps = [
-        {"total_return": 5.0, "sharpe": 4.0, "max_drawdown": 0.4,
-         "num_trades": 30, "wfe": 0.0, "oos_return": -0.2,
-         "oos_sharpe": -0.5, "num_windows": 2},
-        {"total_return": 0.2, "sharpe": 1.1, "max_drawdown": 0.08,
-         "num_trades": 25, "wfe": 0.8, "oos_return": 0.15,
-         "oos_sharpe": 1.0, "num_windows": 3},
-    ]
+    # STAGED FORM: best is the robust winner over PROMOTED (WF-bearing)
+    # iterations only. A higher-raw-return SCREENED-ONLY candidate (no WF)
+    # and a higher-raw-return WFE-failing PROMOTED candidate must NOT be
+    # best. Per-config behaviour is keyed by (symbol,timeframe) so it is
+    # deterministic regardless of SCREEN/PROMOTE call order.
+    seed = auto_session._SEED_UNIVERSE
+    s0, s1, s2, s3 = seed[0], seed[1], seed[2], seed[3]
+    by_cfg = {
+        # s0: top in-sample Sharpe -> PROMOTED; huge raw return but
+        # WFE-failing -> robust gate-fail (must NOT be best).
+        s0: {"sharpe": 2.0, "total_return": 5.0, "max_drawdown": 0.4,
+             "num_trades": 30, "wfe": 0.0, "oos_return": -0.2,
+             "oos_sharpe": -0.5, "num_windows": 2},
+        # s1: 2nd in-sample Sharpe -> PROMOTED; modest but walk-forward
+        # validated -> highest robust score (the expected best).
+        s1: {"sharpe": 1.8, "total_return": 0.2, "max_drawdown": 0.08,
+             "num_trades": 25, "wfe": 0.8, "oos_return": 0.15,
+             "oos_sharpe": 1.0, "num_windows": 3},
+        # s2/s3: low in-sample Sharpe -> SCREENED-ONLY (never promoted).
+        # s2 has the single highest raw return in the whole run but no WF.
+        s2: {"sharpe": 0.5, "total_return": 9.0, "max_drawdown": 0.5,
+             "num_trades": 40},
+        s3: {"sharpe": 0.4, "total_return": 0.1, "max_drawdown": 0.1,
+             "num_trades": 15},
+    }
     sid = "sess-open-best"
     final = await _run(
-        sid, _open_req(budget={"max_iterations": 5, "max_configs": 2}),
-        FakePipeline(steps),
+        sid,
+        _open_req(model="claude-sonnet-4-6",
+                  budget={"max_iterations": 9, "max_configs": 6}),
+        FakePipeline([{}], by_cfg=by_cfg),
     )
 
-    dirs = sorted(ss.list_iteration_dirs(sid), key=lambda d: d.name)
-    assert len(dirs) == 2
-    id1 = dirs[0].name.split("_", 1)[1]
-    id2 = dirs[1].name.split("_", 1)[1]
-    assert final["bestIterationId"] == id2
-    assert final["bestIterationId"] != id1, (
-        "the higher-raw-return WFE-failing config must NOT be best"
+    screen_nodes, promote_nodes = _nodes_by_stage(sid)
+    assert {n["params"]["symbol"] for n in screen_nodes
+            if (n["params"]["symbol"], n["params"]["timeframe"]) == s2}
+    # s0 & s1 are the two promoted (top-2 by in-sample Sharpe 2.0/1.8).
+    promoted_cfgs = {(n["params"]["symbol"], n["params"]["timeframe"])
+                     for n in promote_nodes}
+    assert promoted_cfgs == {s0, s1}, promoted_cfgs
+
+    by_cfg_node = {(n["params"]["symbol"], n["params"]["timeframe"]): n
+                   for n in promote_nodes}
+    best = final["bestIterationId"]
+    assert best == by_cfg_node[s1]["id"], "robust WF winner must be best"
+    assert best != by_cfg_node[s0]["id"], (
+        "the higher-raw-return WFE-failing PROMOTED config must NOT be best"
+    )
+    # The highest-raw-return candidate of the WHOLE run is the screened-only
+    # s2 (return 9.0, no WF) — it must NOT be best (screen proxy never leaks).
+    s2_screen_ids = {n["id"] for n in screen_nodes
+                     if (n["params"]["symbol"],
+                         n["params"]["timeframe"]) == s2}
+    assert best not in s2_screen_ids, (
+        "a higher-raw-return SCREENED-ONLY candidate must NOT be best"
     )
 
 
 async def test_max_configs_cap_stops_open_universe_no_post_cap_config(store):
-    # Seed universe has 6 entries; max_configs=2 must stop at EXACTLY 2 —
-    # "no one more config past the cap".
-    pipe = FakePipeline([{"total_return": 0.3, "wfe": 0.7}])
+    # STAGED FORM (J-13 "no one more config past the cap" re-asserted, NOT
+    # loosened): under staging a "config" counted against max_configs is one
+    # PROMOTE (expensive) candidate. max_configs=1 with a planned top-k of 2
+    # must stop at EXACTLY 1 promoted config — no second PROMOTE appended.
+    pipe = FakePipeline([{"total_return": 0.3, "sharpe": 1.5, "wfe": 0.7,
+                          "num_trades": 20}])
     sid = "sess-cfgcap"
     final = await _run(
-        sid, _open_req(budget={"max_iterations": 9, "max_configs": 2}), pipe
+        sid, _open_req(budget={"max_iterations": 9, "max_configs": 1}), pipe
     )
     assert final["status"] == "complete"
     assert final["stopReason"] == "budget-exhausted"
-    assert pipe.gen_calls == 2, "no config may start after the max-configs cap"
-    assert len(ss.list_iteration_dirs(sid)) == 2
-    assert final["spend"]["configsRun"] == 2
+
+    screen, promote = _stage_markers(sid)
+    # SCREEN is cheap & seed-bounded — it is NOT capped by max_configs.
+    assert len(screen) == auto_session._SCREEN_SET_SIZE >= 3
+    # Exactly ONE promoted config — the cap stopped the 2nd (planned k=2).
+    assert len(promote) == 1, "no PROMOTE config may start past max_configs"
+    assert final["spend"]["configsRun"] == 1
+    screen_nodes, promote_nodes = _nodes_by_stage(sid)
+    assert len(promote_nodes) == 1
+    # generate_strategy is called once per SCREEN only (PROMOTE reuses the
+    # screened strategy — no re-generation).
+    assert pipe.gen_calls == auto_session._SCREEN_SET_SIZE
+    cfgs = _distinct_cfgs(sid)
+    assert len(cfgs) >= 2 and cfgs <= set(auto_session._SEED_UNIVERSE)
 
 
 # =============================================================================
@@ -1093,46 +1207,63 @@ async def test_max_configs_cap_stops_open_universe_no_post_cap_config(store):
 # =============================================================================
 
 async def test_hard_token_budget_exhausted_real_usage_and_durable_spend(store):
-    from shared.model_catalog import usd_cost
+    # STAGED FORM (J-13 real-spend + budget-exhausted + durable spend
+    # re-asserted, NOT loosened): SCREEN generate calls (cheapest model) AND
+    # the PROMOTE insights call (req.model) BOTH feed the same real-captured
+    # record_usage path. The token cap is sized so all SCREEN generates plus
+    # exactly ONE PROMOTE insights call land, and the cap then stops the next
+    # PROMOTE — no config past the cap.
+    from shared.model_catalog import cheapest_model, usd_cost
 
-    # Explicit per-call fake SDK usage (NOT the defaults) so the assertion
-    # is tied to the counts the fake SDK actually returned.
-    step = {"total_return": 0.2, "wfe": 0.7, "num_trades": 20,
+    step = {"total_return": 0.2, "sharpe": 1.5, "wfe": 0.7, "num_trades": 20,
             "gen_in": 80, "gen_out": 20, "ins_in": 120, "ins_out": 80}
     pipe = FakePipeline([step])
     sid = "sess-tokbudget"
-    # Tiny token cap; configs not the limiter (max_configs high).
+    n_screen = auto_session._SCREEN_SET_SIZE
+    # cap = all SCREEN generates fit; the first PROMOTE insights crosses it.
+    cap = n_screen * (80 + 20) + 50          # 4*100 + 50 = 450
     final = await _run(
         sid,
-        _open_req(budget={"max_iterations": 9, "max_configs": 6,
-                          "max_ai_tokens": 150}),
+        _open_req(model="claude-sonnet-4-6",
+                  budget={"max_iterations": 9, "max_configs": 6,
+                          "max_ai_tokens": cap}),
         pipe,
     )
 
     assert final["status"] == "complete"
     assert final["stopReason"] == "budget-exhausted"
 
-    # Real-usage guard: the recorded spend MUST equal the EXACT token counts
-    # the fake SDK emitted through the capture path — round-1 generate
-    # (80+20) + round-1 insights (120+80). If the loop hardcoded a constant
-    # or never drained the sink, this fails.
-    expected_tokens = (80 + 20) + (120 + 80)
-    expected_usd = (usd_cost("gpt-5.4-mini", 80, 20)
-                    + usd_cost("gpt-5.4-mini", 120, 80))
+    # Real-usage guard tied to the EXACT counts the fake SDK emitted through
+    # the capture path: n_screen cheap-model generates + ONE req.model
+    # insights call. Hardcoding/never-draining the sink fails this.
+    cheap = cheapest_model()
+    expected_tokens = n_screen * (80 + 20) + (120 + 80)
+    expected_usd = (n_screen * usd_cost(cheap, 80, 20)
+                    + usd_cost("claude-sonnet-4-6", 120, 80))
     assert final["spend"]["aiTokens"] == expected_tokens
     assert final["spend"]["usd"] == pytest.approx(expected_usd)
     assert expected_usd > 0.0
 
-    # No iteration appended after the cap was reached (round 2 never starts).
-    assert len(ss.list_iteration_dirs(sid)) == 1
-    assert pipe.gen_calls == 1
+    # SCREEN used the cheapest catalog model; PROMOTE insights the stronger
+    # req.model — same record_usage path, distinct prices.
+    assert pipe.gen_calls == n_screen
+    assert all(m == cheap for m in pipe.gen_models)
+    assert pipe.insight_calls == 1
+    assert pipe.insight_models == ["claude-sonnet-4-6"]
+
+    # No config appended past the cap: exactly ONE PROMOTE (the in-flight
+    # crossing call) and NO further screen/promote.
+    screen, promote = _stage_markers(sid)
+    assert len(screen) == n_screen
+    assert len(promote) == 1
+    assert len(ss.list_iteration_dirs(sid)) == n_screen + 1
 
     # Within one-call tolerance: only the single in-flight insights call
-    # crossed the cap (generate was still under it).
-    assert final["spend"]["aiTokens"] <= 150 + max(80 + 20, 120 + 80)
+    # crossed the cap.
+    assert final["spend"]["aiTokens"] <= cap + max(80 + 20, 120 + 80)
 
     # Durable: a FRESH read straight off disk (worker-restart / reload
-    # survival proxy) still carries the recorded spend.
+    # survival proxy) still carries the recorded staged spend.
     meta = ss.read_session_meta(sid)
     assert meta["autoRun"]["stopReason"] == "budget-exhausted"
     assert meta["autoRun"]["spend"]["aiTokens"] == expected_tokens
@@ -1140,12 +1271,14 @@ async def test_hard_token_budget_exhausted_real_usage_and_durable_spend(store):
 
 
 async def test_open_universe_multi_config_runs_in_subprocess_distinct_pids(store):
-    """iter-2 lesson (flagged for iter-3): every backtest of a multi-config
-    run MUST flow through the existing subprocess seam — asserted
-    DETERMINISTICALLY by child_pid != os.getpid(), never a timing bound."""
+    """STAGED FORM of the iter-2 subprocess-seam lesson: BOTH the cheap
+    SCREEN backtests AND the PROMOTE backtests MUST flow through the existing
+    subprocess seam — asserted DETERMINISTICALLY by child_pid != os.getpid()
+    (never a timing bound). SCREEN being 'cheap' in LLM/engine work does NOT
+    make it cheap in CPU, so it must not regress to an in-process backtest."""
     import os as _os
 
-    pipe = FakePipeline([{"total_return": 0.2, "wfe": 0.7}])
+    pipe = FakePipeline([{"total_return": 0.2, "sharpe": 1.5, "wfe": 0.7}])
     executor = auto_session._subprocess_backtest_executor(
         f"{__name__}:_cpu_bound_backtest_child"
     )
@@ -1163,19 +1296,28 @@ async def test_open_universe_multi_config_runs_in_subprocess_distinct_pids(store
         auto_session._shutdown_backtest_worker()
 
     assert final["status"] == "complete"
-    assert len(_distinct_cfgs(sid)) == 2, "≥2 distinct configs explored"
+    cfgs = _distinct_cfgs(sid)
+    assert len(cfgs) >= 2, "≥2 distinct configs explored"
+    assert cfgs <= set(auto_session._SEED_UNIVERSE)
+
+    screen_nodes, promote_nodes = _nodes_by_stage(sid)
+    assert len(screen_nodes) == auto_session._SCREEN_SET_SIZE >= 3
+    assert len(promote_nodes) == auto_session._PROMOTE_TOP_K
 
     parent_pid = _os.getpid()
-    dirs = sorted(ss.list_iteration_dirs(sid), key=lambda d: d.name)
-    assert len(dirs) == 2
-    for d in dirs:
-        node = ss.read_iteration_full(sid, d.name.split("_", 1)[1])
+    # EVERY node — screened-only AND promoted — must have been backtested in
+    # a different OS process (the deterministic, non-flaky seam guard).
+    for node in screen_nodes + promote_nodes:
         run_id = (node.get("result") or {}).get("run_id", "")
         assert run_id.startswith("pid-"), f"unexpected run_id {run_id!r}"
         assert int(run_id.split("-", 1)[1]) != parent_pid, (
-            "a multi-config backtest ran IN this process (anti-goal: the "
-            "CPU-bound backtest MUST stay in the subprocess seam)"
+            f"a {node.get('stage')} backtest ran IN this process (anti-goal: "
+            "the CPU-bound backtest MUST stay in the subprocess seam)"
         )
+    # SCREEN nodes never carry walk-forward even though the subprocess stub
+    # always returns a WF object (SCREEN is no-WF by construction).
+    for node in screen_nodes:
+        assert node.get("walkForwardResult") is None
 
 
 # --- Endpoint: open-universe accepted; objective/date validation ------------
@@ -1296,6 +1438,194 @@ async def test_pinned_path_unchanged_by_open_universe_addition(store):
     assert _distinct_cfgs(sid) == {("BTCUSDT", "1h")}
     assert final["stopReason"] == "budget-exhausted"
     assert final["spend"]["configsRun"] == 3  # tracker runs for pinned too
-    # No "Exploring config" entries on the pinned path.
+    # No SCREEN/PROMOTE/"Exploring config" entries on the pinned path.
     log = ss.read_activity_log(sid)
     assert not any(e["content"].startswith("Exploring config") for e in log)
+    assert not any(e["content"].startswith(("SCREEN", "PROMOTE")) for e in log)
+
+    # === CARRIED B1 REGRESSION GUARD (iter-3 audit B1 / T2) ===============
+    # On the FINAL pinned iteration the cost tracker's max_configs == max_iter
+    # (the _build_cost_tracker pinned `max_cfg == max_iter` branch), so
+    # `tracker.would_exceed()` returns the "max-configs" SENTINEL right after
+    # that iteration's generate. The B1 insights gate must skip insights ONLY
+    # on a true spend cap (ai-tokens/usd/wall-clock) and NEVER on
+    # "max-configs" — otherwise the final pinned iteration's insights /
+    # prompt-refinement chain (J-04 / J-07–J-11) is silently suppressed.
+    # This assertion goes RED under a naive truthy-`would_exceed()` gate
+    # (insight_calls would be 2) and GREEN with the spend-cap-only gate.
+    assert pipe.insight_calls == 3, (
+        "every pinned iteration — INCLUDING the final one whose "
+        "would_exceed()=='max-configs' — must still call insights"
+    )
+
+
+async def test_b1_true_spend_cap_between_generate_and_insights_skips_one(store):
+    # POSITIVE B1: a real spend cap (ai-tokens) crossed by `generate` itself
+    # (round-top check passed, then generate's drained usage tips it over)
+    # MUST skip exactly that one iteration's insights call while STILL
+    # building/writing the iteration node + recording activity. The next
+    # round-top check then terminates the run budget-exhausted.
+    step = {"total_return": 0.2, "sharpe": 1.5, "wfe": 0.7, "num_trades": 20,
+            "gen_in": 80, "gen_out": 20, "ins_in": 500, "ins_out": 500}
+    pipe = FakePipeline([step])
+    sid = "sess-b1-pos"
+    # Round-top sees 0 < 90 -> proceeds; generate drains 100 >= 90 -> the
+    # B1 gate (ai-tokens) skips THIS iteration's insights only.
+    final = await _run(
+        sid, _req(budget={"max_iterations": 3, "max_ai_tokens": 90}), pipe
+    )
+
+    assert final["status"] == "complete"
+    assert final["stopReason"] == "budget-exhausted"
+    assert pipe.gen_calls == 1, "round 2 must not start (cap reached)"
+    assert pipe.insight_calls == 0, "the one in-flight insights call is skipped"
+
+    # The iteration is STILL written (skip insights != skip the iteration).
+    dirs = ss.list_iteration_dirs(sid)
+    assert len(dirs) == 1
+    node = ss.read_iteration_full(sid, dirs[0].name.split("_", 1)[1])
+    assert node["status"] == "complete"
+    assert node["result"]["total_return"] == pytest.approx(0.2)
+    assert (node["insights"] or {}).get("suggestions") in (None, [], )
+    # Spend is the real generate-only usage (insights never ran).
+    assert final["spend"]["aiTokens"] == 80 + 20
+    # Activity for the iteration is still recorded.
+    log = ss.read_activity_log(sid)
+    assert any(e["type"] == "complete" for e in log)
+
+
+async def test_screen_stage_cheap_model_no_wf_no_insights(store):
+    # TC-13: every screened-only config runs wfv_enabled=False, generation
+    # uses the catalog-resolved CHEAPEST model (NOT req.model, NOT a
+    # literal), and generate_insights is NOT called for screened-only
+    # configs. req.model is a non-cheapest model so the distinction is real.
+    from shared.model_catalog import MODEL_PRICING, cheapest_model
+
+    cheap = cheapest_model()
+    assert cheap == min(MODEL_PRICING,
+                        key=lambda m: (sum(MODEL_PRICING[m]), m))
+    assert cheap != "claude-sonnet-4-6", "req.model must differ from cheapest"
+
+    pipe = FakePipeline([{"total_return": 0.3, "sharpe": 1.5, "wfe": 0.7,
+                          "num_trades": 20}])
+    sid = "sess-screen"
+    final = await _run(
+        sid,
+        _open_req(model="claude-sonnet-4-6",
+                  budget={"max_iterations": 9, "max_configs": 6}),
+        pipe,
+    )
+    assert final["status"] == "complete"
+
+    n_screen = auto_session._SCREEN_SET_SIZE
+    k = auto_session._PROMOTE_TOP_K
+    screen_nodes, promote_nodes = _nodes_by_stage(sid)
+    assert len(screen_nodes) == n_screen
+    assert len(promote_nodes) == k
+
+    # generate_strategy called once per SCREEN only; ALL with the cheapest
+    # model (assertion derives from MODEL_PRICING, not a string literal).
+    assert pipe.gen_calls == n_screen
+    assert pipe.gen_models == [cheap] * n_screen
+
+    # The first n_screen backtests (SCREEN) are wfv_enabled=False; the
+    # PROMOTE backtests are wfv_enabled=True.
+    assert pipe.bt_wfv[:n_screen] == [False] * n_screen
+    assert all(pipe.bt_wfv[n_screen:]) and len(pipe.bt_wfv) == n_screen + k
+
+    # Screened-only nodes: no walk-forward, cheap model, no insights.
+    promoted_cfgs = {(n["params"]["symbol"], n["params"]["timeframe"])
+                     for n in promote_nodes}
+    for node in screen_nodes:
+        cfg = (node["params"]["symbol"], node["params"]["timeframe"])
+        assert node["stage"] == "screen"
+        assert node["walkForwardResult"] is None
+        assert node["walkForwardStatus"] == "idle"
+        assert node["modelUsed"] == cheap
+        if cfg not in promoted_cfgs:  # a screened-ONLY config
+            assert not (node["insights"] or {}).get("suggestions")
+
+    # insights ran ONLY for the k promoted configs (zero for screened-only).
+    assert pipe.insight_calls == k
+
+
+async def test_screen_stage_failure_is_recorded_loop_continues(store):
+    # TC-06/TC-13 resilience: a SCREEN-stage generate-validation failure must
+    # be RECORDED and the loop must continue to a terminal state (a single
+    # bad screened config must not abort the run).
+    seed = auto_session._SEED_UNIVERSE
+    by_cfg = {seed[1]: {"gen_fail": "uncompilable strategy code"}}
+    pipe = FakePipeline([{"total_return": 0.3, "sharpe": 1.5, "wfe": 0.7,
+                          "num_trades": 20}], by_cfg=by_cfg)
+    sid = "sess-screen-fail"
+    final = await _run(
+        sid, _open_req(budget={"max_iterations": 9, "max_configs": 6}), pipe
+    )
+
+    assert final["status"] == "complete"
+    assert final["stopReason"] == "budget-exhausted"
+
+    # The failed screened config is recorded as an error iteration.
+    statuses = sorted(
+        ss.read_iteration_meta(sid, d.name.split("_", 1)[1])["status"]
+        for d in ss.list_iteration_dirs(sid)
+    )
+    assert "error" in statuses, "the failed SCREEN config must be recorded"
+    # The loop still screened the other seeds and promoted survivors.
+    screen, promote = _stage_markers(sid)
+    assert len(screen) == auto_session._SCREEN_SET_SIZE
+    assert 0 < len(promote) < len(screen)
+    # An error entry exists and later SCREEN/PROMOTE entries follow it.
+    log = ss.read_activity_log(sid)
+    err_idx = next(i for i, e in enumerate(log) if e["type"] == "error")
+    assert any(e["type"] == "auto-run" and e["content"].startswith("PROMOTE")
+               for e in log[err_idx:]), "loop continued past the failure"
+
+
+async def test_promote_stage_reuses_screened_strategy_full_pipeline(store):
+    # TC-14: each PROMOTE runs the FULL pipeline (wfv_enabled=True +
+    # req.model insights) and REUSES the screened candidate's already-
+    # generated strategy (same scriptId / identical code hash — NO second
+    # generate_strategy); promotion is top-k with k < number screened.
+    pipe = FakePipeline([{"total_return": 0.3, "sharpe": 1.5, "wfe": 0.7,
+                          "num_trades": 20}])
+    sid = "sess-promote"
+    final = await _run(
+        sid,
+        _open_req(model="claude-sonnet-4-6",
+                  budget={"max_iterations": 9, "max_configs": 6}),
+        pipe,
+    )
+    assert final["status"] == "complete"
+
+    n_screen = auto_session._SCREEN_SET_SIZE
+    k = auto_session._PROMOTE_TOP_K
+    screen_nodes, promote_nodes = _nodes_by_stage(sid)
+    assert len(promote_nodes) == k
+    assert 0 < k < len(screen_nodes) == n_screen, "k must be < screened"
+
+    # NO second generate_strategy for promotion (reuse): generate is called
+    # exactly once per SCREEN, never for a PROMOTE.
+    assert pipe.gen_calls == n_screen
+
+    screen_by_cfg = {(n["params"]["symbol"], n["params"]["timeframe"]): n
+                     for n in screen_nodes}
+    for pnode in promote_nodes:
+        cfg = (pnode["params"]["symbol"], pnode["params"]["timeframe"])
+        snode = screen_by_cfg[cfg]
+        # Reuses the SCREEN candidate's strategy: identical scriptId + code
+        # hash (no re-generation).
+        assert pnode["scriptId"] == snode["scriptId"]
+        assert pnode["scriptCode"] == snode["scriptCode"]
+        # Full pipeline on the promoted config: WF present + stronger model.
+        assert pnode["stage"] == "promote"
+        assert pnode["walkForwardResult"] is not None
+        assert pnode["walkForwardStatus"] == "complete"
+        assert pnode["modelUsed"] == "claude-sonnet-4-6"
+        assert (pnode["insights"] or {}).get("suggestions")
+
+    # PROMOTE insights all used the stronger req.model.
+    assert pipe.insight_calls == k
+    assert pipe.insight_models == ["claude-sonnet-4-6"] * k
+    # Best is a promoted iteration chosen by the robust objective.
+    assert final["bestIterationId"] in {n["id"] for n in promote_nodes}

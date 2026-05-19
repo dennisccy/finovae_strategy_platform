@@ -90,3 +90,26 @@ loop or the post-`generate`→`insights` call sequencing (directly: the J-14
 iteration that carries the B1 fix) — distinguish the `max-configs` sentinel
 from spend caps, and add the pinned-path `insight_calls` guard before changing
 in-flight LLM-call gating.
+
+## iter-4 — 2026-05-19T18:19:36Z
+
+**Verdict:** CONTINUE
+**Lesson:** A `status.json` of `blocked`/`closure_failed` (phase-closure
+CLOSURE-FAIL) is NOT automatically a goal-mode REGRESSION. Here it was caused
+solely by two UI-test-design artifacts (`reports/phase-…-ui-test-plan.md`,
+`…-what-to-click.md`) being transient stub placeholders after
+`ui-test-design-phase.sh`'s Claude CLI exited code 1 — an artifact-completeness
+gate trip with a one-command outer-loop remediation, NOT an implementation,
+quality, journey, or anti-goal failure (the closure verdict itself, QA, and the
+audit all explicitly say so, and the stub's substance was independently verified
+in ui-test-results.md + 6 screenshots + the audit source read). The evaluator
+must separate "pipeline-tooling artifact gap, downstream-owned" from "a prior
+passing journey broke / a critical anti-goal was violated"; only the latter is
+REGRESSION. Surface the remediation command in next-step (outer-loop action,
+not a developer/source fix, not the evaluator's fix) so the stub is regenerated
+before the iteration closes — but do not let it flip the journey/anti-goal
+verdict.
+**Applies to:** any iteration where `status.json` is `blocked`/`closure_failed`
+or the closure verdict is CLOSURE-FAIL — check whether the block is an
+implementation/journey/anti-goal failure or a transient downstream
+pipeline-artifact gap before considering REGRESSION/ESCALATE.

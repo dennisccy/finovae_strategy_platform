@@ -181,3 +181,72 @@ the final pinned iteration's insights with no test guarding it). Add an
 `insight_calls`-on-final-pinned-iteration assertion to
 `test_pinned_path_unchanged_by_open_universe_addition` with that fix. J-15
 then J-16 follow.
+
+---
+
+## Iteration 4 — goal-auto-money-printer-iter-4
+
+**Date:** 2026-05-19T18:19:36Z
+**Verdict:** CONTINUE
+**Depth dispatched:** full
+**Journey deltas:**
+- Newly passing: J-14 (failing → passing)
+- Re-verified still-passing (live): J-02, J-08
+- Re-verified still-passing (live/source under staged semantics): J-04, J-07, J-09, J-10, J-11, J-12, J-13
+- Carried still-passing (code path not in confined 4-file diff; suite 188p/1f): J-01, J-03, J-05, J-06
+- Newly failing: none
+- Regressed: none
+- Anti-goal violations: none (independently re-verified at source-diff + test level)
+
+**Reasoning:** The indivisible J-14 staged SCREEN→PROMOTE slice + carried iter-3
+B1 spend-cap insights fix is genuinely implemented, not just summarized — I read
+the actual source and traced every load-bearing claim. (1) `cheapest_model()` is
+`min(MODEL_PRICING, key=lambda m:(p_in+p_out, m))` — catalog-resolved, not a
+literal. (2) The B1 gate is `_should_skip_insights → would_exceed() in
+_SPEND_CAPS={"ai-tokens","usd","wall-clock"}`, explicitly EXCLUDING the
+`"max-configs"` sentinel; the mandated regression guard
+`test_pinned_path_unchanged_by_open_universe_addition` asserts
+`pipe.insight_calls == 3` with an inline RED-under-naive-truthy-gate /
+GREEN-under-spend-cap-only comment, plus a positive
+`…b1_true_spend_cap…skips_one` (`insight_calls == 0`, iteration still written) —
+the exact iter-3 lesson trap is closed and test-guarded. (3) Robust-best
+invariant is structural: only PROMOTE appends to `completed`
+(`auto_session.py:1225`); SCREEN never does; `select_best`/`robust_score`
+reused unchanged → screened-only/raw-return cannot be best (UT-05 SOL robust 0.897
+chosen over +21% ETH). (4) Staged `max_configs`: `tracker.start_config()` fires
+on PROMOTE/pinned only, never SCREEN; `k = min(_PROMOTE_TOP_K, len(ranked)-1,
+max_iter)` makes k<screened structural; PROMOTE `reuse_gen=cand.gen` → no 2nd
+generate (dedup) + warm Parquet. (5) SCREEN flows through the shared
+`_evaluate_one` subprocess seam (deterministic `child_pid != os.getpid()` test,
+no timing bound — iter-2 lesson honoured). Anti-goal source guards independently
+empty: `contracts.py`/`sandbox.py`/`pipeline.py`/`backtest/` + frontend diff =
+0; no `pytest.mark.skip/xfail` added; no new infra import. Suite re-derived by
+QA + audit: 188p/1f (+5 new, the 1 = pre-existing out-of-scope
+`test_directions_cache`), zero new regressions. ui-test-results is a clean
+first-pass PASS (no QA-FAIL→reconcile cycle per its provenance note) so the
+iter-1 reconciled-headline caution does not bite — but I cross-checked the B1
+gate + SCREEN/PROMOTE assertions at source anyway as the spec NOTES directed.
+Screenshot TC-07 corroborates the staged feed (4 SCREEN + 2 PROMOTE groups, Best
+badge on a promoted iteration, terminal "budget reached"). The phase is
+`blocked`/`closure_failed` ONLY because two UI-test-design artifacts
+(`ui-test-plan`, `what-to-click`) are transient stubs from a
+`ui-test-design-phase.sh` Claude-CLI exit-1 — the closure verdict, QA, and audit
+unanimously classify this as a non-implementation, non-regression, non-quality,
+downstream-owned pipeline-tooling fault whose substance is independently verified
+(ui-test-results 157L derived from spec+surface-map, QA 20/21, browser 10/10, 6
+screenshots). It breaks no journey and violates no anti-goal → not REGRESSION.
+Not GOAL_ACHIEVED (J-15/J-16 still failing by design — 14/16 passing). Not
+STALLED (J-14 newly passing; clear next step).
+
+**Next-step recommendation:** iter-5 at **full** depth — **J-15** (global-history
+warm start + `history_scope` opt-out + prompt-cached cross-run planner). It
+activates three load-bearing anti-goals with cross-run state (read-only history
+mining; opt-out honoured — today accept-and-persist only; planner/history MUST be
+prompt-cached, not re-sent uncached). Inject at this iteration's deterministic
+SCREEN seed-order enumeration in `_run_staged_open_universe`; reuse the iter-3
+durable file store read-only (no schema fork). **J-16** (deep overfit-gating
+demo / leaderboard) last — its robust-best invariant is already preserved here.
+**Outer-loop, not developer:** before iter-4 closes / iter-5 begins, run the
+closure-verdict remediation `./scripts/automation/ui-test-design-phase.sh
+goal-auto-money-printer-iter-4` then `phase-closure-check.sh …` to regenerate the
+two transient stub artifacts — no code/test/journey work implied.

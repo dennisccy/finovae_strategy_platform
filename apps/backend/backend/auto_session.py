@@ -51,7 +51,7 @@ from backend import session_store
 from backend.cost_tracker import DEFAULT_MAX_CONFIGS, CostTracker
 from backend.pipeline import CancellationToken, PipelineError
 from backend.robust_objective import RobustInputs, robust_score, select_best, targets_met
-from shared.model_catalog import DEFAULT_MODEL
+from shared.model_catalog import DEFAULT_MODEL, cheapest_model
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +70,41 @@ _COMMISSION = 0.00075
 # window for the robust objective; WF is reused from the pipeline (no fork).
 _WFV_IS_MONTHS = 2
 _WFV_OOS_MONTHS = 1
+
+# --- Staged SCREEN→PROMOTE knobs (J-14, open-universe ONLY) ------------------
+# How many bounded-seed configs the cheap SCREEN stage evaluates, and how many
+# top survivors are PROMOTEd to the full pipeline. _PROMOTE_TOP_K < the number
+# screened (the spec's "k < number screened" invariant) and both are small so
+# a tiny-budget run still shows ≥3 SCREEN markers and a small PROMOTE set. The
+# screen set is a deterministic prefix of the finite _SEED_UNIVERSE (no blind
+# fan-out); SCREEN is cheap by construction (no walk-forward, cheapest model,
+# no insights, short shared window, warm Parquet cache reused across configs),
+# so screening several seeds while promoting only the top-k is consistent with
+# the goal's fast-and-cheap mandate.
+_SCREEN_SET_SIZE = 4
+_PROMOTE_TOP_K = 2
+
+# --- Carried iter-3 B1 fix: which would_exceed() sentinels skip insights -----
+# The post-`generate` insights call is skipped (the iteration node is still
+# built/written and activity still recorded) ONLY when a TRUE spend cap is
+# already reached between generate and insights. The cost tracker's
+# would_exceed() also returns the "max-configs" sentinel — but that sentinel
+# only gates *starting a new config*, NOT finishing an in-flight one. Crucially
+# `_build_cost_tracker` pins the pinned-path config cap to == max_iter
+# (the `default_cfg = hard_cfg = max_cfg = max_iter` branch), so on the FINAL
+# pinned iteration would_exceed() returns "max-configs" right after that
+# iteration's generate. Skipping insights on "max-configs" would silently
+# suppress the final pinned iteration's insights + prompt-refinement chain
+# (a J-04 / J-07–J-11 regression). Hence the gate is spend-caps-ONLY and
+# explicitly EXCLUDES "max-configs".
+_SPEND_CAPS: frozenset[str] = frozenset({"ai-tokens", "usd", "wall-clock"})
+
+
+def _should_skip_insights(tracker: CostTracker) -> bool:
+    """Carried B1 gate. True iff a true spend cap (AI-tokens / USD /
+    wall-clock) is ALREADY reached at the moment we are about to call
+    insights — never on the "max-configs" sentinel (see ``_SPEND_CAPS``)."""
+    return tracker.would_exceed() in _SPEND_CAPS
 
 # --- Bounded seed universe (J-12) -------------------------------------------
 # A small, hard-coded constant set of (symbol, timeframe) candidates — a few
@@ -671,163 +706,141 @@ async def run_auto_session(
         _unregister_cancel(session_id)
 
 
-async def _run_auto_session_impl(
-    session_id: str,
-    req: AutoSessionRequest,
+class _Eval(NamedTuple):
+    """Outcome of evaluating ONE config through :func:`_evaluate_one`."""
+
+    ok: bool
+    failed_reason: Optional[str]
+    gen: Any
+    result: Any
+    wf: Any
+    inp: Optional[RobustInputs]
+    score: float
+    summary: str
+    suggestions: list
+    insights_skipped: bool
+
+
+class _Screened(NamedTuple):
+    """One SCREEN survivor carried into the rank + PROMOTE stage. ``gen`` is
+    the cheap-model generated strategy reused verbatim by PROMOTE (no
+    re-generation — dedup anti-goal); ``proxy`` is the in-sample rank key."""
+
+    cfg: _Config
+    gen: Any
+    proxy: float
+    total_return: float
+    iter_id: str
+
+
+async def _evaluate_one(
     *,
+    session_id: str,
+    idx: int,
+    iter_id: str,
     pipeline: Any,
     semaphore: asyncio.Semaphore,
     cancel_token: CancellationToken,
-    backtest_executor: Optional[Callable[[dict, CancellationToken], Any]] = None,
-) -> dict:
-    """Run the server-side iterate loop to a terminal state.
+    backtest_executor: Optional[Callable[[dict, CancellationToken], Any]],
+    tracker: CostTracker,
+    req: AutoSessionRequest,
+    cfg: _Config,
+    gen_prompt: str,
+    gen_prev: Optional[str],
+    gen_model: str,
+    wfv_enabled: bool,
+    want_insights: bool,
+    stage: Optional[str],
+    reuse_gen: Any = None,
+    prev_summary: Optional[str] = None,
+    prev_suggestion_titles: Optional[list[str]] = None,
+) -> _Eval:
+    """Generate (or reuse) → backtest → B1-gated insights → build & write
+    one iteration node. Shared by the pinned path (``stage=None``), the cheap
+    SCREEN stage (``stage="screen"``, ``wfv_enabled=False``,
+    ``want_insights=False``, cheapest ``gen_model``) and the PROMOTE stage
+    (``stage="promote"``, ``wfv_enabled=True``, ``want_insights=True``,
+    ``reuse_gen`` = the SCREEN candidate's strategy — NO second generate).
 
-    Returns the final ``autoRun`` status dict. Never raises out — a failure
-    inside one iteration is recorded and the loop still reaches a terminal
-    state (it never hangs).
+    Returns ``_Eval``. A generate-validation / backtest-None failure returns
+    ``ok=False`` (the caller records it and continues — one bad config must
+    not abort the loop); cancellation raises ``PipelineError`` to the caller.
     """
-    max_iter, _legacy_wall = _resolve_budget(req.budget)
-    targets = req.targets.model_dump(exclude_none=True)
-
-    configs, is_open = _config_plan(req)
-    # Immutable hard cost tracker: AI-tokens / USD / max-configs / wall-clock,
-    # caps fixed at construction. The per-round check below never starts a
-    # config/round once any cap is reached ("no one more round past the cap").
-    tracker = _build_cost_tracker(req, max_iter, is_open)
-
-    # (id, RobustInputs) for every COMPLETED iteration (across ALL explored
-    # configs for an open-universe run) — the robust selector picks the best
-    # from this; raw return is never used to choose.
-    completed: list[tuple[str, RobustInputs]] = []
-    best_id: Optional[str] = None
-    stop_reason: Optional[str] = None
-
-    prev_script_code: Optional[str] = None
-    prev_summary: Optional[str] = None
-    prev_suggestion_titles: list[str] = []
-    next_prompt = req.natural_language
-
-    # The loop is the durable-status owner: ensure a coherent autoRun block
-    # exists even when invoked directly (not via the endpoint) or resumed
-    # after a worker restart. startedAt is preserved if already set.
-    _meta = await asyncio.to_thread(session_store.read_session_meta, session_id)
-    _existing = (_meta or {}).get("autoRun") or {}
-    await _update_autorun(session_id, status="running", currentIteration=0,
-                          maxIterations=max_iter, stopReason=None,
-                          bestIterationId=_existing.get("bestIterationId"),
-                          startedAt=_existing.get("startedAt") or _now_iso(),
-                          spend=tracker.snapshot())
-
-    iteration_index = 0
-    for i in range(1, max_iter + 1):
-        # --- Budget / cancel checks BEFORE doing any work: never start a
-        # round/config that would exceed the cap ("no one more round"). ---
-        if cancel_token.is_cancelled:
-            stop_reason = None  # cooperative stop (in-process token); not budget
-            break
-        if tracker.would_exceed() is not None:
-            # Any hard cap reached (ai-tokens / usd / max-configs / wall-clock):
-            # terminal budget-exhausted, NO further iteration/config appended.
-            stop_reason = "budget-exhausted"
-            break
-        # Durable, worker-safe cooperative stop: the public stop endpoint
-        # records `autoRun.stopRequested` in session.json, so the loop honours
-        # a stop even when the live in-process token is not in THIS worker
-        # (multi-WEB_CONCURRENCY) or after a restart. Read off the event-loop
-        # thread (same as the manual session_routes path) so this never blocks
-        # the loop (B1 anti-goal). Cancel the live token too so the in-flight
-        # pipeline path (which already checks the token) winds down and the
-        # existing terminal logic maps this to `status="stopped"`.
-        _persisted = await asyncio.to_thread(
-            session_store.read_session_meta, session_id
+    if reuse_gen is not None:
+        # PROMOTE reuses the SCREEN candidate's already-generated strategy by
+        # code hash — no re-generation, and the same (symbol,timeframe,window)
+        # means the warm single-file OHLCV Parquet cache is reused (no
+        # re-fetch). Dedup anti-goal honoured structurally.
+        gen = reuse_gen
+    else:
+        usage_sink: list = []
+        gen = await pipeline.generate_strategy(
+            natural_language=gen_prompt,
+            model=gen_model,
+            previous_script_code=gen_prev,
+            symbol=cfg.symbol,
+            timeframe=cfg.timeframe,
+            start_date=cfg.start_str,
+            end_date=cfg.end_str,
+            usage_sink=usage_sink,
         )
-        if ((_persisted or {}).get("autoRun") or {}).get("stopRequested"):
-            cancel_token.cancel()
-            stop_reason = None
-            break
-        # Open-universe: the bounded seed universe is finite — exhausting it
-        # within budget is itself a terminal (the search space is spent). The
-        # max-configs cap above normally trips first; this is the backstop.
-        if is_open and (i - 1) >= len(configs):
-            stop_reason = "budget-exhausted"
-            break
+        _drain_usage(tracker, usage_sink)
+        if getattr(gen, "validation_errors", None) and not gen.script_code:
+            return _Eval(False, "; ".join(gen.validation_errors), None, None,
+                         None, 0.0, "", [], False)
 
-        cfg = configs[0] if not is_open else configs[i - 1]
-        tracker.start_config()
-        iteration_index = i
-        iter_id = str(uuid.uuid4())
-        await _update_autorun(session_id, status="running", currentIteration=i,
-                              spend=tracker.snapshot())
-        if is_open:
-            # Record EVERY explored config (symbol/timeframe) so the
-            # open-universe exploration is visible/auditable in the UI.
-            await asyncio.to_thread(
-                session_store.append_activity_entries, session_id, [
-                    _activity(
-                        "auto-run",
-                        f"Exploring config {i}: {cfg.symbol} {cfg.timeframe}",
-                        iter_id,
-                    ),
-                ]
-            )
+    bt_payload = dict(
+        script_id=gen.script_id,
+        symbol=cfg.symbol,
+        timeframe=cfg.timeframe,
+        start_date=cfg.start_dt,
+        end_date=cfg.end_dt,
+        initial_capital=req.initial_capital,
+        commission=_COMMISSION,
+        script_code=gen.script_code,
+        strategy_name=gen.strategy_name,
+        strategy_description=gen.strategy_description,
+        # SCREEN is cheap-first: NO walk-forward. PROMOTE / pinned: full WF.
+        wfv_enabled=wfv_enabled,
+        wfv_is_months=_WFV_IS_MONTHS,
+        wfv_oos_months=_WFV_OOS_MONTHS,
+    )
+    # SCREEN is cheap in LLM + engine work but NOT in CPU — the
+    # RestrictedPython next-bar backtest is GIL-holding whether or not WF
+    # runs. It MUST still flow through the same subprocess executor seam as
+    # PROMOTE (iter-2 lesson); never in-process "because it's cheap".
+    async with semaphore:
+        cancel_token.check()
+        (result, errors, rating, wf,
+         result_json, rating_json, wf_json) = await _perform_backtest(
+            pipeline=pipeline,
+            backtest_executor=backtest_executor,
+            payload=bt_payload,
+            cancel_token=cancel_token,
+        )
+    if result is None:
+        return _Eval(False, "; ".join(errors) if errors else "Backtest failed",
+                     gen, None, None, 0.0, "", [], False)
+    if stage == "screen":
+        # SCREEN never carries walk-forward by construction (cheap-first
+        # anti-goal). Discard any WF a backtest stub might still return so a
+        # screened-only iteration is unambiguously WF-free.
+        wf, wf_json = None, None
 
-        # Per-config prompt: open-universe is a deterministic enumerator (no
-        # cross-config refinement / planner — that is J-15 / OUT OF SCOPE);
-        # the pinned path keeps its prior-suggestion refinement chain.
-        gen_prompt = req.natural_language if is_open else next_prompt
-        gen_prev = None if is_open else prev_script_code
-
-        try:
-            usage_sink: list = []
-            gen = await pipeline.generate_strategy(
-                natural_language=gen_prompt,
-                model=req.model,
-                previous_script_code=gen_prev,
-                symbol=cfg.symbol,
-                timeframe=cfg.timeframe,
-                start_date=cfg.start_str,
-                end_date=cfg.end_str,
-                usage_sink=usage_sink,
-            )
-            _drain_usage(tracker, usage_sink)
-
-            if getattr(gen, "validation_errors", None) and not gen.script_code:
-                await _record_failed(session_id, i, iter_id, gen_prompt, req,
-                                     cfg, "; ".join(gen.validation_errors))
-                continue
-
-            bt_payload = dict(
-                script_id=gen.script_id,
-                symbol=cfg.symbol,
-                timeframe=cfg.timeframe,
-                start_date=cfg.start_dt,
-                end_date=cfg.end_dt,
-                initial_capital=req.initial_capital,
-                commission=_COMMISSION,
-                script_code=gen.script_code,
-                strategy_name=gen.strategy_name,
-                strategy_description=gen.strategy_description,
-                wfv_enabled=True,
-                wfv_is_months=_WFV_IS_MONTHS,
-                wfv_oos_months=_WFV_OOS_MONTHS,
-            )
-            async with semaphore:
-                cancel_token.check()
-                (result, errors, rating, wf,
-                 result_json, rating_json, wf_json) = await _perform_backtest(
-                    pipeline=pipeline,
-                    backtest_executor=backtest_executor,
-                    payload=bt_payload,
-                    cancel_token=cancel_token,
-                )
-
-            if result is None:
-                await _record_failed(session_id, i, iter_id, gen_prompt, req,
-                                     cfg, "; ".join(errors) if errors else "Backtest failed")
-                continue
-
-            # Insights — best-effort; a failure must not abort the loop.
-            summary, suggestions = "", []
+    summary: str = ""
+    suggestions: list = []
+    insights_skipped = False
+    if want_insights:
+        if _should_skip_insights(tracker):
+            # Carried iter-3 B1 fix: a TRUE spend cap (ai-tokens/usd/
+            # wall-clock) was reached between generate and insights — skip
+            # ONLY this insights call; the iteration node is STILL built &
+            # written and activity STILL recorded below. NEVER skip on the
+            # "max-configs" sentinel (see ``_SPEND_CAPS`` /
+            # ``_should_skip_insights`` — the pinned-path final-iteration
+            # trap).
+            insights_skipped = True
+        else:
             try:
                 ins_sink: list = []
                 summary, suggestions, _ierr = await pipeline.generate_insights(
@@ -836,6 +849,8 @@ async def _run_auto_session_impl(
                     strategy_description=gen.strategy_description,
                     script_code=gen.script_code,
                     natural_language_prompt=gen_prompt,
+                    # The STRONGER / requested model appears ONLY here (the
+                    # promoted / pinned insights+refinement call).
                     model=req.model,
                     symbol=cfg.symbol,
                     timeframe=cfg.timeframe,
@@ -849,88 +864,472 @@ async def _run_auto_session_impl(
                 )
                 _drain_usage(tracker, ins_sink)
             except Exception as ins_err:  # noqa: BLE001 - best-effort
-                logger.warning("auto-session insights failed (continuing): %s", ins_err)
+                logger.warning(
+                    "auto-session insights failed (continuing): %s", ins_err)
 
-            insights = {"summary": summary, "suggestions": suggestions}
+    insights = {"summary": summary, "suggestions": suggestions}
+    inp = _robust_inputs(result, wf, leverage=1.0)
+    score = robust_score(inp)
 
-            inp = _robust_inputs(result, wf, leverage=1.0)
-            score = robust_score(inp)
-            completed.append((iter_id, inp))
+    if stage is None:
+        model_used = getattr(gen, "model_used", req.model) or req.model
+    elif stage == "promote":
+        # The promoted iteration's representative model is the stronger
+        # req.model (its insights/refinement call). The strategy CODE itself
+        # was generated by the cheap SCREEN model and is reused verbatim
+        # (no re-generation) — documented here so modelUsed is not
+        # mis-read as "the code was regenerated by req.model".
+        model_used = req.model
+    else:  # screen
+        model_used = getattr(gen, "model_used", gen_model) or gen_model
 
-            node = _build_node(
-                iter_id=iter_id,
-                prompt=gen_prompt,
-                script_code=gen.script_code,
-                script_id=gen.script_id,
-                strategy_name=gen.strategy_name,
-                model_used=getattr(gen, "model_used", req.model) or req.model,
-                result=result,
-                result_json=result_json,
-                rating_json=rating_json,
-                wf_json=wf_json,
-                insights=insights,
-                req=req,
-                cfg=cfg,
-                robust=score,
+    node = _build_node(
+        iter_id=iter_id,
+        prompt=gen_prompt,
+        script_code=gen.script_code,
+        script_id=gen.script_id,
+        strategy_name=gen.strategy_name,
+        model_used=model_used,
+        result=result,
+        result_json=result_json,
+        rating_json=rating_json,
+        wf_json=wf_json,
+        insights=insights,
+        req=req,
+        cfg=cfg,
+        robust=score,
+        stage=stage,
+    )
+    # All store I/O offloaded off the event-loop thread (same as the manual
+    # session_routes path) so a continuous headless run keeps GET
+    # /api/sessions and the J-08 poll responsive.
+    await asyncio.to_thread(session_store.write_iteration, session_id, idx, node)
+    return _Eval(True, None, gen, result, wf, inp, score, summary,
+                 suggestions, insights_skipped)
+
+
+async def _read_stop_requested(session_id: str) -> bool:
+    """Durable, worker-safe cooperative-stop probe. The public stop endpoint
+    records ``autoRun.stopRequested`` in session.json so the loop honours a
+    stop even when the live in-process token is not in THIS worker
+    (multi-WEB_CONCURRENCY) or after a restart. Read off the event-loop
+    thread (same as the manual session_routes path) so it never blocks the
+    loop (event-loop anti-goal)."""
+    persisted = await asyncio.to_thread(
+        session_store.read_session_meta, session_id
+    )
+    return bool(((persisted or {}).get("autoRun") or {}).get("stopRequested"))
+
+
+async def _run_pinned(
+    session_id: str,
+    req: AutoSessionRequest,
+    *,
+    pipeline: Any,
+    semaphore: asyncio.Semaphore,
+    cancel_token: CancellationToken,
+    backtest_executor: Optional[Callable[[dict, CancellationToken], Any]],
+    tracker: CostTracker,
+    cfg: _Config,
+    max_iter: int,
+    targets: dict,
+    completed: list[tuple[str, RobustInputs]],
+) -> tuple[Optional[str], int, Optional[str]]:
+    """The pinned path — BYTE-UNCHANGED behaviourally vs iter-3: exactly ONE
+    config every iteration, the full pipeline every iteration, the
+    prior-suggestion prompt-refinement chain, NO SCREEN/PROMOTE activity.
+    The only addition is the carried B1 insights gate inside
+    :func:`_evaluate_one`, which is a no-op unless a true spend cap is hit
+    between generate and insights (and explicitly NEVER on the "max-configs"
+    sentinel returned on the final pinned iteration)."""
+    best_id: Optional[str] = None
+    stop_reason: Optional[str] = None
+    prev_script_code: Optional[str] = None
+    prev_summary: Optional[str] = None
+    prev_suggestion_titles: list[str] = []
+    next_prompt = req.natural_language
+    iteration_index = 0
+
+    for i in range(1, max_iter + 1):
+        # Budget / cancel checks BEFORE any work: never start a round that
+        # would exceed the cap ("no one more round past the cap").
+        if cancel_token.is_cancelled:
+            stop_reason = None
+            break
+        if tracker.would_exceed() is not None:
+            stop_reason = "budget-exhausted"
+            break
+        if await _read_stop_requested(session_id):
+            cancel_token.cancel()
+            stop_reason = None
+            break
+
+        tracker.start_config()
+        iteration_index = i
+        iter_id = str(uuid.uuid4())
+        await _update_autorun(session_id, status="running", currentIteration=i,
+                              spend=tracker.snapshot())
+
+        try:
+            res = await _evaluate_one(
+                session_id=session_id, idx=i, iter_id=iter_id,
+                pipeline=pipeline, semaphore=semaphore,
+                cancel_token=cancel_token,
+                backtest_executor=backtest_executor, tracker=tracker,
+                req=req, cfg=cfg, gen_prompt=next_prompt,
+                gen_prev=prev_script_code, gen_model=req.model,
+                wfv_enabled=True, want_insights=True, stage=None,
+                prev_summary=prev_summary,
+                prev_suggestion_titles=prev_suggestion_titles,
             )
-            # All store I/O offloaded off the event-loop thread (same as the
-            # manual session_routes path) so a continuous headless run keeps
-            # GET /api/sessions and the J-08 poll responsive.
-            await asyncio.to_thread(
-                session_store.write_iteration, session_id, i, node
-            )
+            if not res.ok:
+                await _record_failed(session_id, i, iter_id, next_prompt, req,
+                                     cfg, res.failed_reason or "failed")
+                continue
 
+            completed.append((iter_id, res.inp))
             await asyncio.to_thread(
                 session_store.append_activity_entries, session_id, [
-                    _activity("auto-run", f"Automated iteration {i}/{max_iter}", iter_id),
+                    _activity("auto-run",
+                              f"Automated iteration {i}/{max_iter}", iter_id),
                     _activity(
                         "complete",
-                        f"Backtest complete — return {result.total_return * 100:.2f}%, "
-                        f"{result.num_trades} trades, robust {score:.3f}",
+                        f"Backtest complete — "
+                        f"return {res.result.total_return * 100:.2f}%, "
+                        f"{res.result.num_trades} trades, "
+                        f"robust {res.score:.3f}",
                         iter_id,
                     ),
                 ]
             )
-            if summary:
+            if res.summary:
                 await asyncio.to_thread(
                     session_store.append_activity_entries, session_id, [
-                        _activity("insights", summary, iter_id),
+                        _activity("insights", res.summary, iter_id),
                     ]
                 )
 
-            # The best-so-far is always recomputed by the robust objective
-            # (NOT raw return) across ALL explored configs, so a
-            # higher-return-but-WFE-failing / over-leveraged candidate is
-            # never marked best.
             best_id = select_best(completed)
-            await _update_autorun(session_id, status="running", currentIteration=i,
-                                  bestIterationId=best_id, spend=tracker.snapshot())
-            # Defense in depth: yield a clean loop turn before the next
-            # round so back-to-back iterations never starve pending requests.
+            await _update_autorun(session_id, status="running",
+                                  currentIteration=i, bestIterationId=best_id,
+                                  spend=tracker.snapshot())
             await asyncio.sleep(0)
 
-            # Prompt-refinement chain is pinned-path only (open-universe is a
-            # deterministic per-config enumerator with no cross-config carry).
-            if not is_open:
-                prev_script_code = gen.script_code
-                prev_summary = summary or prev_summary
-                prev_suggestion_titles = [s.get("title", "") for s in suggestions if s.get("title")]
-                if suggestions and suggestions[0].get("prompt"):
-                    next_prompt = suggestions[0]["prompt"]
+            prev_script_code = res.gen.script_code
+            prev_summary = res.summary or prev_summary
+            prev_suggestion_titles = [
+                s.get("title", "") for s in res.suggestions if s.get("title")
+            ]
+            if res.suggestions and res.suggestions[0].get("prompt"):
+                next_prompt = res.suggestions[0]["prompt"]
 
-            if targets and targets_met(inp, targets):
+            if targets and targets_met(res.inp, targets):
                 stop_reason = "criteria-met"
                 break
 
         except PipelineError:
-            # Cooperative cancellation raised inside the pipeline.
             stop_reason = None
             cancel_token.cancel()
             break
-        except Exception as exc:  # noqa: BLE001 - one bad iter must not hang the loop
-            logger.warning("auto-session iteration %d failed (continuing): %s", i, exc)
-            await _record_failed(session_id, i, iter_id, gen_prompt, req, cfg, str(exc))
+        except Exception as exc:  # noqa: BLE001 - one bad iter must not hang
+            logger.warning(
+                "auto-session iteration %d failed (continuing): %s", i, exc)
+            await _record_failed(session_id, i, iter_id, next_prompt, req,
+                                 cfg, str(exc))
             continue
+
+    return stop_reason, iteration_index, best_id
+
+
+async def _run_staged_open_universe(
+    session_id: str,
+    req: AutoSessionRequest,
+    *,
+    pipeline: Any,
+    semaphore: asyncio.Semaphore,
+    cancel_token: CancellationToken,
+    backtest_executor: Optional[Callable[[dict, CancellationToken], Any]],
+    tracker: CostTracker,
+    configs: list[_Config],
+    max_iter: int,
+    targets: dict,
+    completed: list[tuple[str, RobustInputs]],
+) -> tuple[Optional[str], int, Optional[str]]:
+    """Staged SCREEN→PROMOTE controller (J-14, open-universe ONLY).
+
+    SCREEN: cheaply evaluate a deterministic prefix of the bounded seed
+    universe — ``wfv_enabled=False``, the catalog-cheapest model, NO insights
+    — appending a distinct ``SCREEN`` activity marker per config. RANK the
+    survivors by a cheap IN-SAMPLE proxy (Sharpe, tie-broken by return —
+    explicitly NOT ``robust_score``/WFE, which need the WF SCREEN skipped).
+    PROMOTE only the small top-k (k < number screened): rerun the FULL
+    pipeline (``wfv_enabled=True`` + the stronger ``req.model`` + insights)
+    REUSING the screened strategy by code hash + the warm Parquet cache.
+
+    Staged ``max_configs`` semantics (documented inline per the spec): a
+    "config" counted against ``max_configs`` is one **PROMOTE** (expensive,
+    full-pipeline) candidate — ``tracker.start_config()`` is called once per
+    PROMOTE only. SCREEN is cheap by construction and bounded by the finite
+    seed universe (``_SCREEN_SET_SIZE`` ≤ ``len(_SEED_UNIVERSE)``) plus the
+    AI-token/USD/wall-clock caps, so it is NOT counted against
+    ``max_configs`` (the entire point of cheap-first staging is to reserve
+    the expensive config budget for survivors). ``tracker.would_exceed()`` is
+    still checked at the top of EVERY SCREEN candidate (token/USD/wall-clock
+    gating; the configs sub-cap is simply not reached during SCREEN by
+    design) and EVERY PROMOTE candidate (token/USD/wall-clock + max-configs);
+    on ANY hard cap the run reaches ``budget-exhausted`` with NO further
+    screen/promote config appended.
+    """
+    best_id: Optional[str] = None
+    stop_reason: Optional[str] = None
+    iteration_index = 0
+    screened: list[_Screened] = []
+    cheap_model = cheapest_model()
+
+    screen_configs = configs[:_SCREEN_SET_SIZE]
+    for n, cfg in enumerate(screen_configs, start=1):
+        if cancel_token.is_cancelled:
+            stop_reason = None
+            break
+        if tracker.would_exceed() is not None:
+            # A true spend cap (ai-tokens/usd/wall-clock) reached: terminal
+            # budget-exhausted, NO further screen — and we do NOT proceed to
+            # PROMOTE (no config past the cap).
+            stop_reason = "budget-exhausted"
+            break
+        if await _read_stop_requested(session_id):
+            cancel_token.cancel()
+            stop_reason = None
+            break
+
+        iteration_index += 1
+        iter_id = str(uuid.uuid4())
+        await _update_autorun(session_id, status="running",
+                              currentIteration=iteration_index,
+                              spend=tracker.snapshot())
+        await asyncio.to_thread(
+            session_store.append_activity_entries, session_id, [
+                _activity("auto-run",
+                          f"SCREEN config {n}: {cfg.symbol} {cfg.timeframe}",
+                          iter_id),
+            ]
+        )
+        try:
+            res = await _evaluate_one(
+                session_id=session_id, idx=iteration_index, iter_id=iter_id,
+                pipeline=pipeline, semaphore=semaphore,
+                cancel_token=cancel_token,
+                backtest_executor=backtest_executor, tracker=tracker,
+                req=req, cfg=cfg, gen_prompt=req.natural_language,
+                gen_prev=None, gen_model=cheap_model,
+                wfv_enabled=False, want_insights=False, stage="screen",
+            )
+            if not res.ok:
+                await _record_failed(session_id, iteration_index, iter_id,
+                                     req.natural_language, req, cfg,
+                                     res.failed_reason or "failed")
+                continue
+            proxy = float(res.result.sharpe_ratio)
+            ret = float(res.result.total_return)
+            await asyncio.to_thread(
+                session_store.append_activity_entries, session_id, [
+                    _activity(
+                        "complete",
+                        f"SCREEN {n} done — {cfg.symbol} {cfg.timeframe}: "
+                        f"in-sample Sharpe {proxy:.2f}, "
+                        f"return {ret * 100:.2f}%, "
+                        f"{res.result.num_trades} trades "
+                        f"(cheap screen — no walk-forward)",
+                        iter_id,
+                    ),
+                ]
+            )
+            screened.append(_Screened(cfg, res.gen, proxy, ret, iter_id))
+            await asyncio.sleep(0)
+        except PipelineError:
+            stop_reason = None
+            cancel_token.cancel()
+            break
+        except Exception as exc:  # noqa: BLE001 - one bad screen must not hang
+            logger.warning(
+                "auto-session SCREEN config %d failed (continuing): %s", n, exc)
+            await _record_failed(session_id, iteration_index, iter_id,
+                                 req.natural_language, req, cfg, str(exc))
+            continue
+
+    # A hard cap / cooperative stop during SCREEN is terminal: NO PROMOTE
+    # config may start past it ("no one more config past the cap").
+    if stop_reason is not None or cancel_token.is_cancelled:
+        return stop_reason, iteration_index, best_id
+
+    # RANK by the cheap in-sample proxy (Sharpe, tie-broken by raw return).
+    # Deterministic + stable (ties keep seed order). Explicitly NOT
+    # robust_score/WFE — SCREEN deliberately ran no walk-forward.
+    ranked = sorted(screened, key=lambda s: (s.proxy, s.total_return),
+                    reverse=True)
+    # Promote only the small top-k with k < number screened (and never more
+    # than the expensive iteration budget).
+    k = max(0, min(_PROMOTE_TOP_K, len(ranked) - 1, max_iter))
+    promote_set = ranked[:k]
+
+    for cand in promote_set:
+        cfg = cand.cfg
+        if cancel_token.is_cancelled:
+            stop_reason = None
+            break
+        if tracker.would_exceed() is not None:
+            # Any hard cap (ai-tokens/usd/max-configs/wall-clock): terminal
+            # budget-exhausted, NO further PROMOTE config appended.
+            stop_reason = "budget-exhausted"
+            break
+        if await _read_stop_requested(session_id):
+            cancel_token.cancel()
+            stop_reason = None
+            break
+
+        # A PROMOTE is the expensive "config" counted against max_configs.
+        tracker.start_config()
+        iteration_index += 1
+        iter_id = str(uuid.uuid4())
+        await _update_autorun(session_id, status="running",
+                              currentIteration=iteration_index,
+                              spend=tracker.snapshot())
+        await asyncio.to_thread(
+            session_store.append_activity_entries, session_id, [
+                _activity(
+                    "auto-run",
+                    f"PROMOTE config: {cfg.symbol} {cfg.timeframe} "
+                    f"(top-{len(promote_set)} survivor; "
+                    f"in-sample Sharpe {cand.proxy:.2f})",
+                    iter_id,
+                ),
+            ]
+        )
+        try:
+            res = await _evaluate_one(
+                session_id=session_id, idx=iteration_index, iter_id=iter_id,
+                pipeline=pipeline, semaphore=semaphore,
+                cancel_token=cancel_token,
+                backtest_executor=backtest_executor, tracker=tracker,
+                req=req, cfg=cfg, gen_prompt=req.natural_language,
+                gen_prev=None, gen_model=req.model,
+                wfv_enabled=True, want_insights=True, stage="promote",
+                reuse_gen=cand.gen,
+            )
+            if not res.ok:
+                await _record_failed(session_id, iteration_index, iter_id,
+                                     req.natural_language, req, cfg,
+                                     res.failed_reason or "failed")
+                continue
+
+            completed.append((iter_id, res.inp))
+            wfe_txt = (f"{res.wf.wfe:.2f}" if res.wf is not None
+                       and res.wf.wfe is not None else "n/a")
+            await asyncio.to_thread(
+                session_store.append_activity_entries, session_id, [
+                    _activity(
+                        "complete",
+                        f"PROMOTE done — {cfg.symbol} {cfg.timeframe}: "
+                        f"return {res.result.total_return * 100:.2f}%, "
+                        f"{res.result.num_trades} trades, "
+                        f"robust {res.score:.3f}, "
+                        f"walk-forward WFE {wfe_txt}",
+                        iter_id,
+                    ),
+                ]
+            )
+            if res.summary:
+                await asyncio.to_thread(
+                    session_store.append_activity_entries, session_id, [
+                        _activity("insights", res.summary, iter_id),
+                    ]
+                )
+
+            best_id = select_best(completed)
+            await _update_autorun(session_id, status="running",
+                                  currentIteration=iteration_index,
+                                  bestIterationId=best_id,
+                                  spend=tracker.snapshot())
+            await asyncio.sleep(0)
+
+            if targets and targets_met(res.inp, targets):
+                stop_reason = "criteria-met"
+                break
+
+        except PipelineError:
+            stop_reason = None
+            cancel_token.cancel()
+            break
+        except Exception as exc:  # noqa: BLE001 - one bad promote must not hang
+            logger.warning(
+                "auto-session PROMOTE config failed (continuing): %s", exc)
+            await _record_failed(session_id, iteration_index, iter_id,
+                                 req.natural_language, req, cfg, str(exc))
+            continue
+
+    return stop_reason, iteration_index, best_id
+
+
+async def _run_auto_session_impl(
+    session_id: str,
+    req: AutoSessionRequest,
+    *,
+    pipeline: Any,
+    semaphore: asyncio.Semaphore,
+    cancel_token: CancellationToken,
+    backtest_executor: Optional[Callable[[dict, CancellationToken], Any]] = None,
+) -> dict:
+    """Run the server-side iterate loop to a terminal state.
+
+    Returns the final ``autoRun`` status dict. Never raises out — a failure
+    inside one iteration is recorded and the loop still reaches a terminal
+    state (it never hangs). Pinned requests refine ONE config across
+    iterations (J-07–J-11, byte-unchanged); open-universe requests run the
+    staged SCREEN→PROMOTE controller (J-12/J-14).
+    """
+    max_iter, _legacy_wall = _resolve_budget(req.budget)
+    targets = req.targets.model_dump(exclude_none=True)
+
+    configs, is_open = _config_plan(req)
+    # Immutable hard cost tracker: AI-tokens / USD / max-configs / wall-clock,
+    # caps fixed at construction. The per-round check below never starts a
+    # config/round once any cap is reached ("no one more round past the cap").
+    tracker = _build_cost_tracker(req, max_iter, is_open)
+
+    # (id, RobustInputs) for every COMPLETED, best-eligible iteration. For an
+    # open-universe run this holds ONLY the PROMOTED (walk-forward-bearing)
+    # iterations — the cheap screen proxy NEVER leaks into best-selection
+    # (J-09/J-16 robust-best invariant preserved); raw return is never used.
+    completed: list[tuple[str, RobustInputs]] = []
+    best_id: Optional[str] = None
+
+    # The loop is the durable-status owner: ensure a coherent autoRun block
+    # exists even when invoked directly (not via the endpoint) or resumed
+    # after a worker restart. startedAt is preserved if already set.
+    _meta = await asyncio.to_thread(session_store.read_session_meta, session_id)
+    _existing = (_meta or {}).get("autoRun") or {}
+    await _update_autorun(session_id, status="running", currentIteration=0,
+                          maxIterations=max_iter, stopReason=None,
+                          bestIterationId=_existing.get("bestIterationId"),
+                          startedAt=_existing.get("startedAt") or _now_iso(),
+                          spend=tracker.snapshot())
+
+    if is_open:
+        stop_reason, iteration_index, best_id = await _run_staged_open_universe(
+            session_id, req,
+            pipeline=pipeline, semaphore=semaphore,
+            cancel_token=cancel_token, backtest_executor=backtest_executor,
+            tracker=tracker, configs=configs, max_iter=max_iter,
+            targets=targets, completed=completed,
+        )
+    else:
+        stop_reason, iteration_index, best_id = await _run_pinned(
+            session_id, req,
+            pipeline=pipeline, semaphore=semaphore,
+            cancel_token=cancel_token, backtest_executor=backtest_executor,
+            tracker=tracker, cfg=configs[0], max_iter=max_iter,
+            targets=targets, completed=completed,
+        )
 
     # --- Terminal state ------------------------------------------------------
     if cancel_token.is_cancelled and stop_reason is None:
@@ -938,7 +1337,7 @@ async def _run_auto_session_impl(
         stop_reason = "stopped"  # visible, non-null reason for a stopped run
     else:
         if stop_reason is None:
-            # Loop fell out of the for-range: the iteration cap was reached.
+            # The search space / iteration budget was spent.
             stop_reason = "budget-exhausted"
         final_status = "complete"
 
@@ -979,12 +1378,20 @@ def _build_node(*, iter_id: str, prompt: str, script_code: str, script_id: str,
                 strategy_name: str, model_used: str, result: Any,
                 result_json: dict, rating_json: Optional[dict],
                 wf_json: Optional[dict], insights: dict,
-                req: AutoSessionRequest, cfg: _Config, robust: float) -> dict:
+                req: AutoSessionRequest, cfg: _Config, robust: float,
+                stage: Optional[str] = None) -> dict:
     """Build the node_dict in the EXACT shape write_iteration expects for a
     manual run (the canonical key set), so a headless run is
     indistinguishable in the UI from a manual one. The top-level summary
-    fields populate the lightweight list path (cards/tree)."""
-    return {
+    fields populate the lightweight list path (cards/tree).
+
+    ``stage`` ("screen" / "promote") is an additive, lightweight marker for
+    the open-universe staged path so an operator/auditor can tell a cheap
+    screened-only iteration from a promoted (walk-forward-bearing) one. It
+    is NOT a schema fork (same write_iteration, no parallel store) and is
+    OMITTED entirely on the pinned path so pinned nodes stay byte-identical.
+    """
+    node = {
         "id": iter_id,
         "prompt": prompt,
         "scriptCode": script_code,
@@ -1007,6 +1414,9 @@ def _build_node(*, iter_id: str, prompt: str, script_code: str, script_id: str,
         "walkForwardResult": wf_json,
         "walkForwardStatus": "complete" if wf_json else "idle",
     }
+    if stage is not None:
+        node["stage"] = stage
+    return node
 
 
 async def _record_failed(session_id: str, index: int, iter_id: str, prompt: str,
