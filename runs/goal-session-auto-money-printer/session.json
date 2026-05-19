@@ -1,0 +1,18 @@
+{
+  "session_id": "auto-money-printer",
+  "started_at": "2026-05-19T00:02:31.789471Z",
+  "current_iter": 1,
+  "cli": "claude",
+  "halt_config": {
+    "max_iterations": 50,
+    "stall_window": 3,
+    "regression_halt": true
+  },
+  "status": "in_progress",
+  "last_verdict": "CONTINUE",
+  "next_depth": "full",
+  "auto_release": false,
+  "push_per_iter": true,
+  "push_branch": "goal/auto-money-printer",
+  "updated_at": "2026-05-19T00:54:17.433598Z"
+}

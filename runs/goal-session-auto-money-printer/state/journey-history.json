@@ -1,0 +1,150 @@
+{
+  "journeys": {
+    "J-01": {
+      "id": "J-01",
+      "name": "Run a backtest from natural language",
+      "status": "already_passing",
+      "last_verified_iter": "goal-auto-money-printer-iter-0",
+      "last_passing_iter": "goal-auto-money-printer-iter-0",
+      "first_seen_iter": "goal-auto-money-printer-iter-0",
+      "last_evidence_path": "reports/qa/goal-auto-money-printer-iter-0-evidence/UT-J-01-result.png"
+    },
+    "J-02": {
+      "id": "J-02",
+      "name": "Inspect and browse run history",
+      "status": "partial",
+      "last_verified_iter": "goal-auto-money-printer-iter-0",
+      "last_passing_iter": null,
+      "first_seen_iter": "goal-auto-money-printer-iter-0",
+      "last_evidence_path": "reports/qa/goal-auto-money-printer-iter-0-evidence/UT-J-02-result.png"
+    },
+    "J-03": {
+      "id": "J-03",
+      "name": "Walk-forward validation",
+      "status": "already_passing",
+      "last_verified_iter": "goal-auto-money-printer-iter-0",
+      "last_passing_iter": "goal-auto-money-printer-iter-0",
+      "first_seen_iter": "goal-auto-money-printer-iter-0",
+      "last_evidence_path": "reports/qa/goal-auto-money-printer-iter-0-evidence/UT-J-03-result.png"
+    },
+    "J-04": {
+      "id": "J-04",
+      "name": "AI insights",
+      "status": "already_passing",
+      "last_verified_iter": "goal-auto-money-printer-iter-0",
+      "last_passing_iter": "goal-auto-money-printer-iter-0",
+      "first_seen_iter": "goal-auto-money-printer-iter-0",
+      "last_evidence_path": "reports/qa/goal-auto-money-printer-iter-0-evidence/UT-J-04-result.png"
+    },
+    "J-05": {
+      "id": "J-05",
+      "name": "Reference data loads",
+      "status": "already_passing",
+      "last_verified_iter": "goal-auto-money-printer-iter-0",
+      "last_passing_iter": "goal-auto-money-printer-iter-0",
+      "first_seen_iter": "goal-auto-money-printer-iter-0",
+      "last_evidence_path": "reports/qa/goal-auto-money-printer-iter-0-evidence/UT-J-05-result.png"
+    },
+    "J-06": {
+      "id": "J-06",
+      "name": "Warm-cache re-run works end-to-end",
+      "status": "already_passing",
+      "last_verified_iter": "goal-auto-money-printer-iter-0",
+      "last_passing_iter": "goal-auto-money-printer-iter-0",
+      "first_seen_iter": "goal-auto-money-printer-iter-0",
+      "last_evidence_path": "reports/qa/goal-auto-money-printer-iter-0-evidence/UT-J-06-result.png"
+    },
+    "J-07": {
+      "id": "J-07",
+      "name": "Start a headless automated session via the API (pinned config)",
+      "status": "failing",
+      "last_verified_iter": "goal-auto-money-printer-iter-0",
+      "last_passing_iter": null,
+      "first_seen_iter": "goal-auto-money-printer-iter-0",
+      "last_evidence_path": "reports/qa/goal-auto-money-printer-iter-0-evidence/UT-J-07-to-16-no-auto-sessions-api.png"
+    },
+    "J-08": {
+      "id": "J-08",
+      "name": "Track the automated run live in the UI",
+      "status": "failing",
+      "last_verified_iter": "goal-auto-money-printer-iter-0",
+      "last_passing_iter": null,
+      "first_seen_iter": "goal-auto-money-printer-iter-0",
+      "last_evidence_path": "reports/qa/goal-auto-money-printer-iter-0-evidence/UT-J-07-to-16-no-auto-sessions-api.png"
+    },
+    "J-09": {
+      "id": "J-09",
+      "name": "Automated chain stops on robust target or budget; best is marked",
+      "status": "failing",
+      "last_verified_iter": "goal-auto-money-printer-iter-0",
+      "last_passing_iter": null,
+      "first_seen_iter": "goal-auto-money-printer-iter-0",
+      "last_evidence_path": "reports/qa/goal-auto-money-printer-iter-0-evidence/UT-J-07-to-16-no-auto-sessions-api.png"
+    },
+    "J-10": {
+      "id": "J-10",
+      "name": "Backend is the single source of truth (button rewired, survives reload)",
+      "status": "failing",
+      "last_verified_iter": "goal-auto-money-printer-iter-0",
+      "last_passing_iter": null,
+      "first_seen_iter": "goal-auto-money-printer-iter-0",
+      "last_evidence_path": "reports/qa/goal-auto-money-printer-iter-0-evidence/UT-J-07-to-16-no-auto-sessions-api.png"
+    },
+    "J-11": {
+      "id": "J-11",
+      "name": "Stop a running automated session",
+      "status": "failing",
+      "last_verified_iter": "goal-auto-money-printer-iter-0",
+      "last_passing_iter": null,
+      "first_seen_iter": "goal-auto-money-printer-iter-0",
+      "last_evidence_path": "reports/qa/goal-auto-money-printer-iter-0-evidence/UT-J-07-to-16-no-auto-sessions-api.png"
+    },
+    "J-12": {
+      "id": "J-12",
+      "name": "Open-universe run from only an objective + budget",
+      "status": "failing",
+      "last_verified_iter": "goal-auto-money-printer-iter-0",
+      "last_passing_iter": null,
+      "first_seen_iter": "goal-auto-money-printer-iter-0",
+      "last_evidence_path": "reports/qa/goal-auto-money-printer-iter-0-evidence/UT-J-07-to-16-no-auto-sessions-api.png"
+    },
+    "J-13": {
+      "id": "J-13",
+      "name": "AI-token/cost budget is hard-enforced",
+      "status": "failing",
+      "last_verified_iter": "goal-auto-money-printer-iter-0",
+      "last_passing_iter": null,
+      "first_seen_iter": "goal-auto-money-printer-iter-0",
+      "last_evidence_path": "reports/qa/goal-auto-money-printer-iter-0-evidence/UT-J-07-to-16-no-auto-sessions-api.png"
+    },
+    "J-14": {
+      "id": "J-14",
+      "name": "Staged screening — full cost only on survivors",
+      "status": "failing",
+      "last_verified_iter": "goal-auto-money-printer-iter-0",
+      "last_passing_iter": null,
+      "first_seen_iter": "goal-auto-money-printer-iter-0",
+      "last_evidence_path": "reports/qa/goal-auto-money-printer-iter-0-evidence/UT-J-07-to-16-no-auto-sessions-api.png"
+    },
+    "J-15": {
+      "id": "J-15",
+      "name": "Learns from global history (warm start) and is opt-out-able",
+      "status": "failing",
+      "last_verified_iter": "goal-auto-money-printer-iter-0",
+      "last_passing_iter": null,
+      "first_seen_iter": "goal-auto-money-printer-iter-0",
+      "last_evidence_path": "reports/qa/goal-auto-money-printer-iter-0-evidence/UT-J-07-to-16-no-auto-sessions-api.png"
+    },
+    "J-16": {
+      "id": "J-16",
+      "name": "Robust objective gates overfit",
+      "status": "failing",
+      "last_verified_iter": "goal-auto-money-printer-iter-0",
+      "last_passing_iter": null,
+      "first_seen_iter": "goal-auto-money-printer-iter-0",
+      "last_evidence_path": "reports/qa/goal-auto-money-printer-iter-0-evidence/UT-J-07-to-16-no-auto-sessions-api.png"
+    }
+  },
+  "anti_goal_violations": [],
+  "updated_at": "2026-05-19T01:45:00Z"
+}
