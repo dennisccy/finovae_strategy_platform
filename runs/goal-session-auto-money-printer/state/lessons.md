@@ -139,3 +139,29 @@ observable corroboration.
 read-only behaviour on prior artifacts, or whose test plan presupposes
 isolated/empty durable-store state. Especially iter-6 (J-16 leaderboard /
 overfit-gating) which will read promoted iterations across the same store.
+
+## iter-6 — 2026-05-20T02:00:00Z
+
+**Verdict:** GOAL_ACHIEVED
+**Lesson:** A "demonstration as a journey" that depends on a stochastic
+property of real data (here: an open-universe tiny-budget run happening to
+produce one gate-passing AND one gate-failing PROMOTE side-by-side) MUST NOT
+rely on the browser run to exhibit both branches — the deterministic unit
+test on an isolated `store` fixture with a `FakePipeline(by_cfg=...)` is the
+PRIMARY proof of the rejection branch, and the browser is observable
+corroboration of the *renderer*, not a re-derivation of the gate semantics.
+The iter-6 spec called this out explicitly ("Do NOT mark the unit test as a
+fallback — it is the primary proof") and the TC-01 browser session validated
+it in practice: both real PROMOTEs landed gate-failing (WFE -0.05 and -0.48),
+making the winner a "sole survivor" rather than "WF-validated"; the J-16
+rejection branch was nonetheless visibly proven by the deterministic unit
+asserting exact-equality on `"Not best — WFE 0.00 below 0.30 gate"`. This
+generalises: any future iteration claiming a "stress demonstration" of an
+invariant that's already structurally guaranteed should plan the
+deterministic-unit-as-primary-proof + browser-corroborates-the-rendering
+split from the outset.
+**Applies to:** any future iter whose target journey is a "demonstration" of
+an invariant that depends on data quality at runtime (e.g. another stress
+demo, a leaderboard ranking demonstration, or a "robust over a noisy
+universe" claim) — write the deterministic-fixture test as the primary
+proof, treat browser as renderer corroboration.

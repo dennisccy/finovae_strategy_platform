@@ -322,3 +322,82 @@ GOAL_ACHIEVED. **Outer-loop, not iter-6 developer:** the recorded iter-4
 closure carryover (regenerate the two transient `ui-test-design-phase.sh`
 stub artifacts for `goal-auto-money-printer-iter-4`) remains orchestrator work
 and must not flip any journey/anti-goal verdict.
+
+---
+
+## Iteration 6 — goal-auto-money-printer-iter-6
+
+**Date:** 2026-05-20T02:00:00Z
+**Verdict:** GOAL_ACHIEVED
+**Depth dispatched:** full
+**Journey deltas:**
+- Newly passing: J-16 (failing → passing) — the last failing Must-have journey
+- Re-verified still-passing (live browser QA this iter): J-02, J-08, J-09, J-11, J-12, J-13, J-14, J-15
+- Re-verified still-passing (source-traced + suite green this iter): J-04 (iter-4 insight_calls==3 carry green), J-07 (`_run_pinned` byte-identical)
+- Carried still-passing (code path not in iter-6 diff; suite 221p/1f): J-01, J-03, J-05, J-06, J-10
+- Newly failing: none
+- Regressed: none
+- Anti-goal violations: none (independently re-verified at frozen-module-diff + write-primitive-scan + new-import audit + test + screenshot level)
+
+**Reasoning:** All 16 Must-have user journeys now carry positive evidence of
+passing. I traced every load-bearing claim to source rather than trusting
+summaries. (1) **Frozen modules zero-diff**: `git diff HEAD --` over
+`robust_objective.py`, `shared/contracts.py`, `session_store.py`,
+`pipeline.py`, `sandbox.py`, `backtest/`, and the in-browser-iterate-loop-
+prone frontend files (`useBacktest.ts`, `AutoRunBar.tsx`,
+`SessionContainer.tsx`, `IterationCard.tsx`) all returned 0 lines. The
+robust-best invariant (`_GATE_FAIL_PENALTY = 1000.0`) is structurally
+preserved exactly as iter-1 through iter-5 left it. (2) **`_run_pinned` byte-
+identical**: function-range Python extraction yields HEAD chars=4892, working
+tree chars=4892, identical bytes — J-04's `insight_calls == 3` regression
+guard and the entire pinned J-07/J-08/J-09/J-10/J-11 path are untouched.
+(3) **Iter-5 write-primitive scan over the iter-6 diff** returns one match
+only — a docstring mention of `json.dumps` inside `_finite_display` — no
+actual write/json.dump/open-w/unlink/rename/shutil/os.remove/derive_session_tabs
+call introduced. (4) **New-import audit**: the only added imports are
+`DEFAULT_MIN_TRADES` and `DEFAULT_MIN_WFE` from the same existing
+`backend.robust_objective` (the original single-line import was reorganized
+into a multi-line block — no new external dep). (5) **J-16 deterministic
+primary proof source-traced**: `test_open_universe_j16_rationale_promotes_robust_winner`
+(`apps/backend/tests/test_auto_session.py:2240`) asserts exact equality on
+`overfit_entry["detail"] == "Not best — WFE 0.00 below 0.30 gate"`, the
+winner's `detail.startswith("Best — WF-validated")` with embedded `0.70` and
+`25 trades`, `bestIterationId == by_node[s0]["id"]`, `detail_count == 2`
+(once-per-promote), and explicit nan/inf/null/undefined/api-key absence.
+(6) **Full backend suite independently re-run**: 221 passed / 1 failed —
+identical to iter-5's 200p/1f baseline + 21 new tests, single tolerated red
+`test_directions_cache::test_write_and_read_full_round_trip` unchanged, zero
+new regressions. (7) **Browser corroboration**: `TC-03-best-badge-and-rationale.png`
+shows 4 SCREEN entries (no sub-line — J-14 invariant), 2 PROMOTE entries with
+muted-emerald rationale sub-lines, and the `Best` badge sitting on the
+higher-robust BTC PROMOTE iteration card. In this real tiny-budget run both
+PROMOTEs happened to be WFE-failing (BTC -0.05, SOL -0.48), so the winner's
+text reads `"Best (sole survivor) — gates not met: WFE -0.05 below 0.30 gate"`
+rather than `"Best — WF-validated …"`. The spec's J-16 acceptance explicitly
+anticipates this ("If the natural run does NOT happen to produce a WFE-
+failing candidate alongside a passing one in the tiny budget, J-16 still
+passes as long as every PROMOTE complete entry carries a coherent rationale
+tag AND the deterministic unit test proves the rejection branch fires when
+it should") — both conditions are independently verified above. The renderer
+surface is what the browser test validates; the gate semantics live in the
+deterministic unit. (8) **Iter-2 event-loop discipline** preserved: both
+new `_activity` appends go through `asyncio.to_thread(session_store.append_activity_entries, …)`.
+(9) **Iter-3 budget-gate discipline** preserved: zero new LLM calls, zero
+new tokens, `_SPEND_CAPS`/`would_exceed`/`tracker.start_config` byte-
+unchanged. (10) **Iter-1 reconciled-headline caution** does not bite: the
+ui-test-results is a clean first-pass PASS (no QA-FAIL→reconcile cycle per
+its provenance), but I cross-checked the rationale wiring + pinned/SCREEN
+delta assertions at source anyway. With all 16 journeys passing and zero
+critical anti-goal violations, the agent rule "every journey passing + no
+critical anti-goal violation → GOAL_ACHIEVED" is satisfied.
+
+**Next-step recommendation:** **Halt — goal achieved.** All Must-have user
+journeys J-01–J-16 are passing; zero critical anti-goal violations exist.
+The only outer-loop residue is the non-blocking iter-4 carryover (two
+transient `ui-test-design-phase.sh` stub artifacts for
+`goal-auto-money-printer-iter-4`); remediation is a one-command pair
+(`ui-test-design-phase.sh goal-auto-money-printer-iter-4 && phase-closure-check.sh
+goal-auto-money-printer-iter-4`) and does NOT flip any journey or anti-goal
+verdict. If the user opts to continue the session despite the halt verdict,
+depth recommendation is `lean` — any optional follow-up is documentation
+hygiene, not code.

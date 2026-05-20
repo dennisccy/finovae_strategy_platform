@@ -50,7 +50,14 @@ from pydantic import BaseModel, Field
 from backend import session_store
 from backend.cost_tracker import DEFAULT_MAX_CONFIGS, CostTracker
 from backend.pipeline import CancellationToken, PipelineError
-from backend.robust_objective import RobustInputs, robust_score, select_best, targets_met
+from backend.robust_objective import (
+    DEFAULT_MIN_TRADES,
+    DEFAULT_MIN_WFE,
+    RobustInputs,
+    robust_score,
+    select_best,
+    targets_met,
+)
 from shared.model_catalog import DEFAULT_MODEL, cheapest_model
 
 logger = logging.getLogger(__name__)
@@ -1122,6 +1129,124 @@ async def _read_stop_requested(session_id: str) -> bool:
     return bool(((persisted or {}).get("autoRun") or {}).get("stopRequested"))
 
 
+# =============================================================================
+# iter-6 / J-16 — Operator-readable robust-best rationale for PROMOTE entries
+#
+# A dependency-light pure helper: take a completed PROMOTE candidate's
+# (iter_id, RobustInputs, robust_score) plus the round-current best (id and
+# its score) and return a short, JSON-safe, operator-readable string that
+# names either why this candidate IS best (gates passed) or why it is NOT
+# best (the specific gate it failed). Pure presentation: it does not mutate
+# the robust-best invariant in :mod:`backend.robust_objective` — gates,
+# ``_GATE_FAIL_PENALTY``, and ``select_best`` are byte-unchanged.
+# =============================================================================
+
+
+def _finite_display(x: Optional[float]) -> str:
+    """Format a possibly non-finite float for the activity log JSON.
+
+    ``json.dumps`` would otherwise emit ``NaN``/``Infinity`` literals that
+    the browser's ``JSON.parse`` rejects (the same hazard ``_json_safe``
+    addresses). Never emits ``"nan"``/``"inf"`` literals; ``None`` becomes
+    ``"n/a"`` so an absent score still renders a finite, parseable string.
+    """
+    if x is None:
+        return "n/a"
+    try:
+        if math.isnan(x):
+            return "0.00"
+        if math.isinf(x):
+            return "−∞" if x < 0 else "+∞"
+        return f"{x:.2f}"
+    except (TypeError, ValueError):
+        return "n/a"
+
+
+def _robust_best_reason(
+    inp: RobustInputs,
+    *,
+    min_wfe: float = DEFAULT_MIN_WFE,
+    min_trades: int = DEFAULT_MIN_TRADES,
+) -> Optional[str]:
+    """Return the specific gate-failure reason for ``inp`` or ``None`` when
+    all hard gates pass. Mirrors the gate evaluation in :func:`robust_score`
+    so the rationale text is consistent with the score's penalty. Operator
+    vocabulary only — numeric + gate-name, no API jargon, no secrets."""
+    try:
+        if inp.num_windows is None or inp.num_windows == 0 or inp.wfe is None:
+            return "no walk-forward windows"
+        if inp.wfe < min_wfe:
+            return f"WFE {inp.wfe:.2f} below {min_wfe:.2f} gate"
+        if inp.num_trades is None or inp.num_trades < min_trades:
+            n = int(inp.num_trades) if inp.num_trades is not None else 0
+            return f"under min-trades floor ({n} < {min_trades})"
+        if inp.leverage is not None and inp.leverage > 1.0:
+            return f"over-leveraged ({inp.leverage:.1f}×)"
+    except (TypeError, ValueError):
+        return "gate evaluation unavailable"
+    return None
+
+
+def _robust_best_rationale(
+    iter_id: str,
+    inp: RobustInputs,
+    best_id: Optional[str],
+    score: float,
+    best_score: Optional[float],
+    *,
+    min_wfe: float = DEFAULT_MIN_WFE,
+    min_trades: int = DEFAULT_MIN_TRADES,
+) -> str:
+    """Operator-readable rationale for one PROMOTE iteration's robust-best
+    decision.
+
+    Output shapes (exhaustive — always returns a finite, JSON-safe,
+    non-empty string; never raises):
+    * ``iter_id == best_id`` and gates pass → ``"Best — WF-validated (WFE
+      X.XX, N trades)"`` (the WF-validated winner).
+    * ``iter_id == best_id`` and gates fail → ``"Best (sole survivor) —
+      gates not met: <reason>"`` (no gate-passing PROMOTE exists; a best is
+      still marked because ``select_best`` always names one).
+    * ``iter_id != best_id`` and gates fail → ``"Not best — <reason>"``
+      (the specific gate this candidate failed).
+    * ``iter_id != best_id`` and gates pass → ``"Not best — lower robust
+      score (X.XX vs best Y.YY)"`` (both gate-passing, this one just
+      ranks lower).
+    """
+    try:
+        reason = _robust_best_reason(
+            inp, min_wfe=min_wfe, min_trades=min_trades
+        )
+        is_best = best_id is not None and iter_id == best_id
+
+        if is_best and reason is None:
+            try:
+                wfe_txt = (
+                    f"{inp.wfe:.2f}" if inp.wfe is not None else "n/a"
+                )
+                trades_txt = (
+                    f"{int(inp.num_trades)} trades"
+                    if inp.num_trades is not None else "n/a trades"
+                )
+            except (TypeError, ValueError):
+                return "Best — gate evaluation unavailable"
+            return f"Best — WF-validated (WFE {wfe_txt}, {trades_txt})"
+
+        if is_best and reason is not None:
+            return f"Best (sole survivor) — gates not met: {reason}"
+
+        if reason is not None:
+            return f"Not best — {reason}"
+
+        s_txt = _finite_display(score)
+        b_txt = _finite_display(best_score)
+        return f"Not best — lower robust score ({s_txt} vs best {b_txt})"
+    except Exception:  # noqa: BLE001 - rationale must never crash the loop
+        is_best = best_id is not None and iter_id == best_id
+        return ("Best — gate evaluation unavailable" if is_best
+                else "Not best — gate evaluation unavailable")
+
+
 async def _run_pinned(
     session_id: str,
     req: AutoSessionRequest,
@@ -1424,6 +1549,22 @@ async def _run_staged_open_universe(
                 continue
 
             completed.append((iter_id, res.inp))
+            # Resolve the round-current best BEFORE writing the PROMOTE
+            # `complete` entry so the operator-readable rationale (iter-6 /
+            # J-16) can name either "Best — WF-validated …" or "Not best —
+            # <gate that failed>" inline in the same activity row. The
+            # rationale is a write-time snapshot — best_id is the
+            # round-current decision, not a live re-computation.
+            best_id = select_best(completed)
+            best_score: Optional[float] = None
+            if best_id is not None:
+                for _cid, _cinp in completed:
+                    if _cid == best_id:
+                        best_score = robust_score(_cinp)
+                        break
+            rationale = _robust_best_rationale(
+                iter_id, res.inp, best_id, res.score, best_score
+            )
             wfe_txt = (f"{res.wf.wfe:.2f}" if res.wf is not None
                        and res.wf.wfe is not None else "n/a")
             await asyncio.to_thread(
@@ -1436,6 +1577,7 @@ async def _run_staged_open_universe(
                         f"robust {res.score:.3f}, "
                         f"walk-forward WFE {wfe_txt}",
                         iter_id,
+                        detail=rationale,
                     ),
                 ]
             )
@@ -1446,7 +1588,6 @@ async def _run_staged_open_universe(
                     ]
                 )
 
-            best_id = select_best(completed)
             await _update_autorun(session_id, status="running",
                                   currentIteration=iteration_index,
                                   bestIterationId=best_id,
@@ -1566,6 +1707,25 @@ async def _run_auto_session_impl(
         best_id = select_best(completed, targets=targets, require_targets=True)
     else:
         best_id = select_best(completed) if completed else best_id
+
+    # iter-6 / J-16 terminal summary: when an open-universe run promoted ≥ 2
+    # candidates, append ONE auto-run row naming the chosen best and the gate
+    # set. Single-promote runs are trivially "best" (no comparison row); the
+    # pinned path never emits this summary. Same store, same activity-entry
+    # shape, off the event-loop via the existing asyncio.to_thread pattern.
+    if is_open and best_id is not None and len(completed) >= 2:
+        others = len(completed) - 1
+        summary_text = (
+            f"Robust-best: {best_id} selected over {others} "
+            f"other promoted candidate(s) — gates: "
+            f"WFE ≥ {DEFAULT_MIN_WFE:.2f}, "
+            f"≥ {DEFAULT_MIN_TRADES} trades, no over-leverage"
+        )
+        await asyncio.to_thread(
+            session_store.append_activity_entries, session_id, [
+                _activity("auto-run", summary_text, best_id),
+            ]
+        )
 
     final = await _update_autorun(
         session_id,

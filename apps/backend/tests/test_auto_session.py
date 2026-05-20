@@ -2095,3 +2095,466 @@ async def test_corrupt_prior_session_dir_skipped_best_effort(store):
     assert final["status"] == "complete"  # never raised / hung
     warm = _warm_start_entries(sid)
     assert len(warm) == 1 and "ETH/USDT" in warm[0]["content"]
+
+
+# =============================================================================
+# iter-6 / J-16 — Robust-best rationale on PROMOTE complete entries.
+#
+# Each PROMOTE `complete` activity entry carries an operator-readable
+# rationale (`detail`) that names either why the candidate IS best
+# (gates passed) or why it is NOT best (the specific gate it failed).
+# Presentation only — robust_objective.py and select_best are untouched.
+# =============================================================================
+
+# --- Pure helper tests (deterministic, no loop) ----------------------------
+
+
+def test_robust_best_rationale_winner_passes_gates():
+    """When iter_id == best_id and gates pass, the rationale is
+    'Best — WF-validated (WFE X.XX, N trades)'."""
+    winner = RobustInputs(total_return=0.1, sharpe_ratio=1.0,
+                          max_drawdown=0.05, num_trades=25,
+                          wfe=0.7, oos_sharpe=1.0, num_windows=3)
+    out = auto_session._robust_best_rationale(
+        "w", winner, "w", robust_score(winner), robust_score(winner)
+    )
+    assert out.startswith("Best — WF-validated")
+    assert "0.70" in out and "25 trades" in out
+    # No nan/inf literals, no secrets.
+    assert "nan" not in out.lower() and " inf" not in out.lower()
+
+
+def test_robust_best_rationale_not_best_wfe_failing():
+    """A non-best WFE-failing candidate is marked with the specific gate."""
+    loser = RobustInputs(total_return=0.5, sharpe_ratio=4.0,
+                        max_drawdown=0.4, num_trades=30,
+                        wfe=0.0, oos_sharpe=-0.5, num_windows=2)
+    out = auto_session._robust_best_rationale(
+        "loser", loser, "winner", robust_score(loser), 0.5
+    )
+    assert out == "Not best — WFE 0.00 below 0.30 gate"
+
+
+def test_robust_best_rationale_not_best_under_min_trades():
+    inp = RobustInputs(total_return=0.5, sharpe_ratio=3.0,
+                       max_drawdown=0.05, num_trades=2,
+                       wfe=0.8, oos_sharpe=1.0, num_windows=3)
+    out = auto_session._robust_best_rationale(
+        "loser", inp, "winner", robust_score(inp), 0.5
+    )
+    assert out == "Not best — under min-trades floor (2 < 5)"
+
+
+def test_robust_best_rationale_not_best_no_walk_forward():
+    inp = RobustInputs(total_return=0.5, sharpe_ratio=3.0,
+                       max_drawdown=0.05, num_trades=30,
+                       wfe=None, num_windows=0)
+    out = auto_session._robust_best_rationale(
+        "loser", inp, "winner", robust_score(inp), 0.5
+    )
+    assert out == "Not best — no walk-forward windows"
+
+
+def test_robust_best_rationale_not_best_over_leveraged():
+    inp = RobustInputs(total_return=0.5, sharpe_ratio=3.0,
+                       max_drawdown=0.05, num_trades=30,
+                       leverage=2.5, wfe=0.7, oos_sharpe=1.0,
+                       num_windows=3)
+    out = auto_session._robust_best_rationale(
+        "loser", inp, "winner", robust_score(inp), 0.5
+    )
+    assert out == "Not best — over-leveraged (2.5×)"
+
+
+def test_robust_best_rationale_not_best_lower_robust_score():
+    """A gate-passing candidate that lost on robust score gets the
+    'lower robust score' rationale (no specific gate failure to name)."""
+    inp = RobustInputs(total_return=0.1, sharpe_ratio=1.0,
+                       max_drawdown=0.05, num_trades=20,
+                       wfe=0.6, oos_sharpe=0.8, num_windows=3)
+    out = auto_session._robust_best_rationale(
+        "loser", inp, "winner", 0.5, 1.5
+    )
+    assert out.startswith("Not best — lower robust score")
+    assert "0.50" in out and "1.50" in out
+
+
+def test_robust_best_rationale_sole_survivor_passes_gates():
+    """Sole-survivor edge: only one PROMOTE; gates pass → 'Best — WF-validated'."""
+    inp = RobustInputs(total_return=0.1, sharpe_ratio=1.0,
+                       max_drawdown=0.05, num_trades=20,
+                       wfe=0.7, oos_sharpe=1.0, num_windows=3)
+    out = auto_session._robust_best_rationale(
+        "x", inp, "x", robust_score(inp), robust_score(inp)
+    )
+    assert out.startswith("Best — WF-validated")
+
+
+def test_robust_best_rationale_sole_survivor_gates_failed():
+    """Sole-survivor edge: only one PROMOTE; gates fail →
+    'Best (sole survivor) — gates not met: <reason>'."""
+    inp = RobustInputs(total_return=0.5, sharpe_ratio=4.0,
+                       max_drawdown=0.4, num_trades=30,
+                       wfe=0.0, oos_sharpe=-0.5, num_windows=2)
+    out = auto_session._robust_best_rationale(
+        "x", inp, "x", robust_score(inp), robust_score(inp)
+    )
+    assert out.startswith("Best (sole survivor) — gates not met:")
+    assert "WFE 0.00 below 0.30 gate" in out
+
+
+def test_robust_best_rationale_partial_inputs_graceful():
+    """A default-constructed (mostly-zero) RobustInputs is gracefully
+    rejected with a finite, non-empty, JSON-safe rationale string."""
+    bad = RobustInputs(total_return=0.0, sharpe_ratio=0.0,
+                       max_drawdown=0.0, num_trades=0)
+    out = auto_session._robust_best_rationale(
+        "x", bad, "y", -1000.0, 0.5
+    )
+    assert isinstance(out, str) and out
+    # num_windows=0 by default → no walk-forward.
+    assert "no walk-forward" in out
+    # Never emits nan/inf literals (would crash browser JSON.parse).
+    assert "nan" not in out.lower() and " inf" not in out.lower()
+
+
+def test_robust_best_rationale_non_finite_score_finite_display():
+    """Non-finite scores in the comparison branch substitute a finite
+    display; never emit 'inf'/'nan' literals that break JSON.parse."""
+    good = RobustInputs(total_return=0.1, sharpe_ratio=1.0,
+                       max_drawdown=0.05, num_trades=20,
+                       wfe=0.7, oos_sharpe=1.0, num_windows=3)
+    # Forced non-finite scores into the comparison branch.
+    out = auto_session._robust_best_rationale(
+        "loser", good, "winner", float("-inf"), float("nan")
+    )
+    assert isinstance(out, str) and out
+    assert "nan" not in out.lower()
+    # Allow the unicode "−∞" representation but not Python's "inf" literal.
+    assert " inf" not in out.lower() and "-inf" not in out.lower()
+
+
+# --- Integration tests (driven via _run, real activity log read-back) ------
+
+
+async def test_open_universe_j16_rationale_promotes_robust_winner(store):
+    """J-16 PRIMARY DETERMINISTIC PROOF.
+
+    An overfit-tempting PROMOTE config (high raw return, WFE-failing) is
+    plainly marked 'Not best — WFE 0.00 below 0.30 gate' in the existing
+    PROMOTE complete activity entry; the WF-validated PROMOTE config is
+    plainly marked 'Best — WF-validated (...)'. Robust winner is best.
+
+    NB: SNAPSHOT semantics (spec IN-SCOPE: "Re-evaluate prior promoted
+    iterations' rationale across rounds is OUT OF SCOPE"). The rationale
+    helper sees `best_id` at write time. The SCREEN→PROMOTE pipeline
+    promotes top-k by in-sample Sharpe, so to make the gate-failing
+    candidate plainly "Not best", the WF-validated candidate is given the
+    higher Sharpe so it promotes FIRST (becomes best), then the
+    overfit-tempting candidate promotes second and is correctly compared
+    against the gate-passing best already in `completed`."""
+    seed = auto_session._SEED_UNIVERSE
+    s0, s1, s2, s3 = seed[0], seed[1], seed[2], seed[3]
+    by_cfg = {
+        # B: top in-sample Sharpe -> PROMOTED #1; WF-validated -> robust
+        # winner; gate-passing snapshot at write time → "Best — WF-validated".
+        s0: {"sharpe": 2.0, "total_return": 0.10, "max_drawdown": 0.08,
+             "num_trades": 25, "wfe": 0.7, "oos_return": 0.15,
+             "oos_sharpe": 1.0, "num_windows": 3},
+        # A: 2nd in-sample Sharpe -> PROMOTED #2; overfit-tempting (huge raw
+        # return, WFE=0.0) → at write time, B is already in `completed` as
+        # the gate-passing best, so A is correctly marked "Not best".
+        s1: {"sharpe": 1.8, "total_return": 0.50, "max_drawdown": 0.40,
+             "num_trades": 30, "wfe": 0.0, "oos_return": -0.2,
+             "oos_sharpe": -0.5, "num_windows": 2},
+        # s2/s3: low in-sample Sharpe -> SCREENED-ONLY (never promoted).
+        s2: {"sharpe": 0.5, "total_return": 0.0, "num_trades": 10},
+        s3: {"sharpe": 0.4, "total_return": 0.0, "num_trades": 10},
+    }
+    sid = "sess-j16-rationale"
+    final = await _run(
+        sid,
+        _open_req(budget={"max_iterations": 9, "max_configs": 6}),
+        FakePipeline([{}], by_cfg=by_cfg),
+    )
+    assert final["status"] == "complete"
+
+    _, promote_nodes = _nodes_by_stage(sid)
+    assert len(promote_nodes) == 2
+    by_node = {(n["params"]["symbol"], n["params"]["timeframe"]): n
+               for n in promote_nodes}
+
+    # Robust winner is s0 (WF-validated, promoted first).
+    best = final["bestIterationId"]
+    assert best == by_node[s0]["id"]
+
+    log = ss.read_activity_log(sid)
+    promote_completes = [e for e in log if e["type"] == "complete"
+                         and e["content"].startswith("PROMOTE done")]
+    assert len(promote_completes) == 2
+    by_iter = {e["iterationId"]: e for e in promote_completes}
+
+    # Winner gets the WF-validated "Best" rationale.
+    winner_entry = by_iter[best]
+    assert winner_entry["detail"].startswith("Best — WF-validated")
+    assert "0.70" in winner_entry["detail"]
+    assert "25 trades" in winner_entry["detail"]
+
+    # Overfit-tempting candidate (s1, promoted 2nd) gets the explicit
+    # gate-failed rationale (snapshot at write time: best is already s0).
+    overfit_entry = by_iter[by_node[s1]["id"]]
+    assert overfit_entry["detail"] == "Not best — WFE 0.00 below 0.30 gate"
+
+    # Once-per-promote (not per-round): exactly one rationale per PROMOTE.
+    detail_count = sum(1 for e in promote_completes if e.get("detail"))
+    assert detail_count == 2
+
+    # No secrets, no API jargon, no nan/inf literals in the rendered text.
+    for entry in (winner_entry, overfit_entry):
+        body = entry["detail"]
+        for needle in ("api_key", "secret", "sk-", "authorization"):
+            assert needle not in body.lower(), body
+        assert "nan" not in body.lower()
+        assert " inf" not in body.lower() and "-inf" not in body.lower()
+        assert "null" not in body.lower() and "undefined" not in body.lower()
+
+
+async def test_open_universe_rationale_min_trades_floor(store):
+    """A PROMOTE candidate under the min-trades floor is rejected with the
+    'under min-trades floor (N < min)' rationale.
+
+    NB: snapshot semantics — the healthy candidate's Sharpe is set higher
+    so it is promoted FIRST and becomes the at-write-time best; the
+    under-traded candidate is promoted SECOND and correctly tagged as
+    'Not best — ...'."""
+    seed = auto_session._SEED_UNIVERSE
+    s0, s1 = seed[0], seed[1]
+    by_cfg = {
+        # Top in-sample Sharpe -> PROMOTED #1; healthy gate-passing.
+        s0: {"sharpe": 2.0, "total_return": 0.1, "num_trades": 25,
+             "wfe": 0.7, "oos_sharpe": 1.0, "num_windows": 3},
+        # 2nd in-sample Sharpe -> PROMOTED #2; only 2 trades (under floor=5).
+        s1: {"sharpe": 1.8, "total_return": 0.5, "num_trades": 2,
+             "wfe": 0.8, "oos_sharpe": 1.0, "num_windows": 3},
+    }
+    sid = "sess-j16-min-trades"
+    await _run(
+        sid,
+        _open_req(budget={"max_iterations": 9, "max_configs": 6}),
+        FakePipeline([{"sharpe": 0.1, "total_return": 0.0, "num_trades": 5}],
+                     by_cfg=by_cfg),
+    )
+    _, promote_nodes = _nodes_by_stage(sid)
+    by_node = {(n["params"]["symbol"], n["params"]["timeframe"]): n
+               for n in promote_nodes}
+    log = ss.read_activity_log(sid)
+    by_iter = {e["iterationId"]: e for e in log
+               if e["type"] == "complete"
+               and e["content"].startswith("PROMOTE done")}
+
+    under_traded_entry = by_iter[by_node[s1]["id"]]
+    assert under_traded_entry["detail"] == \
+        "Not best — under min-trades floor (2 < 5)"
+
+
+async def test_open_universe_rationale_no_walk_forward(store):
+    """A PROMOTE candidate with num_windows=0 is rejected with the
+    'no walk-forward windows' rationale.
+
+    NB: snapshot semantics — the WF-bearing candidate is promoted FIRST
+    (higher in-sample Sharpe); the no-WF candidate promotes SECOND and
+    is correctly tagged as 'Not best — no walk-forward windows'."""
+    seed = auto_session._SEED_UNIVERSE
+    s0, s1 = seed[0], seed[1]
+    by_cfg = {
+        # Top in-sample Sharpe -> PROMOTED #1; healthy WF-validated.
+        s0: {"sharpe": 2.0, "total_return": 0.1, "num_trades": 25,
+             "wfe": 0.7, "oos_sharpe": 1.0, "num_windows": 3},
+        # 2nd in-sample Sharpe -> PROMOTED #2; no WF windows produced.
+        s1: {"sharpe": 1.8, "total_return": 0.5, "num_trades": 30,
+             "num_windows": 0},
+    }
+    sid = "sess-j16-no-wf"
+    await _run(
+        sid,
+        _open_req(budget={"max_iterations": 9, "max_configs": 6}),
+        FakePipeline([{"sharpe": 0.1, "total_return": 0.0, "num_trades": 5}],
+                     by_cfg=by_cfg),
+    )
+    _, promote_nodes = _nodes_by_stage(sid)
+    by_node = {(n["params"]["symbol"], n["params"]["timeframe"]): n
+               for n in promote_nodes}
+    log = ss.read_activity_log(sid)
+    by_iter = {e["iterationId"]: e for e in log
+               if e["type"] == "complete"
+               and e["content"].startswith("PROMOTE done")}
+
+    no_wf_entry = by_iter[by_node[s1]["id"]]
+    assert no_wf_entry["detail"] == "Not best — no walk-forward windows"
+
+
+async def test_sole_survivor_passes_gates_gets_best_wf_validated(store):
+    """Sole-survivor edge case: only one PROMOTE candidate completes and
+    its own gates pass → 'Best — WF-validated (...)' rationale; the Best
+    badge sits on it."""
+    by_cfg = {
+        auto_session._SEED_UNIVERSE[0]: {
+            "sharpe": 2.0, "total_return": 0.1, "num_trades": 25,
+            "wfe": 0.7, "oos_sharpe": 1.0, "num_windows": 3,
+        },
+    }
+    sid = "sess-sole-survivor-good"
+    # max_configs=1 stops after the first PROMOTE (one sole survivor).
+    final = await _run(
+        sid,
+        _open_req(budget={"max_iterations": 9, "max_configs": 1}),
+        FakePipeline([{"sharpe": 0.1, "total_return": 0.0, "num_trades": 5}],
+                     by_cfg=by_cfg),
+    )
+    _, promote_nodes = _nodes_by_stage(sid)
+    assert len(promote_nodes) == 1
+    log = ss.read_activity_log(sid)
+    promote_completes = [e for e in log if e["type"] == "complete"
+                         and e["content"].startswith("PROMOTE done")]
+    assert len(promote_completes) == 1
+    entry = promote_completes[0]
+    assert entry["detail"].startswith("Best — WF-validated")
+    assert final["bestIterationId"] == promote_nodes[0]["id"]
+
+
+async def test_sole_survivor_gates_fail_gets_sole_survivor_rationale(store):
+    """Sole-survivor edge case: only one PROMOTE candidate completes and
+    its gates fail → 'Best (sole survivor) — gates not met: <reason>'."""
+    by_cfg = {
+        auto_session._SEED_UNIVERSE[0]: {
+            "sharpe": 2.0, "total_return": 0.5, "num_trades": 30,
+            "max_drawdown": 0.4, "wfe": 0.0, "oos_sharpe": -0.5,
+            "num_windows": 2,  # WFE-failing
+        },
+    }
+    sid = "sess-sole-survivor-fail"
+    final = await _run(
+        sid,
+        _open_req(budget={"max_iterations": 9, "max_configs": 1}),
+        FakePipeline([{"sharpe": 0.1, "total_return": 0.0, "num_trades": 5}],
+                     by_cfg=by_cfg),
+    )
+    _, promote_nodes = _nodes_by_stage(sid)
+    assert len(promote_nodes) == 1
+    log = ss.read_activity_log(sid)
+    promote_completes = [e for e in log if e["type"] == "complete"
+                         and e["content"].startswith("PROMOTE done")]
+    assert len(promote_completes) == 1
+    entry = promote_completes[0]
+    assert entry["detail"].startswith("Best (sole survivor) — gates not met:")
+    assert "WFE 0.00 below 0.30 gate" in entry["detail"]
+    # A best is always marked, even for the gate-failing sole survivor.
+    assert final["bestIterationId"] == promote_nodes[0]["id"]
+
+
+async def test_pinned_path_no_rationale_detail_on_complete(store):
+    """The pinned path's `complete` activity entries carry NO rationale
+    detail — rationale lives only on the open-universe PROMOTE entry."""
+    pipe = FakePipeline([{"total_return": 0.1, "wfe": 0.7}])
+    sid = "sess-pinned-no-rationale"
+    await _run(sid, _req(budget={"max_iterations": 2}), pipe)
+
+    log = ss.read_activity_log(sid)
+    completes = [e for e in log if e["type"] == "complete"
+                 and e["content"].startswith("Backtest complete")]
+    assert completes
+    for entry in completes:
+        # No detail key set by the iter-6 rationale helper.
+        assert not entry.get("detail")
+
+
+async def test_screen_complete_entries_carry_no_rationale_detail(store):
+    """SCREEN `complete` entries (no walk-forward by design) never carry
+    a rationale detail — the helper runs only on PROMOTE entries."""
+    pipe = FakePipeline([{"total_return": 0.3, "sharpe": 1.5, "wfe": 0.7,
+                          "num_trades": 20}])
+    sid = "sess-screen-no-rationale"
+    await _run(
+        sid, _open_req(budget={"max_iterations": 9, "max_configs": 6}), pipe
+    )
+
+    log = ss.read_activity_log(sid)
+    screen_completes = [e for e in log if e["type"] == "complete"
+                        and e["content"].startswith("SCREEN")]
+    assert screen_completes
+    for entry in screen_completes:
+        assert not entry.get("detail")
+
+
+async def test_rationale_appended_once_per_promote_not_per_round(store):
+    """The rationale detail is appended exactly once per promoted iteration,
+    not N× per round."""
+    pipe = FakePipeline([{"total_return": 0.3, "sharpe": 1.5, "wfe": 0.7,
+                          "num_trades": 20}])
+    sid = "sess-once-per-promote"
+    await _run(
+        sid,
+        _open_req(budget={"max_iterations": 9, "max_configs": 6}),
+        pipe,
+    )
+
+    k = auto_session._PROMOTE_TOP_K
+    log = ss.read_activity_log(sid)
+    promote_completes = [e for e in log if e["type"] == "complete"
+                         and e["content"].startswith("PROMOTE done")]
+    assert len(promote_completes) == k
+    detail_count = sum(1 for e in promote_completes if e.get("detail"))
+    assert detail_count == k
+
+
+async def test_open_universe_terminal_summary_when_two_or_more_promoted(store):
+    """When an open-universe run promoted ≥ 2 candidates, the terminal
+    summary row names the chosen best and the gate set."""
+    pipe = FakePipeline([{"total_return": 0.3, "sharpe": 1.5, "wfe": 0.7,
+                          "num_trades": 20}])
+    sid = "sess-terminal-summary"
+    final = await _run(
+        sid, _open_req(budget={"max_iterations": 9, "max_configs": 6}), pipe
+    )
+    log = ss.read_activity_log(sid)
+    summary = [e for e in log if e["type"] == "auto-run"
+               and e["content"].startswith("Robust-best:")]
+    assert len(summary) == 1
+    text = summary[0]["content"]
+    assert final["bestIterationId"] in text
+    assert "WFE ≥ 0.30" in text
+    assert "5 trades" in text
+    assert "no over-leverage" in text
+    assert summary[0]["iterationId"] == final["bestIterationId"]
+
+
+async def test_no_terminal_summary_on_single_promote(store):
+    """Single-PROMOTE run is trivially 'best' — no comparison summary row."""
+    by_cfg = {
+        auto_session._SEED_UNIVERSE[0]: {
+            "sharpe": 2.0, "total_return": 0.1, "num_trades": 25,
+            "wfe": 0.7, "oos_sharpe": 1.0, "num_windows": 3,
+        },
+    }
+    sid = "sess-single-promote-no-summary"
+    await _run(
+        sid,
+        _open_req(budget={"max_iterations": 9, "max_configs": 1}),
+        FakePipeline([{"sharpe": 0.1, "total_return": 0.0, "num_trades": 5}],
+                     by_cfg=by_cfg),
+    )
+    log = ss.read_activity_log(sid)
+    summary = [e for e in log if e["type"] == "auto-run"
+               and e["content"].startswith("Robust-best:")]
+    assert summary == []
+
+
+async def test_no_terminal_summary_on_pinned_run(store):
+    """The pinned path NEVER emits the open-universe terminal summary."""
+    pipe = FakePipeline([{"total_return": 0.3, "wfe": 0.7}])
+    sid = "sess-pinned-no-summary"
+    await _run(sid, _req(budget={"max_iterations": 3}), pipe)
+    log = ss.read_activity_log(sid)
+    summary = [e for e in log if e["type"] == "auto-run"
+               and e["content"].startswith("Robust-best:")]
+    assert summary == []
