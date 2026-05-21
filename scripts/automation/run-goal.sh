@@ -66,7 +66,6 @@ RESUME=false
 RESET=false
 AUTO_RELEASE=false
 ACK_REGRESSION=false
-FAST_MODE=false
 # Per-iter push is ON by default for new sessions. Pass --no-push-per-iter to
 # opt out. On resume, the persisted session.json value wins unless overridden
 # by an explicit CLI flag (--push-per-iter or --no-push-per-iter).
@@ -92,7 +91,6 @@ while [[ $# -gt 0 ]]; do
     --push-per-iter)           PUSH_PER_ITER=true;  PUSH_FLAG_USER="yes"; shift ;;
     --no-push-per-iter)        PUSH_PER_ITER=false; PUSH_FLAG_USER="no";  shift ;;
     --push-branch)             PUSH_BRANCH="$2"; shift 2 ;;
-    --fast)                    FAST_MODE=true; shift ;;
     *) echo "Unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -804,14 +802,7 @@ Do NOT write code or implement anything. STOP after writing the spec." || _decom
 
   # 3. Dispatch
   if [[ "$DEPTH" == "full" ]]; then
-    # Propagate --fast into the full-iteration path so the parallel post-dev
-    # fanout in run-phase.sh kicks in. Lean iterations have no parallelisable
-    # surface (dev → review → browser-qa → demo are strictly sequential), so
-    # --fast is a no-op there and we just log the fact for visibility.
     _full_extra_args=(--no-finalize)
-    if [[ "$FAST_MODE" == "true" ]]; then
-      _full_extra_args+=(--fast)
-    fi
     echo "[run-goal] Dispatching FULL pipeline via run-phase.sh ${_full_extra_args[*]} ..."
     if grep -q '\-\-no-finalize' "$SCRIPT_DIR/run-phase.sh"; then
       bash "$SCRIPT_DIR/run-phase.sh" "$ITER_NAME" "${_full_extra_args[@]}" || _exec_rc=$?
@@ -820,9 +811,6 @@ Do NOT write code or implement anything. STOP after writing the spec." || _decom
       bash "$SCRIPT_DIR/goal-iter-lean.sh" "$ITER_NAME" || _exec_rc=$?
     fi
   else
-    if [[ "$FAST_MODE" == "true" ]]; then
-      echo "[run-goal] --fast is a no-op for lean iterations (no parallelisable steps); Tier 1 polish + per-agent --effort overrides still apply."
-    fi
     echo "[run-goal] Dispatching LEAN pipeline via goal-iter-lean.sh ..."
     bash "$SCRIPT_DIR/goal-iter-lean.sh" "$ITER_NAME" || _exec_rc=$?
   fi
@@ -901,13 +889,17 @@ STOP." || _eval_rc=$?
 
   # Build the iteration summary MD (via summarizer agent), then render its HTML.
   # The MD is the source of truth — the renderer just visualizes it.
-  # Non-blocking; the session index is refreshed by every write_session_summary call.
+  # Non-blocking; the session index is also refreshed below so the
+  # feature-organized user-manual view stays current mid-session.
   _run_iteration_summarizer "$ITER_NAME"
   _render_iter_html "$ITER_NAME"
+  _render_session_index_html
   _iter_md="$REPO_ROOT/reports/phase-${ITER_NAME}-iteration-summary.md"
   _iter_html="$REPO_ROOT/reports/phase-${ITER_NAME}-summary.html"
-  [[ -f "$_iter_md" ]]   && echo "[run-goal] Iteration summary MD:   $_iter_md"
-  [[ -f "$_iter_html" ]] && echo "[run-goal] Iteration summary HTML: file://$_iter_html"
+  _session_index_html="$REPO_ROOT/reports/goal-session-${SESSION_ID}-index.html"
+  [[ -f "$_iter_md" ]]            && echo "[run-goal] Iteration summary MD:   $_iter_md"
+  [[ -f "$_iter_html" ]]          && echo "[run-goal] Iteration summary HTML: file://$_iter_html"
+  [[ -f "$_session_index_html" ]] && echo "[run-goal] Session index HTML:     file://$_session_index_html"
 
   # Update session.json
   python3 - <<PY
