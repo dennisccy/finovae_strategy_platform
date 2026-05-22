@@ -107,7 +107,7 @@ same session, iteration, backtest, and suggestion records the UI renders.
 ## Constraints
 
 - Backend: Python 3.11+, FastAPI, RestrictedPython, Anthropic/OpenAI SDKs.
-- Frontend: Node.js 16+, Vite 5, React 18, TypeScript, Tailwind, Recharts.
+- Frontend: Node.js 20.19+, Vite 7, React 18, TypeScript, Tailwind, Recharts.
 - Strategy compilation and AI insights require `OPENAI_API_KEY` (default model
   `gpt-5.4-mini`); `ANTHROPIC_API_KEY` is only needed if a Claude model is
   selected. The backend boots without keys but those endpoints will fail.
