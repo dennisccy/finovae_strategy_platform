@@ -128,6 +128,48 @@ same session, iteration, backtest, and suggestion records the UI renders.
   right = equity chart (Recharts) + metrics summary + trade list.
 - Reference: the existing `apps/frontend` UI.
 
+## Product Shape
+<!--
+Seeds the goal-mode coherence blueprint (information architecture + data contract). The
+goal-decomposer drafts runs/goal-session-<sid>/state/blueprint.md from this at baseline and the
+coherence-auditor enforces it each iteration, so the same metric never differs across views.
+-->
+
+### Navigation / information architecture
+- Single-page analytical workstation — one persistent two-panel shell, no multi-route nav
+  (on mobile the panels collapse to an "Activity" / "Iterations" tab toggle).
+- Header: brand + Session picker (switch between live sessions, manage the archive).
+- Left — **Activity Log**: natural-language strategy prompt; backtest config bar (symbol, timeframe,
+  date range, initial capital, leverage, `allow_short`); model selector; AI-generated insights &
+  suggestions; cached strategy directions; automated-session (auto-run) controls.
+- Right — **Iterations**: parent→child iteration history tree; per-iteration summary cards
+  (strategy name, status, total-return badge).
+  - **Iteration Detail** (opens from a card): backtest params; strategy script with diff vs parent;
+    equity curve (Recharts); Walk-Forward analysis (IS/OOS windows, WFE); 5-category rating panel;
+    trades table.
+- Headless / API surface (Layer 1–2 journeys): adds no new screens — an automated session streams
+  the same activity log and produces the same iteration/backtest/suggestion records the UI renders
+  (backend is the single source of truth).
+
+### Canonical values (single source of truth)
+Each value below is computed in exactly one place and read everywhere from that source — a number
+(e.g. Sharpe) must read identically on a summary card, the detail metrics grid, and the rating panel.
+- **Backtest performance metrics** — computed once by `MetricsCalculator.calculate()`
+  (`apps/backend/backtest/metrics.py`), carried on the frozen `BacktestResult` contract
+  (`apps/backend/shared/contracts.py`), served by `POST /api/run-backtest` and
+  `GET /api/sessions/{id}/iterations/{id}`: `total_return`, `max_drawdown`, `sharpe_ratio`,
+  `sortino`, `calmar`, `profit_factor`, `win_rate`, `num_trades`, `equity_curve`,
+  `unleveraged_return`, `margin_called`.
+- **Walk-forward efficiency** — computed once into `WalkForwardResult`: `wfe`, `combined_oos_return`,
+  `combined_oos_sharpe`, `combined_oos_win_rate`, `combined_oos_max_drawdown`.
+- **5-category rating** — `StrategyRating` (`profitability`, `risk_resistance`, `risk_reward`,
+  `win_rate_ev`, `liquidity`), derived from the same `BacktestResult` — never recomputed independently.
+- **Shared records** — the file store (`session_store.py`) is the one source, surfaced read-only in
+  the UI: session record, iteration record (`IterationNode`), backtest record (`BacktestResult`),
+  suggestion record (insights/suggestions).
+- **Budget counters** (headless/optimizer) — one authoritative counter per automated session for
+  token spend, USD cost, and wall-clock; UI and API read the same values, never separate tallies.
+
 ## Must-have user journeys
 
 - **J-01: Run a backtest from natural language**
