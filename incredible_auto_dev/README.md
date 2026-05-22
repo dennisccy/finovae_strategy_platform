@@ -66,7 +66,7 @@ See [`.claude/architecture/adoption-guide.md`](.claude/architecture/adoption-gui
 
 Goal mode skips per-phase authoring. You write a single `docs/goal.md` with extra sections for must-have user journeys and anti-goals, then run a continuous loop until an AI evaluator declares the goal achieved.
 
-**1. Author `docs/goal.md` from `templates/project-goal.md`**, including the **Must-have user journeys** and **Anti-goals** sections (required for goal mode; phase mode ignores them).
+**1. Author `docs/goal.md` from `templates/project-goal.md`**, including the **Must-have user journeys** and **Anti-goals** sections (required for goal mode; phase mode ignores them). Optionally fill the **Product Shape** section (a navigation sketch + the list of *canonical values*) — it seeds the coherence blueprint and is the best defense against the same number showing different values on different pages.
 
 **2. Configure `.claude/project-template.md`** the same way you would for phase mode.
 
@@ -76,9 +76,11 @@ Goal mode skips per-phase authoring. You write a single `docs/goal.md` with extr
 ./scripts/automation/run-goal.sh --session-id my-app
 ```
 
-Optional flags: `--max-iter N` (cap, default 30), `--stall-window N` (default 3), `--auto-release` (opens PR from `goal/<sid>` branch on `GOAL_ACHIEVED`), `--push-per-iter` / `--no-push-per-iter` (per-iter commits land on a single per-session branch; default ON), `--push-branch <name>` (override the default `goal/<sid>` name), `--resume`, `--reset`, `--acknowledge-regression`.
+Optional flags: `--max-iter N` (cap, default 30), `--stall-window N` (default 3), `--auto-release` (opens PR from `goal/<sid>` branch on `GOAL_ACHIEVED`), `--push-per-iter` / `--no-push-per-iter` (per-iter commits land on a single per-session branch; default ON), `--push-branch <name>` (override the default `goal/<sid>` name), `--auto-approve-blueprint` (skip the one-time blueprint review), `--resume`, `--reset`, `--acknowledge-regression`.
 
-**4. Inspect** `runs/goal-session-my-app/summary.md` when the loop halts. Halt verdicts: `GOAL_ACHIEVED` (success), `BUDGET_EXHAUSTED`, `STALLED`, `REGRESSION_HALT`, `ABORTED`.
+After baseline, the loop **pauses once** (`AWAITING_BLUEPRINT_APPROVAL`) for you to review the drafted coherence blueprint at `runs/goal-session-my-app/state/blueprint.md` (~3 min: sane navigation? every shared value has one source?). Edit it if needed and `--resume` (resuming counts as approval), or pass `--auto-approve-blueprint` to skip the pause entirely. From then on the run is unattended again, and a `coherence-auditor` enforces the blueprint every iteration.
+
+**4. Inspect** `runs/goal-session-my-app/summary.md` when the loop halts. Halt verdicts: `GOAL_ACHIEVED` (success), `BUDGET_EXHAUSTED`, `STALLED`, `REGRESSION_HALT`, `ABORTED`, `AWAITING_BLUEPRINT_APPROVAL` (resumable pause for blueprint review).
 
 Quota exhaustion is NOT a halt — the loop pauses and auto-resumes when the quota resets.
 
@@ -161,32 +163,58 @@ The framework writes a layered view of every iteration so that **anyone — not 
 
 1. **Plain-language layer in the iteration summary.** The iteration-summary HTML (the page at `reports/phase-<phase>-summary.html`) now *leads* with a `## In plain words` block: *What you can do now / What changed this time / What's next*. No jargon, no file names, no journey IDs. The technical sections (Direction, What was done, Quick verify, Artifacts) are kept exactly as before — they just sit below, **collapsed by default**, for when a developer wants to drill down.
 
-2. **An auto-recorded narrated demo (Step 6.5).** Right after browser QA — in the same app-up window — a new `demo-narrator` agent walks the **whole working product so far** in a real browser, captures one captioned screenshot per step, and assembles them into a "Watch it work" gallery on the same page. Steps that were added or visibly changed this iteration are flagged `[NEW]`. Showcase, not QA — a failed step is a soft note in `demo-results.md`, never a hard pipeline fail.
+2. **An auto-recorded narrated demo (Step 6.5).** Right after browser QA — in the same app-up window — the framework walks the **whole working product so far** in a real browser, captures one captioned screenshot per step, and assembles them into a "Watch it work" gallery on the same page. Steps that were added or visibly changed this iteration are flagged `[NEW]`. Showcase, not QA — a failed step is a soft note in `demo-results.md`, never a hard pipeline fail.
 
 3. **A continuously-updated "Project story so far" + GOAL_ACHIEVED wrap** (goal mode only). The `iteration-summarizer` agent also maintains `runs/goal-session-<sid>/state/project-story.md` — one flowing plain-language narrative of how the product grew, rewritten each iteration so it reads end-to-end. The session index HTML (`reports/goal-session-<sid>-index.html`) leads with this story plus the latest demo gallery. When `goal-evaluator` finally returns `GOAL_ACHIEVED`, the framework emits a one-time polished `goal-session-<sid>-delivered.html` — a celebratory "what we delivered" page with the final walkthrough embedded, linked from a banner on the session index.
 
-### Commands a non-technical owner can run
+### Watch your app — how to run & what to expect
+
+Watch your built app run in a **real Chrome window** while plain-language
+explanations print in your terminal. You press **Enter** to step through it —
+like someone sitting next to you demoing the product.
 
 ```bash
-# Open the most recent walkthrough in your browser
-./scripts/automation/demo.sh --latest
+# Live walkthrough of the WHOLE product built so far (every working feature)
+./scripts/automation/demo.sh <session-id> --session-live
 
-# Open a specific iteration's gallery (auto-detects phase vs. session id)
-./scripts/automation/demo.sh phase-1
-./scripts/automation/demo.sh goal-money-iter-3
-./scripts/automation/demo.sh money-first                # session-level index
+# Live walkthrough of a single iteration
+./scripts/automation/demo.sh <iter-id> --live          # e.g. goal-money-iter-3 (or phase-1)
 
-# Open the GOAL_ACHIEVED "delivered" wrap for a session
-./scripts/automation/demo.sh money-first --delivered
-
-# Live walkthrough — the agent drives a visible Chrome step-by-step
-# while you watch and narrates each action to the terminal
-./scripts/automation/demo.sh phase-1 --live
-
-# Re-record the gallery on demand (boots the app if not running)
-./scripts/automation/demo-phase.sh phase-1              # record mode (default)
-./scripts/automation/demo-phase.sh phase-1 --live       # alias for `demo.sh phase-1 --live`
+# Just open the recorded picture gallery — no live window
+./scripts/automation/demo.sh <id>                      # phase OR session id
+./scripts/automation/demo.sh --latest                  # most recent gallery
+./scripts/automation/demo.sh <sid> --delivered         # the GOAL_ACHIEVED "delivered" wrap
 ```
+
+**What to expect (live):** A Chrome window opens. For each step the terminal
+prints a short, non-technical explanation and the matching on-screen element is
+highlighted; press **Enter in this terminal** (not the browser) to perform that
+step and watch it happen, then the terminal tells you what to notice. At the end
+the window stays open until you press Enter one last time. It never types on its
+own — you control the pace. A step looks like:
+
+```
+── Step 02/06 ─ Open the new-report form  [NEW]
+   We open the form to create a report.
+   ▶ Press Enter (in this terminal) to perform this step…
+   ↳ Notice: a blank form titled "New Report".
+```
+
+**Prerequisites & notes:**
+- Live mode opens a real browser window, so it needs a display. It works over SSH X11 forwarding (may lag a little — that's normal). On a fresh machine it prints the one `python3 -m pip install --user playwright` command if Playwright isn't set up yet.
+- The app is started automatically if it isn't already running.
+- The first live run prepares the walkthrough once (a few seconds); repeat runs reuse it and open instantly. Add `--reauthor` to rebuild it after big changes.
+
+**If you can't see a window** (headless / remote without X): open the recorded
+gallery instead (`./scripts/automation/demo.sh <id>`), or set
+`CHAIN_DEMO_LIVE_FALLBACK_RECORD=true` to auto-record instead of going live.
+
+**Optional touches:** `CHAIN_DEMO_VIDEO=true` also saves a video of the run;
+`CHAIN_DEMO_CAPTION=true` overlays the explanation on the page itself.
+
+**Troubleshooting:** a `⚠ couldn't find that element — skipping` line is expected
+and harmless — the demo just continues to the next step. *"Nothing to show yet"*
+means it's an early or backend-only iteration with no features to walk through.
 
 ### Outputs produced
 
@@ -250,9 +278,11 @@ docs/goal.md  (Must-have user journeys + Anti-goals)
  +-- run-goal.sh outer loop ---------------------------------------+
  |                                                                 |
  |   Halt checks (max-iter | stall | regression | quota = pause)   |
+ |   Blueprint approval pause (after baseline / structural change) |
  |       |                                                         |
  |       v                                                         |
  |   goal-decomposer  --> docs/phases/goal-<sid>-iter-<N>.md       |
+ |       (baseline also drafts state/blueprint.md)                 |
  |       |                                                         |
  |       v                                                         |
  |   depth: lean ?  ----- yes ---->  goal-iter-lean.sh             |
@@ -264,7 +294,11 @@ docs/goal.md  (Must-have user journeys + Anti-goals)
  |   (existing 11-step pipeline; release deferred to session end)  |
  |       |                                                         |
  |       v                                                         |
+ |   coherence-auditor --> iter-<N>/coherence.md (vs blueprint)    |
+ |       |                                                         |
+ |       v                                                         |
  |   goal-evaluator  --> verdict + journey-history.json + log      |
+ |       (COHERENCE-FAIL vetoes GOAL_ACHIEVED -> consolidation)    |
  |       |                                                         |
  |   loop unless GOAL_ACHIEVED, BUDGET_EXHAUSTED, STALLED, or      |
  |   REGRESSION_HALT                                               |
@@ -291,9 +325,10 @@ Iteration name `goal-<sid>-iter-<N>` is used as the "phase name" so existing scr
 | `ux-regression-reviewer` | standard | 8 | Checks UI evolved with capabilities, flags regressions |
 | `phase-closure-auditor` | standard | 10 | Final gate: validates all artifacts exist and are non-vague |
 | `iteration-summarizer` | light | 10.5 | Synthesizes the per-iteration summary MD (what was done / left / direction) that drives the HTML report; also maintains the cumulative `project-story.md` and writes the one-time `delivered.md` wrap on `GOAL_ACHIEVED` |
-| `demo-narrator` | standard | 6.5 | Drives the running app via Chrome MCP and captures a narrated, captioned "Watch it work" gallery (record mode) or walks a visible Chrome live (live mode). Showcase, not gate. |
-| `goal-decomposer` | strong | (goal mode) | Reads goal + state, writes next iteration spec, picks lean/full depth |
-| `goal-evaluator` | strong | (goal mode) | Skeptical done/regression/stall judgment, updates journey-history |
+| `demo-narrator` | standard | 6.5 | Authors a machine-executable demo-script (steps + narration) from the iteration's verified flows; the deterministic Playwright runner (`lib/demo_runner.py`) executes it to produce the recorded "Watch it work" gallery and the live walkthrough. Showcase, not gate. |
+| `goal-decomposer` | strong | (goal mode) | Reads goal + state, writes next iteration spec, picks lean/full depth; drafts the blueprint at baseline |
+| `goal-evaluator` | strong | (goal mode) | Skeptical done/regression/stall judgment, updates journey-history; vetoes GOAL_ACHIEVED on COHERENCE-FAIL |
+| `coherence-auditor` | standard | (goal mode) | Audits each iteration's diff against the blueprint (information architecture + data contract); hard-fails only on objective drift |
 
 Model tiers are defined in `config/agent-models.yaml`. Change assignments there and run `./scripts/automation/sync-agent-models.sh`.
 
@@ -322,7 +357,8 @@ Model tiers are defined in `config/agent-models.yaml`. Change assignments there 
 # Demo viewer (non-technical owner UX)
 ./scripts/automation/demo.sh --latest                  # open most recent walkthrough
 ./scripts/automation/demo.sh <id>                      # open recorded gallery (phase OR session id)
-./scripts/automation/demo.sh <id> --live               # live walkthrough — agent drives a visible Chrome
+./scripts/automation/demo.sh <id> --live               # live walkthrough of one iteration (press Enter to advance)
+./scripts/automation/demo.sh <sid> --session-live      # live walkthrough of the WHOLE product across iterations
 ./scripts/automation/demo.sh <sid> --delivered         # open the GOAL_ACHIEVED "delivered" wrap
 
 # Utilities
@@ -344,6 +380,7 @@ bash scripts/automation/render-summary.sh --session-index <sid>        # re-rend
 ./scripts/automation/run-goal.sh --session-id my-app --stall-window 5   # widen stall window
 ./scripts/automation/run-goal.sh --session-id my-app --auto-release     # release-manager runs once on GOAL_ACHIEVED
 ./scripts/automation/run-goal.sh --session-id my-app --acknowledge-regression  # continue past REGRESSION_HALT
+./scripts/automation/run-goal.sh --session-id my-app --auto-approve-blueprint  # skip the one-time blueprint review pause
 ./scripts/automation/goal-iter-lean.sh <iter-name>                      # single lean iteration (advanced)
 ```
 
