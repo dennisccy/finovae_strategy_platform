@@ -467,7 +467,6 @@ export function useBacktest(sessionId: string) {
         setWorkerCount(n)
       })
       .catch(() => { /* default 1 */ })
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // Liquidity cache: computed once per symbol/timeframe/period, reused across iterations
@@ -591,7 +590,6 @@ export function useBacktest(sessionId: string) {
       if (!cancelled) setIsHydrated(true)
     })
     return () => { cancelled = true }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId])
 
   // ==========================================================================
@@ -1081,6 +1079,7 @@ export function useBacktest(sessionId: string) {
       addLogEntry({ type: 'error', content: `[${timeframe}] Fetch error: ${errMsg}`, iterationId })
       return null
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [backtestParams, addLogEntry, updateLogEntry, applyRealTimings])
 
   // ==========================================================================
@@ -1437,6 +1436,7 @@ export function useBacktest(sessionId: string) {
       setIsLoading(false)
       return null
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [backtestParams, addLogEntry, updateLogEntry, executeSingleTimeframe])
 
   // ==========================================================================
@@ -1887,6 +1887,7 @@ export function useBacktest(sessionId: string) {
       iterationHistoryRef.current = markError(iterationHistoryRef.current)
       return null
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId])
 
   // ==========================================================================
@@ -2040,6 +2041,7 @@ export function useBacktest(sessionId: string) {
       setPhase('idle')
       setIsLoading(false)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [iterationHistory, backtestParams, addLogEntry, executeSingleTimeframe, generateInsightsForIteration, validateSymbolExists])
 
   const startAutoRun = useCallback(async (maxAttempts: number, model: string, fromIterationId: string) => {

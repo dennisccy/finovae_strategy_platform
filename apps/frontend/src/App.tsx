@@ -109,7 +109,7 @@ function App() {
 
   // Load tabs + archive from backend on mount (with migration)
   useEffect(() => {
-    ; (async () => {
+    (async () => {
       await runMigration()
 
       const [tabs, archive] = await Promise.all([fetchSessionTabs(), fetchArchive()])

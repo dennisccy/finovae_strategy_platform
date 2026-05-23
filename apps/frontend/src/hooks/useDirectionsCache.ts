@@ -133,6 +133,7 @@ export function useDirectionsCache(backtestParams: BacktestParams) {
     setRunAllProgress(null)
     stopRef.current = false
     abortControllerRef.current = null
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isRunningAll, cacheResult, concurrency, backtestParams, checkCache])
 
   const stopRunAll = useCallback(() => {
