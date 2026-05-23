@@ -1,0 +1,110 @@
+{
+ "autoRun": {
+  "status": "budget-exhausted",
+  "stopReason": "budget-exhausted",
+  "stopRequested": false,
+  "bestIterationId": null,
+  "budget": {
+   "iterationsDone": 0,
+   "maxIterations": 2,
+   "configsDone": 3,
+   "maxConfigs": 3,
+   "wallClockSec": 141.978,
+   "maxWallClockSec": null,
+   "tokens": 9913,
+   "maxTokens": 2000000,
+   "usd": 0.006119,
+   "maxUsd": 5.0
+  },
+  "startedAt": "2026-05-23T22:50:36.347592+00:00",
+  "endedAt": "2026-05-23T22:52:58.327399+00:00"
+ },
+ "activityLog": [
+  {
+   "id": "7e61d07d",
+   "type": "user-prompt",
+   "timestamp": "2026-05-23T22:50:36.349120+00:00",
+   "content": "Go long when the 10-period EMA crosses above the 30-period EMA; exit when it crosses back below.",
+   "status": "done"
+  },
+  {
+   "id": "778cec60",
+   "type": "auto-run",
+   "timestamp": "2026-05-23T22:50:36.349501+00:00",
+   "content": "SCREEN \u2014 screening 3 seed config(s) on gpt-5.4-mini, no walk-forward.",
+   "status": "done"
+  },
+  {
+   "id": "85057d23",
+   "type": "auto-run",
+   "timestamp": "2026-05-23T22:51:09.609836+00:00",
+   "content": "SCREEN \u2014 BTC/USDT 1h: score -0.0898",
+   "status": "done",
+   "iterationId": "14dd0b6e"
+  },
+  {
+   "id": "fa18774f",
+   "type": "auto-run",
+   "timestamp": "2026-05-23T22:52:10.132457+00:00",
+   "content": "SCREEN \u2014 ETH/USDT 1h: score +0.0972",
+   "status": "done",
+   "iterationId": "5b52da19"
+  },
+  {
+   "id": "7e590ba2",
+   "type": "auto-run",
+   "timestamp": "2026-05-23T22:52:29.719806+00:00",
+   "content": "SCREEN \u2014 BTC/USDT 4h: score +0.0660",
+   "status": "done",
+   "iterationId": "652d3400"
+  },
+  {
+   "id": "06552f8a",
+   "type": "auto-run",
+   "timestamp": "2026-05-23T22:52:29.721176+00:00",
+   "content": "PROMOTE \u2014 escalating top-1 of 3 to claude-haiku-4-5 + walk-forward.",
+   "status": "done"
+  },
+  {
+   "id": "fcb1b454",
+   "type": "complete",
+   "timestamp": "2026-05-23T22:52:58.327432+00:00",
+   "content": "Automated session finished: budget-exhausted",
+   "status": "done"
+  }
+ ],
+ "iterationHistory": [
+  {
+   "id": "14dd0b6e",
+   "parentId": null,
+   "symbol": null,
+   "timeframe": null,
+   "modelUsed": "gpt-5.4-mini",
+   "walkForwardStatus": null
+  },
+  {
+   "id": "5b52da19",
+   "parentId": null,
+   "symbol": null,
+   "timeframe": null,
+   "modelUsed": "gpt-5.4-mini",
+   "walkForwardStatus": null
+  },
+  {
+   "id": "652d3400",
+   "parentId": null,
+   "symbol": null,
+   "timeframe": null,
+   "modelUsed": "gpt-5.4-mini",
+   "walkForwardStatus": null
+  },
+  {
+   "id": "4de659e2",
+   "parentId": "5b52da19",
+   "symbol": null,
+   "timeframe": null,
+   "modelUsed": "claude-haiku-4-5",
+   "walkForwardStatus": "complete"
+  }
+ ]
+}

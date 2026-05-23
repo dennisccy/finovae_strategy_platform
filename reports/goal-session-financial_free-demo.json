@@ -1,0 +1,79 @@
+{
+  "schema_version": 1,
+  "phase_id": "financial_free",
+  "base_url": "http://localhost:3691",
+  "default_timeout_ms": 10000,
+  "steps": [
+    {
+      "n": 1,
+      "title": "Open the strategy workstation",
+      "narration": "This is the Finovae strategy workstation. On the left you describe and configure a trading strategy; on the right you watch the results.",
+      "point_out": "The Symbol, Timeframe, date-range, starting-capital and AI-model controls are already filled in from the platform's live market catalog rather than hard-coded.",
+      "journey": "J-05",
+      "new": false,
+      "verified": true,
+      "section": "highlights",
+      "action": { "type": "goto", "url": "/" },
+      "expect": { "text": "New Session" }
+    },
+    {
+      "n": 2,
+      "title": "Describe a strategy in plain English",
+      "narration": "You never write code. Type a strategy idea in everyday language and press Send; the platform turns it into a runnable strategy and backtests it for you.",
+      "point_out": "The strategy box accepts plain English like 'buy when RSI drops below 30'. Each finished run shows the metrics, an equity curve and the full trade list, plus a walk-forward validation and AI suggestions for improving it. Re-running the same idea is near-instant thanks to a warm data cache.",
+      "journey": "J-01",
+      "new": false,
+      "verified": true,
+      "section": "highlights",
+      "action": { "type": "fill", "target": { "placeholder": "Describe a trading strategy..." }, "text": "Buy when RSI drops below 30 and sell when RSI rises above 70." }
+    },
+    {
+      "n": 3,
+      "title": "Let the platform search on its own",
+      "narration": "Instead of one idea, you can give the platform just an objective and a budget and let it explore many strategy configurations automatically. Here is one of those automated searches.",
+      "point_out": "From a single 'find me something robust' instruction, the run tried several different symbol-and-timeframe configurations on its own, each one landing in the results tree as its own card.",
+      "journey": "J-12",
+      "new": false,
+      "verified": false,
+      "section": "highlights",
+      "action": { "type": "goto", "url": "/?session=bbc379bd-471d-4b2e-8969-afdd98d9bd7a" },
+      "expect": { "text": "Budget exhausted" }
+    },
+    {
+      "n": 4,
+      "title": "It picks the best — inside a hard budget",
+      "narration": "When a search finishes, the platform marks the single best strategy for you, chosen for robustness rather than raw return, and it stops itself the moment it reaches the spending limit you set.",
+      "point_out": "The status strip carries a violet 'Best' badge for the winning run next to live counters for AI tokens and dollars spent versus their caps, ending in a 'Budget exhausted' state once the cap is hit.",
+      "journey": "J-09",
+      "new": false,
+      "verified": false,
+      "section": "highlights",
+      "action": { "type": "goto", "url": "/?session=910f9e3f-17e7-4e7d-a8c8-4f89a57ae1a9" },
+      "expect": { "text": "Best:" }
+    },
+    {
+      "n": 5,
+      "title": "Everything runs on the server",
+      "narration": "These searches run on the server, not in your browser. Reopen the same session and the full state — progress, the budget counters and the chosen best — comes right back.",
+      "point_out": "After reopening, the status strip and the 'Best' badge are exactly as before; reloading or closing the tab never loses a run, and a search in progress can also be stopped on demand.",
+      "journey": "J-10",
+      "new": false,
+      "verified": false,
+      "section": "highlights",
+      "action": { "type": "goto", "url": "/?session=910f9e3f-17e7-4e7d-a8c8-4f89a57ae1a9" },
+      "expect": { "text": "Best:" }
+    },
+    {
+      "n": 6,
+      "title": "Browse every past run",
+      "narration": "Every strategy you try and every automated search is saved as its own session, so you can return and review any result whenever you like.",
+      "point_out": "The session picker lists your prior runs to reopen, and '+ New Session' starts a fresh exploration.",
+      "journey": "J-02",
+      "new": false,
+      "verified": true,
+      "section": "highlights",
+      "action": { "type": "goto", "url": "/" },
+      "expect": { "text": "New Session" }
+    }
+  ]
+}

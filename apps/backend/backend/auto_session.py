@@ -50,7 +50,7 @@ from backend.result_serialization import (
     result_to_dict,
     walk_forward_to_dict,
 )
-from shared.model_catalog import DEFAULT_MODEL, TokenUsage, cost_usd
+from shared.model_catalog import DEFAULT_MODEL, TokenUsage, cheapest_model, cost_usd
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +85,14 @@ SEED_STRATEGY_IDEAS: tuple[str, ...] = (
 # Hard ceiling on how many distinct configs the search may EVER enumerate,
 # regardless of budget — a structural guard against exchange-wide fan-out.
 SEED_UNIVERSE_MAX: int = len(SEED_SYMBOLS) * len(SEED_TIMEFRAMES)
+
+# ---- Staged SCREEN→PROMOTE cost-tiering (J-14) ------------------------------
+# How many top-scoring SCREEN survivors are escalated (PROMOTEd) to full
+# evaluation (walk-forward + the stronger model). Kept deliberately small: cheap
+# SCREEN triages breadth, PROMOTE spends the expensive budget on the few best.
+# Whenever ≥2 configs are screened, the effective k = min(DEFAULT_PROMOTE_K,
+# n_screened) MUST stay < n_screened (the cost-tiering invariant).
+DEFAULT_PROMOTE_K: int = 1
 
 # ---- Run lifecycle states (served on autoRun.status) -----------------------
 STATUS_QUEUED = "queued"
@@ -167,6 +175,24 @@ class BudgetTracker:
             return True
         if self.max_configs is not None and self.configs_done >= self.max_configs:
             return True
+        if self.max_wall_clock_sec is not None and self.wall_clock_sec >= self.max_wall_clock_sec:
+            return True
+        if self.max_tokens is not None and self.tokens >= self.max_tokens:
+            return True
+        if self.max_usd is not None and self.usd >= self.max_usd:
+            return True
+        return False
+
+    def cost_exceeded(self) -> bool:
+        """True when a COST cap (tokens / USD / wall-clock) is reached — the
+        subset of :meth:`exceeded` that bounds a PROMOTE refinement unit (J-14).
+
+        Deliberately does NOT check ``max_configs`` / ``max_iterations``: the
+        open-universe SCREEN stage fills ``configs_done`` up to ``max_configs``
+        (its breadth cap), so reusing the full :meth:`exceeded` would wrongly skip
+        every PROMOTE. Promotion is a bounded escalation of already-counted
+        configs, gated only on real spend (the hard token/USD/wall-clock caps).
+        ``exceeded`` itself is left unchanged (the J-13 tests depend on it)."""
         if self.max_wall_clock_sec is not None and self.wall_clock_sec >= self.max_wall_clock_sec:
             return True
         if self.max_tokens is not None and self.tokens >= self.max_tokens:
@@ -807,33 +833,47 @@ class AutoSessionController:
     # ---- open-universe loop (J-12) ------------------------------------------
 
     async def _run_open_universe(self) -> None:
-        """Explore a budget-bounded subset of the bounded seed universe, scoring
-        each distinct config (differing symbol and/or timeframe) by the robust
-        WFE-gated objective and marking the single cross-config best.
+        """Staged SCREEN→PROMOTE cost-tiering over the bounded seed universe (J-14).
 
-        Orchestration ONLY — it computes no new metric: each config is evaluated
+        Stage 1 — **SCREEN** (cheap): evaluate the budget-bounded seed configs on
+        the *cheapest* catalog model (:func:`cheapest_model`) with **no
+        walk-forward**.  Stage 2 — **PROMOTE** (expensive): re-evaluate only the
+        top-``k`` SCREEN survivors (``k = min(DEFAULT_PROMOTE_K, n_screened)``,
+        and ``k < n_screened`` whenever ≥2 were screened) on the *stronger*
+        request model **with** walk-forward.  The cross-config best is marked from
+        the **PROMOTED** candidates only (they alone carry real WFE) — screened-
+        only nodes are NEVER eligible, preserving the WFE-gated-best anti-goal.
+
+        Orchestration ONLY — it computes no new metric: every unit is evaluated
         through the SAME ``BacktestPipeline`` + ``RobustScorer`` and persisted via
         the SAME ``session_store.write_iteration`` (no parallel store, no schema
-        fork), so distinct configs surface through the existing iteration cards.
-        Every hard cap (configs / tokens / USD / wall-clock) is checked *before*
-        starting each config — never "one more" past a cap.  B1+B2 are preserved:
-        the ``autoRun`` read-modify-write stays under the shared per-session lock
-        (`_save_auto_run` / `_stop_requested`) and store I/O stays off-loop;
-        backtests stay semaphore-guarded inside ``_create_iteration``.
+        fork), so distinct configs surface through the existing iteration cards
+        and the screen→promote lineage shows in the tree (promoted node's
+        ``parentId`` is its screened candidate).  Budget: ``max_configs`` is the
+        SCREEN-breadth cap (the full :meth:`BudgetTracker.exceeded` gates each
+        SCREEN unit); PROMOTE is a bounded refinement gated on the cost caps only
+        (:meth:`BudgetTracker.cost_exceeded`) so it is not skipped once SCREEN has
+        filled ``configs_done``.  B1+B2 preserved: the ``autoRun`` read-modify-
+        write stays under the shared per-session lock and store I/O stays
+        off-loop; backtests stay semaphore-guarded inside ``_create_iteration``.
         """
         base = self.config
+        screen_model = cheapest_model()      # SCREEN tier — single source of truth
+        promote_model = base.model           # PROMOTE tier — the request (full-eval) model
         self.status = STATUS_RUNNING
         await self._save_auto_run()
         if (base.natural_language or "").strip():
             self._append_activity("user-prompt", base.natural_language)
-        self._append_activity(
-            "auto-run",
-            f"Open-universe search: exploring a bounded seed universe "
-            f"(≤{self.budget.max_configs} configs).",
-        )
 
         seed_configs = seed_universe_configs(base, self.budget.max_configs)
-        candidates: list[IterationMetrics] = []
+
+        # ---- Stage 1: SCREEN (cheapest model, no walk-forward) ---------------
+        self._append_activity(
+            "auto-run",
+            f"SCREEN — screening {len(seed_configs)} seed config(s) on "
+            f"{screen_model}, no walk-forward.",
+        )
+        screened: list[tuple[dict, IterationMetrics, AutoSessionConfig]] = []
         for seed_cfg in seed_configs:
             self.budget = self.budget.with_wall_clock(self._clock() - self._start_monotonic)
             if self.budget.exceeded():
@@ -843,41 +883,98 @@ class AutoSessionController:
                 await self._finish(STATUS_STOPPED, "stopped")
                 return
 
-            self._append_activity(
-                "auto-run",
-                f"Exploring config {self.budget.configs_done + 1}: "
-                f"{seed_cfg.symbol} {seed_cfg.timeframe}",
-            )
+            screen_cfg = replace(seed_cfg, model=screen_model)
             created = await self._create_iteration(
-                seed_cfg,
-                prompt=seed_cfg.natural_language,
+                screen_cfg,
+                prompt=screen_cfg.natural_language,
                 previous_script_code=None,
                 parent_id=None,
-                wfv_enabled=True,   # robust score is WFE-gated → walk-forward each config
+                wfv_enabled=False,   # SCREEN is cheap: no walk-forward
             )
-            # A config counts as explored whether or not it produced a result —
-            # a failed attempt still consumed a unit of work (non-fatal; search
-            # continues).
+            # A config counts as SCREENED whether or not it produced a result — a
+            # failed attempt still consumed a unit of work (non-fatal; continue).
             self.budget = self.budget.with_config_completed()
 
             if created is not None:
+                node, wf = created   # wf is None — SCREEN runs no walk-forward
+                self._persist_new(node)
+                m = self._metrics_from(node, wf)
+                screened.append((node, m, screen_cfg))
+                self._append_activity(
+                    "auto-run",
+                    f"SCREEN — {screen_cfg.symbol} {screen_cfg.timeframe}: "
+                    f"score {self.scorer.score(m):+.4f}",
+                    iteration_id=node["id"],
+                )
+
+            self.budget = self.budget.with_wall_clock(self._clock() - self._start_monotonic)
+            await self._save_auto_run()
+
+        # A stop requested during the final SCREEN unit is honored before PROMOTE.
+        if await self._stop_requested():
+            await self._finish(STATUS_STOPPED, "stopped")
+            return
+        if not screened:
+            # Nothing survived SCREEN → clean terminal, no PROMOTE, no WFE-gated best.
+            await self._finish(STATUS_BUDGET_EXHAUSTED, "budget-exhausted")
+            return
+
+        # ---- Rank SCREEN survivors by the canonical score; take the top-k -----
+        n_screened = len(screened)
+        k = min(DEFAULT_PROMOTE_K, n_screened)
+        order = sorted(
+            range(n_screened),
+            key=lambda i: (-self.scorer.score(screened[i][1]), i),   # ties → seed order
+        )
+        survivors = [screened[i] for i in order[:k]]
+
+        # ---- Stage 2: PROMOTE (stronger model + walk-forward), best from these -
+        self._append_activity(
+            "auto-run",
+            f"PROMOTE — escalating top-{k} of {n_screened} to {promote_model} "
+            f"+ walk-forward.",
+        )
+        promoted: list[IterationMetrics] = []
+        for screen_node, _screen_m, screen_cfg in survivors:
+            self.budget = self.budget.with_wall_clock(self._clock() - self._start_monotonic)
+            # PROMOTE is gated on the COST caps only (SCREEN may already have filled
+            # configs_done to max_configs); a token/USD/wall-clock cap still halts it.
+            if self.budget.cost_exceeded():
+                await self._finish(STATUS_BUDGET_EXHAUSTED, "budget-exhausted")
+                return
+            if await self._stop_requested():
+                await self._finish(STATUS_STOPPED, "stopped")
+                return
+
+            promote_cfg = replace(screen_cfg, model=promote_model)
+            created = await self._create_iteration(
+                promote_cfg,
+                prompt=promote_cfg.natural_language,
+                previous_script_code=None,
+                parent_id=screen_node["id"],   # screen→promote lineage in the tree
+                wfv_enabled=True,              # PROMOTE runs walk-forward
+            )
+            if created is not None:
                 node, wf = created
                 self._persist_new(node)
-                candidates.append(self._metrics_from(node, wf))
-                best = self.scorer.select_best(candidates)
+                promoted.append(self._metrics_from(node, wf))
+                # Best is selected from PROMOTED candidates ONLY (WFE-gated).
+                best = self.scorer.select_best(promoted)
                 if best is not None and best.iteration_id != self.best_id:
                     self.best_id = best.iteration_id
                     self.best_metrics = best
                     self._append_activity(
                         "auto-run",
-                        f"New cross-config best (score {self.scorer.score(best):+.4f}).",
+                        f"PROMOTE — {promote_cfg.symbol} {promote_cfg.timeframe} "
+                        f"is the new best (WFE-gated, score "
+                        f"{self.scorer.score(best):+.4f}).",
                         iteration_id=best.iteration_id,
                     )
 
             self.budget = self.budget.with_wall_clock(self._clock() - self._start_monotonic)
             await self._save_auto_run()
 
-        # Budget-bounded seed universe fully explored → terminal within budget.
+        # Both stages complete within budget → terminal.
         if await self._stop_requested():
             await self._finish(STATUS_STOPPED, "stopped")
             return

@@ -10,6 +10,7 @@ from shared.model_catalog import (
     DEFAULT_MODEL,
     MODEL_RATES,
     TokenUsage,
+    cheapest_model,
     cost_usd,
 )
 
@@ -44,3 +45,26 @@ def test_every_catalog_model_has_a_rate():
 def test_token_usage_total():
     u = TokenUsage(input_tokens=600, output_tokens=400, model="gpt-5.4-mini")
     assert u.total_tokens == 1000
+
+
+# =============================================================================
+# cheapest_model — single source of truth for the SCREEN-stage model tier (J-14)
+# =============================================================================
+
+def test_cheapest_model_is_min_rate_catalog_model():
+    # The SCREEN stage of the open-universe search routes through this, so it
+    # MUST be the lowest blended (input+output) rate in the table — gpt-5.4-mini.
+    assert cheapest_model() == "gpt-5.4-mini"
+
+
+def test_cheapest_model_has_lowest_blended_rate_of_all():
+    cheapest = cheapest_model()
+    blended = {mid: r.input_usd_per_1m + r.output_usd_per_1m for mid, r in MODEL_RATES.items()}
+    assert blended[cheapest] == min(blended.values())
+    # It is strictly cheaper than every other catalog model (no tie at the floor here).
+    assert all(blended[cheapest] < v for mid, v in blended.items() if mid != cheapest)
+
+
+def test_cheapest_model_is_a_real_catalog_entry():
+    from shared.model_catalog import MODELS
+    assert cheapest_model() in {m.id for m in MODELS}

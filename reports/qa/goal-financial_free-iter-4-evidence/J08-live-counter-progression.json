@@ -1,0 +1,86 @@
+[
+ {
+  "poll": 1,
+  "status": "running",
+  "configsDone": 0,
+  "tokens": 0,
+  "usd": 0.0
+ },
+ {
+  "poll": 2,
+  "status": "running",
+  "configsDone": 1,
+  "tokens": 2389,
+  "usd": 0.00053
+ },
+ {
+  "poll": 3,
+  "status": "running",
+  "configsDone": 1,
+  "tokens": 2389,
+  "usd": 0.00053
+ },
+ {
+  "poll": 4,
+  "status": "running",
+  "configsDone": 1,
+  "tokens": 2389,
+  "usd": 0.00053
+ },
+ {
+  "poll": 5,
+  "status": "running",
+  "configsDone": 1,
+  "tokens": 2389,
+  "usd": 0.00053
+ },
+ {
+  "poll": 6,
+  "status": "running",
+  "configsDone": 1,
+  "tokens": 2389,
+  "usd": 0.00053
+ },
+ {
+  "poll": 7,
+  "status": "running",
+  "configsDone": 1,
+  "tokens": 2389,
+  "usd": 0.00053
+ },
+ {
+  "poll": 8,
+  "status": "running",
+  "configsDone": 2,
+  "tokens": 4750,
+  "usd": 0.00104
+ },
+ {
+  "poll": 9,
+  "status": "running",
+  "configsDone": 2,
+  "tokens": 4750,
+  "usd": 0.00104
+ },
+ {
+  "poll": 10,
+  "status": "running",
+  "configsDone": 3,
+  "tokens": 7130,
+  "usd": 0.00156
+ },
+ {
+  "poll": 11,
+  "status": "running",
+  "configsDone": 3,
+  "tokens": 7130,
+  "usd": 0.00156
+ },
+ {
+  "poll": 12,
+  "status": "budget-exhausted",
+  "configsDone": 3,
+  "tokens": 9913,
+  "usd": 0.00612
+ }
+]

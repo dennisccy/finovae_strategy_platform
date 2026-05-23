@@ -121,3 +121,19 @@ def cost_usd(model: str, input_tokens: int, output_tokens: int) -> float:
     rate = MODEL_RATES.get(model, MODEL_RATES[DEFAULT_MODEL])
     return (input_tokens * rate.input_usd_per_1m
             + output_tokens * rate.output_usd_per_1m) / 1_000_000.0
+
+
+def cheapest_model() -> str:
+    """Return the catalog model id with the lowest blended (input+output) token
+    rate — the single source of truth for the "cheap" model tier.
+
+    The headless open-universe SCREEN stage (J-14) routes through this so the
+    cheap-first cost-tiering reads the rate table, never a hard-coded id. Today
+    this resolves to ``gpt-5.4-mini``. Deterministic: ties are broken by model id."""
+    return min(
+        MODEL_RATES,
+        key=lambda mid: (
+            MODEL_RATES[mid].input_usd_per_1m + MODEL_RATES[mid].output_usd_per_1m,
+            mid,
+        ),
+    )

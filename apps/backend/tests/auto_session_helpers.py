@@ -183,7 +183,8 @@ class FakePipeline:
                                 previous_script_code=None, **kwargs):
         if self.gate is not None:
             await self.gate.wait()
-        self.generate_calls.append({"nl": natural_language, "prev": previous_script_code})
+        self.generate_calls.append({"nl": natural_language, "prev": previous_script_code,
+                                    "model": model})
         sid = f"scr-{len(self.generate_calls)}"
         code = self.fixed_code if self.fixed_code is not None else (
             f"# strategy {sid}\nclass Strategy:\n    pass\n")

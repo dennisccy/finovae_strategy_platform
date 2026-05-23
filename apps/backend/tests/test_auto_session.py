@@ -20,6 +20,7 @@ import pytest
 import backend.auto_session as auto_session_mod
 import backend.session_store as ss
 from backend.auto_session import (
+    DEFAULT_PROMOTE_K,
     AutoSessionController,
     BudgetTracker,
     IterationMetrics,
@@ -516,6 +517,45 @@ def test_with_usage_is_immutable_and_maps_tokens_to_usd():
 
 
 # =============================================================================
+# iter-4 — BudgetTracker.cost_exceeded(): the cost-only subset that gates PROMOTE
+# (J-14). PROMOTE is a bounded refinement of already-counted configs, so it must
+# NOT be gated on configs/iterations (those are filled to the cap by SCREEN) —
+# only on real spend (tokens / USD / wall-clock).
+# =============================================================================
+
+def test_cost_exceeded_ignores_configs_and_iterations_caps():
+    # configs_done at the max_configs cap → exceeded() True, but cost_exceeded()
+    # False (no cost cap hit). This is exactly why PROMOTE needs its own gate.
+    b = BudgetTracker(max_iterations=2, iterations_done=2, max_configs=3, configs_done=3)
+    assert b.exceeded() is True
+    assert b.cost_exceeded() is False
+
+
+def test_cost_exceeded_on_tokens():
+    b = BudgetTracker(max_iterations=99, max_configs=99, max_tokens=1000)
+    assert b.with_usage(tokens=999).cost_exceeded() is False
+    assert b.with_usage(tokens=1000).cost_exceeded() is True
+
+
+def test_cost_exceeded_on_usd():
+    b = BudgetTracker(max_iterations=99, max_configs=99, max_usd=0.05)
+    assert b.with_usage(usd=0.049).cost_exceeded() is False
+    assert b.with_usage(usd=0.05).cost_exceeded() is True
+
+
+def test_cost_exceeded_on_wall_clock():
+    b = BudgetTracker(max_iterations=99, max_configs=99, max_wall_clock_sec=10.0)
+    assert b.with_wall_clock(9.9).cost_exceeded() is False
+    assert b.with_wall_clock(10.0).cost_exceeded() is True
+
+
+def test_cost_exceeded_false_when_no_cost_caps_set():
+    # configs cap present but no token/usd/wall caps → cost_exceeded never trips.
+    b = BudgetTracker(max_iterations=99, max_configs=2, configs_done=99)
+    assert b.cost_exceeded() is False
+
+
+# =============================================================================
 # iter-3 — Open-universe controller (J-12) + token/USD threading (J-13)
 # =============================================================================
 
@@ -527,10 +567,15 @@ def _ou_config(**overrides):
 
 
 async def test_open_universe_explores_distinct_configs_and_marks_best(store):
+    """J-12 invariants preserved under the staged SCREEN→PROMOTE flow: ≥2 distinct
+    configs still surface as iteration nodes, terminal within budget, best by the
+    robust score. With max_configs=2 the SCREEN pass screens 2 distinct seed
+    configs and PROMOTE escalates the single top survivor (k=1<2) → 3 nodes."""
     cfg = _ou_config(natural_language="A pinned strategy idea long enough to pass")
     seq = [
-        FakeSpec(total_return=0.1, num_trades=10, wfe=0.6),  # config 1
-        FakeSpec(total_return=0.5, num_trades=10, wfe=0.6),  # config 2 (best)
+        FakeSpec(total_return=0.1, num_trades=10, wfe=0.6),  # SCREEN config 1 (BTC/USDT 1h)
+        FakeSpec(total_return=0.5, num_trades=10, wfe=0.6),  # SCREEN config 2 (ETH/USDT 1h) → top
+        FakeSpec(total_return=0.5, num_trades=10, wfe=0.6),  # PROMOTE of config 2 (walk-forward)
     ]
     fake = FakePipeline(sequence=seq)
     ctrl = AutoSessionController("ou-best", cfg, BudgetTracker(max_iterations=9, max_configs=2),
@@ -540,17 +585,28 @@ async def test_open_universe_explores_distinct_configs_and_marks_best(store):
 
     assert auto_run["status"] == "budget-exhausted"
     dirs = ss.list_iteration_dirs("ou-best")
-    assert len(dirs) == 2
+    assert len(dirs) == 3                               # 2 screened + 1 promoted (top-k)
     nodes = [ss.read_iteration_full("ou-best", d.name.split("_", 1)[1]) for d in dirs]
-    # ≥2 DISTINCT configs (differ in symbol and/or timeframe).
+    # ≥2 DISTINCT configs (differ in symbol and/or timeframe) — J-12 invariant.
     keys = {(n["params"]["symbol"], n["params"]["timeframe"]) for n in nodes}
-    assert len(keys) == 2
+    assert len(keys) >= 2
     # Pinned idea reused across configs; bounded seed symbols only (no fan-out).
     assert all("A pinned strategy idea" in n["prompt"] for n in nodes)
     assert all(n["params"]["symbol"] in {"BTC/USDT", "ETH/USDT"} for n in nodes)
-    # Best marked by the robust scorer across configs (the 0.5 config).
+    # k < N: exactly one WF-bearing (promoted) node, fewer than the screened count.
+    wf_bearing = [n for n in nodes if n["walkForwardStatus"] == "complete"]
+    screened_only = [n for n in nodes if n["walkForwardStatus"] is None]
+    assert len(wf_bearing) == 1
+    assert len(wf_bearing) < len(screened_only)
+    # Best marked by the robust scorer across configs (the 0.5 config) AND it is a
+    # PROMOTED, walk-forward-bearing node — never a screened-only one.
     best = ss.read_iteration_full("ou-best", auto_run["bestIterationId"])
     assert best["result"]["total_return"] == pytest.approx(0.5)
+    assert best["walkForwardStatus"] == "complete"
+    assert best["id"] == wf_bearing[0]["id"]
+    # The promoted node is a child of the screened candidate it was promoted from.
+    assert best["parentId"] is not None
+    assert best["parentId"] in {n["id"] for n in screened_only}
     # No secrets leaked into the activity log / autoRun block.
     blob = repr(ss.read_session_meta("ou-best")) + repr(ss.read_activity_log("ou-best"))
     for needle in ("api_key", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "sk-"):
@@ -558,36 +614,69 @@ async def test_open_universe_explores_distinct_configs_and_marks_best(store):
 
 
 async def test_open_universe_best_is_wfe_gated_not_highest_return(store):
+    """Best is WFE-gated and comes from the PROMOTED candidates ONLY — a
+    screened-only candidate (no walk-forward) is never marked best, even though
+    its raw return is highest.
+
+    SCREEN ranks by the drawdown-penalized robust score, so a high-return but
+    high-drawdown config screens LOW and is NOT promoted; the moderate-return /
+    low-drawdown config screens highest, is promoted (k=1<3), passes the WFE gate
+    on walk-forward, and becomes best. (Ported from the iter-3 uniform-loop test;
+    the anti-goal it protects — best ≠ highest raw return — is preserved.)"""
     cfg = _ou_config()
     seq = [
-        FakeSpec(total_return=0.9, num_trades=10, wfe=0.1),  # config 1: high return, WFE FAIL
-        FakeSpec(total_return=0.2, num_trades=10, wfe=0.6),  # config 2: lower, eligible
+        # SCREEN (call order follows seed order: BTC/USDT 1h, ETH/USDT 1h, BTC/USDT 4h).
+        # config 1: high raw return BUT high drawdown → screens LOW (not promoted).
+        FakeSpec(total_return=0.9, sharpe=1.0, num_trades=10, max_drawdown=0.85),
+        # config 2: moderate return, low drawdown → top screen score → promoted.
+        FakeSpec(total_return=0.5, sharpe=1.0, num_trades=10, max_drawdown=0.05),
+        FakeSpec(total_return=0.3, sharpe=1.0, num_trades=10, max_drawdown=0.05),
+        # PROMOTE of the single top survivor (walk-forward) → passes the WFE gate.
+        FakeSpec(total_return=0.5, sharpe=1.0, num_trades=10, max_drawdown=0.05, wfe=0.6),
     ]
     fake = FakePipeline(sequence=seq)
-    ctrl = AutoSessionController("ou-wfe", cfg, BudgetTracker(max_iterations=9, max_configs=2),
+    ctrl = AutoSessionController("ou-wfe", cfg, BudgetTracker(max_iterations=9, max_configs=3),
                                  fake, open_universe=True)
 
     auto_run = await ctrl.run()
 
+    nodes = [ss.read_iteration_full("ou-wfe", d.name.split("_", 1)[1])
+             for d in ss.list_iteration_dirs("ou-wfe")]
+    screened = [n for n in nodes if n["walkForwardStatus"] is None]
+    promoted = [n for n in nodes if n["walkForwardStatus"] == "complete"]
+    # 3 screened (no WF), exactly 1 promoted (WF) → k=1 < 3.
+    assert len(screened) == 3
+    assert len(promoted) == 1
+    # SCREEN ran NO walk-forward; only the PROMOTE ran it (anti-goal: cheap SCREEN).
+    assert [c["wfv_enabled"] for c in fake.execute_calls] == [False, False, False, True]
+    # Best is the promoted, WFE-passing node (return 0.5) — NOT the highest raw return (0.9).
     best = ss.read_iteration_full("ou-wfe", auto_run["bestIterationId"])
-    assert best["result"]["total_return"] == pytest.approx(0.2)   # eligible one, not 0.9
-    # Both configs persisted (browsable), each ran walk-forward (WFE gate needs it).
-    assert len(ss.list_iteration_dirs("ou-wfe")) == 2
-    assert [c["wfv_enabled"] for c in fake.execute_calls] == [True, True]
+    assert best["walkForwardStatus"] == "complete"
+    assert best["result"]["total_return"] == pytest.approx(0.5)
+    assert best["id"] == promoted[0]["id"]
+    # The 0.9 candidate is persisted (browsable) but screened-only and never best.
+    high = [n for n in screened if n["result"]["total_return"] == pytest.approx(0.9)]
+    assert len(high) == 1
+    assert high[0]["id"] != auto_run["bestIterationId"]
+    assert high[0]["walkForwardStatus"] is None
 
 
 async def test_open_universe_terminal_at_max_configs(store):
     cfg = _ou_config()
     fake = FakePipeline(sequence=[FakeSpec(total_return=0.1, num_trades=10, wfe=0.6)])
-    # max_configs=2 but the seed grid is larger — the hard cap stops at 2.
+    # max_configs=2 but the seed grid is larger — the hard cap bounds SCREEN
+    # breadth to 2 candidates (configsDone counts SCREEN only).
     ctrl = AutoSessionController("ou-mc", cfg, BudgetTracker(max_iterations=9, max_configs=2),
                                  fake, open_universe=True)
 
     auto_run = await ctrl.run()
 
     assert auto_run["status"] == "budget-exhausted"
+    # configsDone is the SCREEN-breadth tally (PROMOTE refines already-counted
+    # configs and does not increment it).
     assert auto_run["budget"]["configsDone"] == 2
-    assert len(ss.list_iteration_dirs("ou-mc")) == 2
+    # 2 screened + 1 promoted (k=1) = 3 persisted nodes.
+    assert len(ss.list_iteration_dirs("ou-mc")) == 3
 
 
 async def test_open_universe_threads_tokens_and_usd(store):
@@ -600,18 +689,25 @@ async def test_open_universe_threads_tokens_and_usd(store):
 
     auto_run = await ctrl.run()
 
+    # configsDone counts SCREEN breadth only (2); PROMOTE still spends real tokens.
     assert auto_run["budget"]["configsDone"] == 2
-    # 2 configs × 1 generate each × (600+400) tokens — real (faked) SDK usage.
-    assert auto_run["budget"]["tokens"] == 2000
-    assert auto_run["budget"]["usd"] == pytest.approx(2 * cost_usd("gpt-5.4-mini", 600, 400))
+    # 2 SCREEN generates + 1 PROMOTE generate = 3 generate calls × (600+400) tokens,
+    # all threaded onto the one immutable tracker (real faked SDK usage).
+    assert len(fake.generate_calls) == 3
+    assert auto_run["budget"]["tokens"] == 3000
+    assert auto_run["budget"]["usd"] == pytest.approx(3 * cost_usd("gpt-5.4-mini", 600, 400))
 
 
 async def test_open_universe_stops_at_token_cap_no_config_after(store):
+    """J-13 hard token cap preserved across the staged flow: the SCREEN loop is
+    gated by the full budget (incl. tokens) before each candidate, so a token cap
+    hit during SCREEN halts with budget-exhausted and no further unit — not even
+    the PROMOTE stage — is started past the cap."""
     from shared.model_catalog import TokenUsage
     cfg = _ou_config()
-    usage = TokenUsage(input_tokens=600, output_tokens=400, model="gpt-5.4-mini")  # 1000/config
+    usage = TokenUsage(input_tokens=600, output_tokens=400, model="gpt-5.4-mini")  # 1000/generate
     fake = FakePipeline(sequence=[FakeSpec(num_trades=10, wfe=0.6)], usage=usage)
-    # cap 1500: config1→1000 (<cap, continue), config2→2000 (≥cap before config3).
+    # cap 1500: screen1→1000 (<cap, continue), screen2→2000 (≥cap before screen3).
     budget = BudgetTracker(max_iterations=99, max_configs=99, max_tokens=1500)
     ctrl = AutoSessionController("ou-tcap", cfg, budget, fake, open_universe=True)
 
@@ -619,8 +715,13 @@ async def test_open_universe_stops_at_token_cap_no_config_after(store):
 
     assert auto_run["status"] == "budget-exhausted"
     assert auto_run["stopReason"] == "budget-exhausted"
-    assert auto_run["budget"]["configsDone"] == 2          # checked before config 3
+    assert auto_run["budget"]["configsDone"] == 2          # checked before screen 3
     assert len(ss.list_iteration_dirs("ou-tcap")) == 2     # nothing appended past the cap
+    # No unit started past the cap: only 2 SCREEN backtests ran, NO promote — and
+    # spend overshot by at most one unit's accounting (usage is booked after the
+    # generate, the cap is checked before the next unit).
+    assert [c["wfv_enabled"] for c in fake.execute_calls] == [False, False]
+    assert auto_run["budget"]["tokens"] == 2000
 
 
 async def test_open_universe_stops_at_usd_cap(store):
@@ -629,7 +730,7 @@ async def test_open_universe_stops_at_usd_cap(store):
     usage = TokenUsage(input_tokens=600, output_tokens=400, model="gpt-5.4-mini")
     per_config = cost_usd("gpt-5.4-mini", 600, 400)   # 0.00033
     fake = FakePipeline(sequence=[FakeSpec(num_trades=10, wfe=0.6)], usage=usage)
-    # cap between 1× and 2× per-config cost → stops before the 3rd config.
+    # cap between 1× and 2× per-config cost → stops before the 3rd screen.
     budget = BudgetTracker(max_iterations=99, max_configs=99, max_usd=per_config * 1.5)
     ctrl = AutoSessionController("ou-ucap", cfg, budget, fake, open_universe=True)
 
@@ -638,26 +739,36 @@ async def test_open_universe_stops_at_usd_cap(store):
     assert auto_run["status"] == "budget-exhausted"
     assert auto_run["budget"]["configsDone"] == 2
     assert len(ss.list_iteration_dirs("ou-ucap")) == 2
+    # Halted within SCREEN; no PROMOTE unit started past the USD cap.
+    assert [c["wfv_enabled"] for c in fake.execute_calls] == [False, False]
 
 
 async def test_open_universe_single_config_failure_is_non_fatal(store):
     cfg = _ou_config()
     seq = [FakeSpec(num_trades=10, wfe=0.6), FakeSpec(total_return=0.3, num_trades=10, wfe=0.6)]
-    fake = FakePipeline(sequence=seq, fail_exec_indices={1})   # config 1 backtest fails
+    fake = FakePipeline(sequence=seq, fail_exec_indices={1})   # SCREEN config 1 backtest fails
     ctrl = AutoSessionController("ou-fail", cfg, BudgetTracker(max_iterations=9, max_configs=2),
                                  fake, open_universe=True)
 
     auto_run = await ctrl.run()
 
     assert auto_run["status"] == "budget-exhausted"
-    # The failed config is not persisted; the search continued to config 2.
-    assert len(ss.list_iteration_dirs("ou-fail")) == 1
-    assert auto_run["budget"]["configsDone"] == 2          # both attempts counted
+    # The failed SCREEN config is not persisted; SCREEN continued to config 2, which
+    # then survived and was PROMOTEd → 1 screened + 1 promoted node.
+    dirs = ss.list_iteration_dirs("ou-fail")
+    assert len(dirs) == 2
+    assert auto_run["budget"]["configsDone"] == 2          # both SCREEN attempts counted
+    nodes = [ss.read_iteration_full("ou-fail", d.name.split("_", 1)[1]) for d in dirs]
+    assert sum(1 for n in nodes if n["walkForwardStatus"] == "complete") == 1   # the promote
+    # Best is the surviving config, promoted + WFE-passing.
     best = ss.read_iteration_full("ou-fail", auto_run["bestIterationId"])
     assert best["result"]["total_return"] == pytest.approx(0.3)
+    assert best["walkForwardStatus"] == "complete"
 
 
 async def test_open_universe_all_configs_fail_terminates_cleanly(store):
+    """All-SCREEN-fail terminates cleanly: no survivor to promote, no PROMOTE
+    stage, best None, no nodes persisted."""
     cfg = _ou_config()
     fake = FakePipeline(sequence=[FakeSpec(), FakeSpec()], fail_exec_indices={1, 2})
     ctrl = AutoSessionController("ou-allfail", cfg, BudgetTracker(max_iterations=9, max_configs=2),
@@ -668,14 +779,146 @@ async def test_open_universe_all_configs_fail_terminates_cleanly(store):
     assert auto_run["status"] == "budget-exhausted"        # clean terminal, no crash
     assert auto_run["bestIterationId"] is None
     assert len(ss.list_iteration_dirs("ou-allfail")) == 0
+    # No survivors → PROMOTE never ran (no walk-forward backtest attempted).
+    assert all(not c["wfv_enabled"] for c in fake.execute_calls)
 
 
-async def test_open_universe_stop_request_transitions_to_stopped(store):
+# =============================================================================
+# iter-4 — Staged SCREEN→PROMOTE cost-tiering (J-14)
+# =============================================================================
+
+async def test_open_universe_stage_routing_screen_cheap_no_wf_promote_strong_wf(store):
+    """The core J-14 routing: SCREEN evaluates every seed config on the cheapest
+    model with NO walk-forward; PROMOTE re-evaluates the top-k survivors on the
+    stronger (request) model WITH walk-forward. Asserted three ways: the backtest
+    wfv flags, the generator's model kwarg, and the persisted nodes' modelUsed."""
+    from shared.model_catalog import cheapest_model
+    cheap = cheapest_model()
+    strong = "claude-haiku-4-5"            # observably different from the cheap SCREEN model
+    assert strong != cheap
+    cfg = _ou_config(model=strong)         # request model == PROMOTE (full-evaluation) model
+    # SCREEN 1 (return 0.5) is the top score → promoted; SCREEN 2/3 are not; the
+    # 4th spec is the PROMOTE (walk-forward) of SCREEN 1.
+    seq = [
+        FakeSpec(total_return=0.5, sharpe=1.0, num_trades=10, max_drawdown=0.05),
+        FakeSpec(total_return=0.3, sharpe=1.0, num_trades=10, max_drawdown=0.05),
+        FakeSpec(total_return=0.2, sharpe=1.0, num_trades=10, max_drawdown=0.05),
+        FakeSpec(total_return=0.5, sharpe=1.0, num_trades=10, max_drawdown=0.05, wfe=0.6),
+    ]
+    fake = FakePipeline(sequence=seq)
+    ctrl = AutoSessionController("ou-route", cfg, BudgetTracker(max_iterations=9, max_configs=3),
+                                 fake, open_universe=True)
+
+    auto_run = await ctrl.run()
+    assert auto_run["status"] == "budget-exhausted"
+
+    # (1) Backtest wfv flags: 3 SCREEN (no WF), then 1 PROMOTE (WF).
+    assert [c["wfv_enabled"] for c in fake.execute_calls] == [False, False, False, True]
+    # (2) Generator model kwarg: SCREEN generates on the cheap model, PROMOTE on the strong one.
+    assert [g["model"] for g in fake.generate_calls] == [cheap, cheap, cheap, strong]
+    # (3) Persisted nodes' modelUsed: screened-only on cheap; the promoted one on strong.
+    nodes = [ss.read_iteration_full("ou-route", d.name.split("_", 1)[1])
+             for d in ss.list_iteration_dirs("ou-route")]
+    screened = [n for n in nodes if n["walkForwardStatus"] is None]
+    promoted = [n for n in nodes if n["walkForwardStatus"] == "complete"]
+    assert len(screened) == 3 and len(promoted) == 1
+    assert all(n["modelUsed"] == cheap for n in screened)
+    assert promoted[0]["modelUsed"] == strong
+
+    # Both stages are legible + visually distinguishable in the Activity Log.
+    activity = ss.read_activity_log("ou-route")
+    auto_entries = [e["content"] for e in activity if e["type"] == "auto-run"]
+    screen_header = [c for c in auto_entries if c.startswith("SCREEN") and cheap in c
+                     and ("no walk-forward" in c.lower() or "no wf" in c.lower())]
+    promote_header = [c for c in auto_entries if c.startswith("PROMOTE") and strong in c
+                      and "walk-forward" in c.lower() and "top-1 of 3" in c.lower()]
+    assert screen_header, auto_entries
+    assert promote_header, auto_entries
+
+
+async def test_open_universe_promotes_exactly_default_k_of_many_screened(store):
+    """k < N: with ≥3 seed configs screened, exactly DEFAULT_PROMOTE_K survivors
+    are promoted, and the count of WF-bearing (promoted) nodes is strictly less
+    than the count of screened nodes."""
+    cfg = _ou_config()
+    seq = [FakeSpec(total_return=0.5 - 0.1 * i, sharpe=1.0, num_trades=10, max_drawdown=0.05)
+           for i in range(3)] + [
+        FakeSpec(total_return=0.5, sharpe=1.0, num_trades=10, max_drawdown=0.05, wfe=0.6)]
+    fake = FakePipeline(sequence=seq)
+    ctrl = AutoSessionController("ou-k", cfg, BudgetTracker(max_iterations=9, max_configs=3),
+                                 fake, open_universe=True)
+
+    await ctrl.run()
+
+    nodes = [ss.read_iteration_full("ou-k", d.name.split("_", 1)[1])
+             for d in ss.list_iteration_dirs("ou-k")]
+    screened = [n for n in nodes if n["walkForwardStatus"] is None]
+    promoted = [n for n in nodes if n["walkForwardStatus"] == "complete"]
+    assert len(screened) == 3
+    assert len(promoted) == DEFAULT_PROMOTE_K == 1
+    assert len(promoted) < len(screened)        # k < N
+
+
+async def test_open_universe_degenerate_single_config_screen_promotes_it(store):
+    """A degenerate single-config screen (max_configs=1) promotes that one config
+    (k = min(DEFAULT_PROMOTE_K, 1) = 1) without crashing — 1 screened + 1 promoted."""
+    cfg = _ou_config()
+    # 1st spec = the single SCREEN candidate; 2nd = its PROMOTE (walk-forward).
+    seq = [
+        FakeSpec(total_return=0.4, sharpe=1.0, num_trades=10, max_drawdown=0.05),
+        FakeSpec(total_return=0.4, sharpe=1.0, num_trades=10, max_drawdown=0.05, wfe=0.6),
+    ]
+    fake = FakePipeline(sequence=seq)
+    ctrl = AutoSessionController("ou-1", cfg, BudgetTracker(max_iterations=9, max_configs=1),
+                                 fake, open_universe=True)
+
+    auto_run = await ctrl.run()
+
+    assert auto_run["status"] == "budget-exhausted"
+    assert auto_run["budget"]["configsDone"] == 1
+    nodes = [ss.read_iteration_full("ou-1", d.name.split("_", 1)[1])
+             for d in ss.list_iteration_dirs("ou-1")]
+    assert len(nodes) == 2
+    assert [c["wfv_enabled"] for c in fake.execute_calls] == [False, True]
+    best = ss.read_iteration_full("ou-1", auto_run["bestIterationId"])
+    assert best["walkForwardStatus"] == "complete"
+    assert best["result"]["total_return"] == pytest.approx(0.4)
+
+
+async def test_open_universe_promote_failure_is_non_fatal_best_none(store):
+    """A PROMOTE backtest failure is non-fatal: the run terminates cleanly and,
+    with the single survivor's promote failing, no WFE-gated candidate exists so
+    best is None (the correct gated outcome)."""
+    cfg = _ou_config()
+    # 2 SCREEN backtests (idx 1,2) succeed; the single PROMOTE backtest (idx 3) fails.
+    seq = [FakeSpec(total_return=0.5, sharpe=1.0, num_trades=10, max_drawdown=0.05),
+           FakeSpec(total_return=0.3, sharpe=1.0, num_trades=10, max_drawdown=0.05),
+           FakeSpec(total_return=0.5, sharpe=1.0, num_trades=10, max_drawdown=0.05, wfe=0.6)]
+    fake = FakePipeline(sequence=seq, fail_exec_indices={3})
+    ctrl = AutoSessionController("ou-pf", cfg, BudgetTracker(max_iterations=9, max_configs=2),
+                                 fake, open_universe=True)
+
+    auto_run = await ctrl.run()
+
+    assert auto_run["status"] == "budget-exhausted"
+    assert auto_run["bestIterationId"] is None             # promote failed → no WFE-gated best
+    # Both screened nodes persisted; the failed promote is not persisted.
+    nodes = [ss.read_iteration_full("ou-pf", d.name.split("_", 1)[1])
+             for d in ss.list_iteration_dirs("ou-pf")]
+    assert len(nodes) == 2
+    assert all(n["walkForwardStatus"] is None for n in nodes)
+
+
+async def test_open_universe_stop_request_transitions_to_stopped_mid_screen(store):
+    """A /stop during the SCREEN stage transitions to stopped at the next
+    checkpoint, appends no further node, and leaves best=None — there is no
+    WFE-gated promoted candidate yet, and a screened-only node is NEVER marked
+    best (the WFE-gated-best anti-goal). Screened nodes so far stay persisted."""
     sid = "ou-stop"
     cfg = _ou_config()
 
     def request_stop_after_first(call_index: int) -> None:
-        if call_index == 1:   # right after the first config's backtest
+        if call_index == 1:   # right after the first SCREEN candidate's backtest
             meta = ss.read_session_meta(sid) or {}
             auto_run = dict(meta.get("autoRun", {}))
             auto_run["stopRequested"] = True
@@ -690,10 +933,65 @@ async def test_open_universe_stop_request_transitions_to_stopped(store):
 
     assert auto_run["status"] == "stopped"
     assert auto_run["stopReason"] == "stopped"
-    assert auto_run["bestIterationId"] is not None          # best-so-far retained
-    # Only the first config ran; the stop was honored before the second.
-    assert len(ss.list_iteration_dirs(sid)) == 1
+    # Stopped mid-SCREEN before any PROMOTE → no WFE-gated best yet.
+    assert auto_run["bestIterationId"] is None
+    # Only the first SCREEN candidate ran (persisted, no WF); the stop was honored
+    # before the second, and no PROMOTE was started.
+    dirs = ss.list_iteration_dirs(sid)
+    assert len(dirs) == 1
+    only = ss.read_iteration_full(sid, dirs[0].name.split("_", 1)[1])
+    assert only["walkForwardStatus"] is None
     assert auto_run["budget"]["configsDone"] == 1
+    assert len(fake.execute_calls) == 1
+
+
+async def test_open_universe_stop_during_promote_preserves_best(store, monkeypatch):
+    """A /stop during the PROMOTE stage transitions to stopped, appends no further
+    node, and PRESERVES the best-so-far (the already-promoted, WFE-gated winner).
+
+    Promote-k is raised to 2 so a first survivor is promoted and marked best,
+    then the stop fires before the second promote runs."""
+    monkeypatch.setattr(auto_session_mod, "DEFAULT_PROMOTE_K", 2)
+    sid = "ou-stop-promote"
+    cfg = _ou_config()
+
+    # 3 SCREEN candidates (execute idx 1,2,3), then PROMOTE of the top 2
+    # (idx 4 = first promote, idx 5 = second promote). Fire the stop right after
+    # the first promote so the second promote's checkpoint catches it.
+    def request_stop_after_first_promote(call_index: int) -> None:
+        if call_index == 4:
+            meta = ss.read_session_meta(sid) or {}
+            auto_run = dict(meta.get("autoRun", {}))
+            auto_run["stopRequested"] = True
+            ss.write_session_meta(sid, {"autoRun": auto_run})
+
+    # SCREEN 1/2 (returns 0.5/0.4) are the top-2 → promoted; SCREEN 3 is not.
+    # PROMOTE 1 marks best (return 0.5); PROMOTE 2 never runs (stopped first).
+    seq = [
+        FakeSpec(total_return=0.5, sharpe=1.0, num_trades=10, max_drawdown=0.05),
+        FakeSpec(total_return=0.4, sharpe=1.0, num_trades=10, max_drawdown=0.05),
+        FakeSpec(total_return=0.1, sharpe=1.0, num_trades=10, max_drawdown=0.05),
+        FakeSpec(total_return=0.5, sharpe=1.0, num_trades=10, max_drawdown=0.05, wfe=0.6),
+        FakeSpec(total_return=0.4, sharpe=1.0, num_trades=10, max_drawdown=0.05, wfe=0.6),
+    ]
+    fake = FakePipeline(sequence=seq, on_exec=request_stop_after_first_promote)
+    ctrl = AutoSessionController(sid, cfg, BudgetTracker(max_iterations=99, max_configs=3),
+                                 fake, open_universe=True)
+
+    auto_run = await ctrl.run()
+
+    assert auto_run["status"] == "stopped"
+    assert auto_run["stopReason"] == "stopped"
+    # Best-so-far (the first promoted, WFE-gated node) is preserved.
+    assert auto_run["bestIterationId"] is not None
+    best = ss.read_iteration_full(sid, auto_run["bestIterationId"])
+    assert best["walkForwardStatus"] == "complete"
+    assert best["result"]["total_return"] == pytest.approx(0.5)
+    # Only ONE promote ran (the second was halted at its checkpoint): 3 screened +
+    # 1 promoted = 4 nodes; exactly 4 backtests executed.
+    assert len(ss.list_iteration_dirs(sid)) == 4
+    assert len(fake.execute_calls) == 4
+    assert sum(1 for c in fake.execute_calls if c["wfv_enabled"]) == 1
 
 
 async def test_pinned_path_unchanged_runs_improvement_rounds(store):

@@ -160,6 +160,17 @@ async def root():
     }
 
 
+@app.get("/health", tags=["Health"])
+async def health():
+    """
+    Liveness probe.
+
+    Plain 200 used by the dev-chain automation (qa/browser-qa/demo/goal scripts
+    default to polling /health). Mirrors /api/health's status field.
+    """
+    return {"status": "ok"}
+
+
 @app.get("/api/health", tags=["Health"])
 async def health_check():
     """
