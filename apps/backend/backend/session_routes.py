@@ -176,6 +176,10 @@ async def get_session(session_id: str):
         "sessionId": session_id,
         "backtestParams": meta.get("backtestParams", {}),
         "selectedIterationId": meta.get("selectedIterationId"),
+        # Additive: durable headless auto-session status (None for manual
+        # sessions). Tiny block (status string, ids, integer counters) — does
+        # not affect the lazy iteration-loading behavior above.
+        "autoRun": meta.get("autoRun"),
         "activityLog": activity,
         "iterationHistory": iterations,
     }

@@ -22,6 +22,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
+logger = logging.getLogger(__name__)
 
 import asyncio
 import json
@@ -34,14 +35,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
 from backend.pipeline import BacktestPipeline, CancellationToken
-from shared.contracts import StrategyRating
 from shared.model_catalog import models_payload
 from shared.schemas import (
     BacktestResultSchema,
-    CapacityLevelSchema,
-    CategoryRatingSchema,
-    DrawdownPeriodSchema,
-    EquityPointSchema,
     ExecuteBacktestRequest,
     ExecuteWalkForwardRequest,
     PhaseTimings,
@@ -49,21 +45,13 @@ from shared.schemas import (
     GenerateInsightsResponse,
     GenerateStrategyRequest,
     GenerateStrategyResponse,
-    HistogramBinSchema,
     InsightsSuggestion,
-    MonthlyReturnSchema,
-    RollingMetricSchema,
     RunBacktestAPIRequest,
     RunBacktestAPIResponse,
     RunHistoryResponse,
     RunRecordSchema,
-    SimulatedStopLevelSchema,
-    StrategyRatingSchema,
     StrategySpecSchema,
-    TradeExcursionSchema,
     TradeSchema,
-    WalkForwardWindowSchema,
-    WalkForwardResultSchema,
 )
 
 # Initialize FastAPI app
@@ -122,8 +110,10 @@ app.add_middleware(
 
 from backend.session_routes import router as session_router  # noqa: E402
 from backend.directions_routes import router as directions_router  # noqa: E402
+from backend.auto_session_routes import router as auto_session_router  # noqa: E402
 app.include_router(session_router)
 app.include_router(directions_router)
+app.include_router(auto_session_router)
 
 # Global pipeline instance
 _pipeline: Optional[BacktestPipeline] = None
@@ -137,116 +127,18 @@ def get_pipeline() -> BacktestPipeline:
     return _pipeline
 
 
-import math
-
-
-def _safe_float(v: float) -> float:
-    """Replace inf/nan with JSON-safe values."""
-    if math.isinf(v) or math.isnan(v):
-        return 9999.99 if v > 0 else -9999.99
-    return v
-
-
-def _equity_point(ep) -> "EquityPointSchema":
-    """Serialize an equity point, clamping values to schema-valid ranges.
-
-    With leverage/shorts the account can go negative (equity < 0) or drawdown
-    can slightly exceed 1.0 due to floating-point arithmetic.  We clamp rather
-    than reject so the UI can still render the full curve.
-    """
-    return EquityPointSchema(
-        timestamp=ep.timestamp,
-        equity=max(1e-6, float(ep.equity)),   # floor at near-zero; schema requires gt=0
-        drawdown=min(1.0, float(ep.drawdown)), # cap at 100%; schema requires le=1
-    )
-
-
-def _serialize_rating(rating: Optional[StrategyRating]) -> Optional[StrategyRatingSchema]:
-    """Convert StrategyRating dataclass to Pydantic schema."""
-    if rating is None:
-        return None
-
-    def _safe_metrics(metrics: dict) -> dict:
-        return {
-            k: (_safe_float(v) if isinstance(v, float) else v)
-            for k, v in metrics.items()
-        }
-
-    def _cat(c):
-        return CategoryRatingSchema(
-            name=c.name,
-            label=c.label,
-            stars=c.stars,
-            key_metrics=_safe_metrics(c.key_metrics),
-            analyses=c.analyses,
-        )
-
-    return StrategyRatingSchema(
-        profitability=_cat(rating.profitability),
-        risk_resistance=_cat(rating.risk_resistance),
-        risk_reward=_cat(rating.risk_reward),
-        win_rate_ev=_cat(rating.win_rate_ev),
-        liquidity=_cat(rating.liquidity),
-        benchmark_equity=[
-            _equity_point(ep)
-            for ep in rating.benchmark_equity
-        ],
-        benchmark_total_return=rating.benchmark_total_return,
-        monthly_returns=[
-            MonthlyReturnSchema(year=m.year, month=m.month, return_pct=m.return_pct)
-            for m in rating.monthly_returns
-        ],
-        trade_excursions=[
-            TradeExcursionSchema(trade_id=te.trade_id, pnl_percent=te.pnl_percent, mae=te.mae, mfe=te.mfe)
-            for te in rating.trade_excursions
-        ],
-        drawdown_periods=[
-            DrawdownPeriodSchema(
-                start_time=dp.start_time, end_time=dp.end_time,
-                recovery_time=dp.recovery_time, depth=dp.depth,
-                duration_days=dp.duration_days, recovery_days=dp.recovery_days,
-            )
-            for dp in rating.drawdown_periods
-        ],
-        rolling_sharpe=[
-            RollingMetricSchema(timestamp=rm.timestamp, value=rm.value)
-            for rm in rating.rolling_sharpe
-        ],
-        rolling_sharpe_benchmark=[
-            RollingMetricSchema(timestamp=rm.timestamp, value=rm.value)
-            for rm in rating.rolling_sharpe_benchmark
-        ],
-        return_distribution=[
-            HistogramBinSchema(bin_start=b.bin_start, bin_end=b.bin_end, count=b.count)
-            for b in rating.return_distribution
-        ],
-        simulated_stops=[
-            SimulatedStopLevelSchema(
-                level_pct=s.level_pct, adjusted_return=s.adjusted_return,
-                adjusted_win_rate=s.adjusted_win_rate, trades_affected=s.trades_affected,
-            )
-            for s in rating.simulated_stops
-        ],
-        simulated_take_profits=[
-            SimulatedStopLevelSchema(
-                level_pct=s.level_pct, adjusted_return=s.adjusted_return,
-                adjusted_win_rate=s.adjusted_win_rate, trades_affected=s.trades_affected,
-            )
-            for s in rating.simulated_take_profits
-        ],
-        capacity_levels=[
-            CapacityLevelSchema(
-                capital=cl.capital,
-                volume_participation_pct=cl.volume_participation_pct,
-                estimated_slippage_bps=cl.estimated_slippage_bps,
-            )
-            for cl in rating.capacity_levels
-        ],
-        annual_returns=rating.annual_returns,
-        benchmark_annual_returns=rating.benchmark_annual_returns,
-        annual_long_returns=rating.annual_long_returns,
-        annual_short_returns=rating.annual_short_returns,
-    )
+# Serialization of backtest dataclasses → API/store JSON shapes lives in ONE
+# place (backend.result_serialization) so the manual SSE path here and the
+# headless auto-session loop emit byte-shape-identical result/rating/walk-forward
+# payloads (same-artifacts anti-goal).  Imported with their historical private
+# names so existing call sites in this module are unchanged.
+from backend.result_serialization import (  # noqa: E402
+    equity_point as _equity_point,
+    safe_float as _safe_float,
+    serialize_backtest_result as _serialize_backtest_result,
+    serialize_rating as _serialize_rating,
+    serialize_walk_forward as _serialize_walk_forward,
+)
 
 
 # =============================================================================
@@ -543,40 +435,7 @@ async def execute_backtest(request: ExecuteBacktestRequest, raw_request: Request
                         "timings": jsonable_encoder(phase_timings),
                     })
                 else:
-                    result_schema = None
-                    if result:
-                        result_schema = BacktestResultSchema(
-                            run_id=result.run_id,
-                            total_return=result.total_return,
-                            max_drawdown=min(1.0, float(result.max_drawdown)),
-                            num_trades=result.num_trades,
-                            win_rate=result.win_rate,
-                            sharpe_ratio=_safe_float(result.sharpe_ratio),
-                            profit_factor=_safe_float(result.profit_factor),
-                            equity_curve=[
-                                _equity_point(ep)
-                                for ep in result.equity_curve
-                            ],
-                            trades=[
-                                TradeSchema(
-                                    trade_id=t.trade_id,
-                                    entry_time=t.entry_time,
-                                    exit_time=t.exit_time,
-                                    entry_price=t.entry_price,
-                                    exit_price=t.exit_price,
-                                    quantity=t.quantity,
-                                    pnl=t.pnl,
-                                    pnl_percent=t.pnl_percent,
-                                    commission_paid=t.commission_paid,
-                                    direction=t.direction,
-                                    leverage=t.leverage,
-                                    margin=getattr(t, "margin", 0.0),
-                                )
-                                for t in result.trades
-                            ],
-                            margin_called=getattr(result, "margin_called", False),
-                            unleveraged_return=getattr(result, "unleveraged_return", None),
-                        )
+                    result_schema = _serialize_backtest_result(result) if result else None
 
                     stored = pipeline.get_stored_script(request.script_id)
                     rating_schema = _serialize_rating(rating)
@@ -968,39 +827,6 @@ async def get_available_timeframes():
     }
 
 
-def _serialize_walk_forward(result) -> WalkForwardResultSchema:
-    """Convert WalkForwardResult dataclass to Pydantic schema."""
-    return WalkForwardResultSchema(
-        windows=[
-            WalkForwardWindowSchema(
-                window_index=w.window_index,
-                is_start=w.is_start,
-                is_end=w.is_end,
-                oos_start=w.oos_start,
-                oos_end=w.oos_end,
-                is_total_return=_safe_float(w.is_total_return),
-                oos_total_return=_safe_float(w.oos_total_return),
-                is_sharpe=_safe_float(w.is_sharpe),
-                oos_sharpe=_safe_float(w.oos_sharpe),
-                is_num_trades=w.is_num_trades,
-                oos_num_trades=w.oos_num_trades,
-                oos_equity_curve=[_equity_point(ep) for ep in w.oos_equity_curve],
-            )
-            for w in result.windows
-        ],
-        num_windows=result.num_windows,
-        is_months=result.is_months,
-        oos_months=result.oos_months,
-        combined_oos_return=_safe_float(result.combined_oos_return),
-        combined_oos_sharpe=_safe_float(result.combined_oos_sharpe),
-        combined_oos_win_rate=float(result.combined_oos_win_rate),
-        combined_oos_max_drawdown=min(1.0, float(result.combined_oos_max_drawdown)),
-        wfe=_safe_float(result.wfe),
-        combined_oos_equity=[_equity_point(ep) for ep in result.combined_oos_equity],
-        errors=result.errors,
-    )
-
-
 @app.post("/api/execute-walk-forward", tags=["AI Script Proxy"])
 async def execute_walk_forward(request: ExecuteWalkForwardRequest, raw_request: Request):
     """
@@ -1118,6 +944,18 @@ async def startup_event():
     # One backtest at a time per worker process; total capacity = WEB_CONCURRENCY workers
     app.state.worker_count = int(os.environ.get("WEB_CONCURRENCY", "1"))
     app.state.backtest_semaphore = asyncio.Semaphore(1)
+    # In-process registry of running auto-session background tasks (handles are
+    # ephemeral — durability is the persisted autoRun status on session.json).
+    app.state.auto_sessions = {}
+    # Reconcile any auto-session left running/queued by a previous worker that
+    # died (its in-memory task did not survive) → terminal "interrupted".
+    from backend.auto_session import reconcile_orphaned_sessions
+    try:
+        reconciled = reconcile_orphaned_sessions()
+        if reconciled:
+            logger.info("Reconciled %d orphaned auto-session(s) to interrupted", len(reconciled))
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("Auto-session startup reconciliation failed: %s", exc)
 
 
 @app.on_event("shutdown")

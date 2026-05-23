@@ -7,7 +7,7 @@
       "last_verified_iter": "goal-financial_free-iter-0",
       "last_passing_iter": "goal-financial_free-iter-0",
       "first_seen_iter": "goal-financial_free-iter-0",
-      "last_evidence_path": "reports/qa/goal-financial_free-iter-0-evidence/api-probe-and-journey-evidence.md (§J-01)"
+      "last_evidence_path": "reports/qa/goal-financial_free-iter-0-evidence/api-probe-and-journey-evidence.md (§J-01); iter-1 no-regression: full hermetic suite green + serializer extraction verified byte-shape-preserving (audit §Same-artifacts, coherence §A.3)"
     },
     "J-02": {
       "id": "J-02",
@@ -16,7 +16,7 @@
       "last_verified_iter": "goal-financial_free-iter-0",
       "last_passing_iter": "goal-financial_free-iter-0",
       "first_seen_iter": "goal-financial_free-iter-0",
-      "last_evidence_path": "reports/qa/goal-financial_free-iter-0-evidence/api-probe-and-journey-evidence.md (§J-02)"
+      "last_evidence_path": "reports/qa/goal-financial_free-iter-0-evidence/api-probe-and-journey-evidence.md (§J-02); iter-1: get_session lazy-loading intact (session_routes.py:144-184), test_get_session_* pass"
     },
     "J-03": {
       "id": "J-03",
@@ -25,7 +25,7 @@
       "last_verified_iter": "goal-financial_free-iter-0",
       "last_passing_iter": "goal-financial_free-iter-0",
       "first_seen_iter": "goal-financial_free-iter-0",
-      "last_evidence_path": "reports/qa/goal-financial_free-iter-0-evidence/api-probe-and-journey-evidence.md (§J-03)"
+      "last_evidence_path": "reports/qa/goal-financial_free-iter-0-evidence/api-probe-and-journey-evidence.md (§J-03); iter-1: walk_forward.py reused unchanged, suite green"
     },
     "J-04": {
       "id": "J-04",
@@ -34,7 +34,7 @@
       "last_verified_iter": "goal-financial_free-iter-0",
       "last_passing_iter": "goal-financial_free-iter-0",
       "first_seen_iter": "goal-financial_free-iter-0",
-      "last_evidence_path": "reports/qa/goal-financial_free-iter-0-evidence/api-probe-and-journey-evidence.md (§J-04)"
+      "last_evidence_path": "reports/qa/goal-financial_free-iter-0-evidence/api-probe-and-journey-evidence.md (§J-04); iter-1: generate_insights reused via pipeline, suite green"
     },
     "J-05": {
       "id": "J-05",
@@ -43,7 +43,7 @@
       "last_verified_iter": "goal-financial_free-iter-0",
       "last_passing_iter": "goal-financial_free-iter-0",
       "first_seen_iter": "goal-financial_free-iter-0",
-      "last_evidence_path": "reports/qa/goal-financial_free-iter-0-evidence/UT-J-05-rendered-ui-domtext.txt"
+      "last_evidence_path": "reports/qa/goal-financial_free-iter-0-evidence/UT-J-05-rendered-ui-domtext.txt; iter-1: /api/symbols /api/timeframes untouched"
     },
     "J-06": {
       "id": "J-06",
@@ -52,61 +52,61 @@
       "last_verified_iter": "goal-financial_free-iter-0",
       "last_passing_iter": "goal-financial_free-iter-0",
       "first_seen_iter": "goal-financial_free-iter-0",
-      "last_evidence_path": "reports/qa/goal-financial_free-iter-0-evidence/api-probe-and-journey-evidence.md (§J-06)"
+      "last_evidence_path": "reports/qa/goal-financial_free-iter-0-evidence/api-probe-and-journey-evidence.md (§J-06); iter-1: Parquet loader / warm-cache path untouched"
     },
     "J-07": {
       "id": "J-07",
       "name": "Start a headless automated session via the API (pinned config)",
-      "status": "failing",
-      "last_verified_iter": "goal-financial_free-iter-0",
-      "last_passing_iter": null,
+      "status": "passing",
+      "last_verified_iter": "goal-financial_free-iter-1",
+      "last_passing_iter": "goal-financial_free-iter-1",
       "first_seen_iter": "goal-financial_free-iter-0",
-      "last_evidence_path": "reports/qa/goal-financial_free-iter-0-evidence/api-probe-and-journey-evidence.md (§GATE — POST /api/auto-sessions 404)"
+      "last_evidence_path": "reports/qa/goal-financial_free-iter-1-qa.md (§TC-01, §TC-10, §TC-11, §TC-15); routes mounted api.py:113,116; tests test_create_returns_200_with_session_and_status + test_created_session_appears_immediately_in_sessions_list pass; 317s live smoke reached real terminal state"
     },
     "J-08": {
       "id": "J-08",
       "name": "Track the automated run live in the UI",
       "status": "failing",
-      "last_verified_iter": "goal-financial_free-iter-0",
+      "last_verified_iter": "goal-financial_free-iter-1",
       "last_passing_iter": null,
       "first_seen_iter": "goal-financial_free-iter-0",
-      "last_evidence_path": "reports/qa/goal-financial_free-iter-0-evidence/api-probe-and-journey-evidence.md (§GATE)"
+      "last_evidence_path": "docs/phases/goal-financial_free-iter-1.md (§OUT OF SCOPE — live UI tracking deferred to iter-2; not built)"
     },
     "J-09": {
       "id": "J-09",
       "name": "Automated chain stops on robust target or budget; best is marked",
-      "status": "failing",
-      "last_verified_iter": "goal-financial_free-iter-0",
-      "last_passing_iter": null,
+      "status": "passing",
+      "last_verified_iter": "goal-financial_free-iter-1",
+      "last_passing_iter": "goal-financial_free-iter-1",
       "first_seen_iter": "goal-financial_free-iter-0",
-      "last_evidence_path": "reports/qa/goal-financial_free-iter-0-evidence/api-probe-and-journey-evidence.md (§GATE)"
+      "last_evidence_path": "reports/qa/goal-financial_free-iter-1-qa.md (§TC-02, §TC-03, §TC-06); tests test_criteria_met_when_baseline_satisfies_targets, test_budget_exhausted_runs_exactly_max_iterations, test_best_is_wfe_gated_not_highest_raw_return pass; terminal state machine + WFE-gated robust best traced in audit §Domain Assessment"
     },
     "J-10": {
       "id": "J-10",
       "name": "Backend is the single source of truth (button rewired, survives reload)",
       "status": "failing",
-      "last_verified_iter": "goal-financial_free-iter-0",
+      "last_verified_iter": "goal-financial_free-iter-1",
       "last_passing_iter": null,
       "first_seen_iter": "goal-financial_free-iter-0",
-      "last_evidence_path": "reports/qa/goal-financial_free-iter-0-evidence/api-probe-and-journey-evidence.md (§GATE; in-browser Auto Run today — useBacktest.ts/IterationCard.tsx)"
+      "last_evidence_path": "docs/phases/goal-financial_free-iter-1.md (§OUT OF SCOPE — in-browser Auto Run left as transitional duplicate; rewire + reload-survival is iter-2)"
     },
     "J-11": {
       "id": "J-11",
       "name": "Stop a running automated session",
       "status": "failing",
-      "last_verified_iter": "goal-financial_free-iter-0",
+      "last_verified_iter": "goal-financial_free-iter-1",
       "last_passing_iter": null,
       "first_seen_iter": "goal-financial_free-iter-0",
-      "last_evidence_path": "reports/qa/goal-financial_free-iter-0-evidence/api-probe-and-journey-evidence.md (§GATE — POST /api/auto-sessions/{id}/stop 404)"
+      "last_evidence_path": "POST /api/auto-sessions/{id}/stop built as infra (QA §TC-08, §TC-12: 200/404/idempotent) but the UI stop + reload-survival journey is NOT claimed this iteration — iter-2"
     },
     "J-12": {
       "id": "J-12",
       "name": "Open-universe run from only an objective + budget",
       "status": "failing",
-      "last_verified_iter": "goal-financial_free-iter-0",
+      "last_verified_iter": "goal-financial_free-iter-1",
       "last_passing_iter": null,
       "first_seen_iter": "goal-financial_free-iter-0",
-      "last_evidence_path": "reports/qa/goal-financial_free-iter-0-evidence/api-probe-and-journey-evidence.md (§GATE)"
+      "last_evidence_path": "reports/qa/goal-financial_free-iter-1-qa.md (§TC-10 — open-universe explicitly rejected HTTP 400 this iteration by design; Layer-2)"
     },
     "J-13": {
       "id": "J-13",
@@ -115,7 +115,7 @@
       "last_verified_iter": "goal-financial_free-iter-0",
       "last_passing_iter": null,
       "first_seen_iter": "goal-financial_free-iter-0",
-      "last_evidence_path": "reports/qa/goal-financial_free-iter-0-evidence/api-probe-and-journey-evidence.md (§GATE)"
+      "last_evidence_path": "docs/handoffs/goal-financial_free-iter-1-dev.md (§Known Issues — token/USD are best-effort counters this iter; hard cap is J-13/Layer-2)"
     },
     "J-14": {
       "id": "J-14",
@@ -124,7 +124,7 @@
       "last_verified_iter": "goal-financial_free-iter-0",
       "last_passing_iter": null,
       "first_seen_iter": "goal-financial_free-iter-0",
-      "last_evidence_path": "reports/qa/goal-financial_free-iter-0-evidence/api-probe-and-journey-evidence.md (§GATE)"
+      "last_evidence_path": "reports/qa/goal-financial_free-iter-0-evidence/api-probe-and-journey-evidence.md (§GATE); Layer-2 not built"
     },
     "J-15": {
       "id": "J-15",
@@ -133,7 +133,7 @@
       "last_verified_iter": "goal-financial_free-iter-0",
       "last_passing_iter": null,
       "first_seen_iter": "goal-financial_free-iter-0",
-      "last_evidence_path": "reports/qa/goal-financial_free-iter-0-evidence/api-probe-and-journey-evidence.md (§GATE)"
+      "last_evidence_path": "reports/qa/goal-financial_free-iter-0-evidence/api-probe-and-journey-evidence.md (§GATE); Layer-2 not built"
     },
     "J-16": {
       "id": "J-16",
@@ -142,24 +142,26 @@
       "last_verified_iter": "goal-financial_free-iter-0",
       "last_passing_iter": null,
       "first_seen_iter": "goal-financial_free-iter-0",
-      "last_evidence_path": "reports/qa/goal-financial_free-iter-0-evidence/api-probe-and-journey-evidence.md (§GATE)"
+      "last_evidence_path": "reports/qa/goal-financial_free-iter-0-evidence/api-probe-and-journey-evidence.md (§GATE); Layer-2 not built (note: the robust scorer that J-16 will surface was built this iter as the canonical best definition)"
     }
   },
   "anti_goal_violations": [],
   "observations": [
     {
-      "iter": "goal-financial_free-iter-0",
-      "kind": "anti-goal-signal-needs-verdict",
+      "iter": "goal-financial_free-iter-1",
+      "kind": "anti-goal-signal-resolved",
       "anti_goal": "GET /api/sessions/{id} (the list/open path) MUST NOT eagerly parse full per-iteration result.json/rating.json payloads; iteration detail is lazy-loaded via the existing per-iteration endpoint.",
-      "note": "List path (GET /api/sessions) is lightweight (122 tabs, no arrays) and the per-iteration detail IS lazy-loaded (J-02 verified). However the single-session OPEN payload GET /api/sessions/{id} is ~245KB and embeds equity_curve in its summary nodes. Not a full result/rating eager-parse, but worth a definitive coherence verdict. PRE-EXISTING contract (no code changed this iter; previously accepted at GOAL_ACHIEVED in the money-billions session) — recorded as a signal, NOT a violation introduced by iter-0.",
-      "evidence": "reports/qa/goal-financial_free-iter-0-evidence/api-probe-and-journey-evidence.md (§J-02); session_routes.py / session_store.py"
+      "note": "RESOLVED — definitive verdict delivered by the iter-1 coherence-auditor and independently confirmed by the evaluator reading the route. get_session builds its iteration list from read_iteration_meta (lightweight per-iteration metadata) and lazy-loads each run's heavy result/rating/equity_curve/trades ONLY via GET /{session_id}/iterations/{iteration_id} (session_routes.py:144-184, explicit docstring). This CONFORMS to the anti-goal. The iter-0 ~245KB measurement, if still accurate, is dominated by per-iteration metadata + activity log across many runs (pre-existing), not by eager result/rating parsing. iter-1's only change to the route is the additive O(1) autoRun block (status string, ids, integer counters) — payload not worsened, lazy loading preserved. Do not re-litigate.",
+      "evidence": "runs/goal-session-financial_free/iter-1/coherence.md (§Part C.2); apps/backend/backend/session_routes.py:144-184",
+      "resolved": true
     },
     {
       "iter": "goal-financial_free-iter-0",
       "kind": "pre-existing-test-failure",
-      "note": "Backend unit suite: 124 passed, 1 failed. Sole failure tests/test_directions_cache.py::test_write_and_read_full_round_trip — the directions cache is goal Capability #10 (nice-to-have), not a Must-have journey nor an anti-goal invariant. Pre-existing on HEAD cd6cae7; not a regression caused by this iteration. Anti-goal invariants (test_lookahead, test_determinism, test_sandbox) all PASS.",
-      "evidence": "reports/qa/goal-financial_free-iter-0-evidence/api-probe-and-journey-evidence.md (Backend unit suite); /tmp/finovae_pytest_iter0.log"
+      "note": "Backend unit suite: 164 passed, 1 deselected (key-gated live smoke), 1 failed. Sole failure tests/test_directions_cache.py::test_write_and_read_full_round_trip (timeframeResults round-trip) — the directions cache is goal Capability #10 (nice-to-have), not a Must-have journey nor an anti-goal invariant. Pre-existing on an untouched module; re-confirmed red on the iter-1 tree. Not a regression. Anti-goal invariants (test_lookahead, test_determinism, test_sandbox) all PASS (39 tests).",
+      "evidence": "reports/qa/goal-financial_free-iter-1-qa.md (§Step 2); iter-1 evaluator re-run: 1 failed, 164 passed, 1 deselected",
+      "resolved": false
     }
   ],
-  "updated_at": "2026-05-23T01:01:12Z"
+  "updated_at": "2026-05-23T08:33:05Z"
 }

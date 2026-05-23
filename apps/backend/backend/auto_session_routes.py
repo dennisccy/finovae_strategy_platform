@@ -1,0 +1,261 @@
+"""Headless auto-session API endpoints.
+
+* ``POST /api/auto-sessions`` — start a server-side, budget-bounded automated
+  strategy session from a pinned config.  Creates the live session in the file
+  store first (so it appears immediately in ``GET /api/sessions``), then launches
+  the loop as a non-blocking background task and returns 200.
+* ``POST /api/auto-sessions/{session_id}/stop`` — request cancellation
+  (cancellation infrastructure the loop needs; the full J-11 UI stop journey is
+  iter-2).
+
+Open-universe requests (omitted ``symbol``/``timeframe``) are rejected with a
+clear 4xx — open-universe is J-12 / Layer-2.
+"""
+
+import asyncio
+import logging
+import time
+import uuid
+from datetime import datetime
+from typing import Optional
+
+from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+from backend import session_store
+from backend.auto_session import (
+    STATUS_RUNNING,
+    AutoSessionConfig,
+    AutoSessionController,
+    BudgetTracker,
+    initial_auto_run,
+    is_terminal,
+)
+from shared.model_catalog import DEFAULT_MODEL
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/api/auto-sessions", tags=["Auto Sessions"])
+
+_VALID_TIMEFRAMES = {"1m", "5m", "15m", "1h", "4h", "1d"}
+
+
+# =============================================================================
+# Request models (pinned config)
+# =============================================================================
+
+class AutoSessionTargets(BaseModel):
+    """Robust targets — all optional.  ``criteria-met`` requires the best
+    iteration to satisfy every supplied target."""
+    min_total_return: Optional[float] = None
+    min_sharpe: Optional[float] = None
+    min_wfe: Optional[float] = None
+    max_drawdown: Optional[float] = Field(default=None, ge=0, le=1)
+    min_trades: Optional[int] = Field(default=None, ge=0)
+
+
+class AutoSessionBudget(BaseModel):
+    """Hard budget.  ``max_iterations`` and ``max_wall_clock_sec`` are enforced
+    in iter-1; ``max_tokens``/``max_usd`` are accepted but enforced in J-13."""
+    max_iterations: int = Field(..., ge=1, le=50)
+    max_wall_clock_sec: Optional[float] = Field(default=None, gt=0)
+    max_tokens: Optional[int] = Field(default=None, gt=0)
+    max_usd: Optional[float] = Field(default=None, gt=0)
+
+
+class AutoSessionWalkForward(BaseModel):
+    is_months: Optional[int] = Field(default=None, ge=1, le=60)
+    oos_months: Optional[int] = Field(default=None, ge=1, le=60)
+
+
+class CreateAutoSessionRequest(BaseModel):
+    """Pinned-config request for ``POST /api/auto-sessions``.
+
+    ``symbol`` and ``timeframe`` are Optional only so that omitting them yields a
+    clear 4xx (open-universe = J-12) rather than a 422 — they are required in
+    iter-1.  ``budget`` (with ``max_iterations``) is required.
+    """
+    natural_language: str = Field(..., min_length=10, max_length=2000)
+    symbol: Optional[str] = None
+    timeframe: Optional[str] = None
+    start_date: str
+    end_date: str
+    initial_capital: float = Field(default=10000.0, gt=0)
+    leverage: float = Field(default=1.0, ge=1.0, le=10.0)
+    allow_short: bool = False
+    model: str = Field(default=DEFAULT_MODEL, pattern=r"^(claude-|gpt-)")
+    objective: str = "robust"
+    targets: Optional[AutoSessionTargets] = None
+    walk_forward: Optional[AutoSessionWalkForward] = None
+    budget: AutoSessionBudget
+
+    @field_validator("start_date", "end_date")
+    @classmethod
+    def _valid_date(cls, v: str) -> str:
+        try:
+            datetime.strptime(v, "%Y-%m-%d")
+        except ValueError:
+            raise ValueError("date must be YYYY-MM-DD")
+        return v
+
+    @model_validator(mode="after")
+    def _end_after_start(self):
+        if self.start_date >= self.end_date:
+            raise ValueError("end_date must be after start_date")
+        return self
+
+
+# =============================================================================
+# app.state helpers (robust whether or not the startup event ran)
+# =============================================================================
+
+def _resolve_pipeline(app):
+    """The shared BacktestPipeline, or a test override on ``app.state``."""
+    override = getattr(app.state, "auto_pipeline", None)
+    if override is not None:
+        return override
+    from backend.api import get_pipeline  # lazy: avoids an import cycle at load
+    return get_pipeline()
+
+
+def _resolve_semaphore(app) -> asyncio.Semaphore:
+    """The shared one-backtest-per-worker semaphore (create if startup didn't)."""
+    sem = getattr(app.state, "backtest_semaphore", None)
+    if sem is None:
+        sem = asyncio.Semaphore(1)
+        app.state.backtest_semaphore = sem
+    return sem
+
+
+def _registry(app) -> dict:
+    reg = getattr(app.state, "auto_sessions", None)
+    if reg is None:
+        reg = {}
+        app.state.auto_sessions = reg
+    return reg
+
+
+# =============================================================================
+# Mapping request → controller config
+# =============================================================================
+
+def _build_config(req: CreateAutoSessionRequest) -> AutoSessionConfig:
+    targets = req.targets.model_dump(exclude_none=True) if req.targets else {}
+    wf = req.walk_forward
+    stripped_nl = req.natural_language.strip()
+    nl_snippet = stripped_nl.splitlines()[0][:48] if stripped_nl else "session"
+    return AutoSessionConfig(
+        natural_language=req.natural_language,
+        symbol=req.symbol,            # validated non-None before this is called
+        timeframe=req.timeframe,
+        start_date=req.start_date,
+        end_date=req.end_date,
+        initial_capital=req.initial_capital,
+        leverage=req.leverage,
+        allow_short=req.allow_short,
+        model=req.model,
+        objective=req.objective,
+        targets=targets,
+        wfv_is_months=(wf.is_months if wf and wf.is_months else 6),
+        wfv_oos_months=(wf.oos_months if wf and wf.oos_months else 3),
+        session_name=f"Auto · {nl_snippet}",
+    )
+
+
+def _build_budget(req: CreateAutoSessionRequest) -> BudgetTracker:
+    return BudgetTracker(
+        max_iterations=req.budget.max_iterations,
+        max_wall_clock_sec=req.budget.max_wall_clock_sec,
+    )
+
+
+# =============================================================================
+# Endpoints
+# =============================================================================
+
+@router.post("")
+async def create_auto_session(req: CreateAutoSessionRequest, raw_request: Request):
+    """Start a headless automated strategy session (J-07)."""
+    # Open-universe (omitted symbol/timeframe) is J-12 / Layer-2 — reject clearly.
+    if not req.symbol or not req.timeframe:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Open-universe runs (omitted symbol/timeframe) are not supported "
+                "yet — pin both 'symbol' and 'timeframe'. (Open-universe is J-12 / "
+                "Layer-2.)"
+            ),
+        )
+    if req.timeframe not in _VALID_TIMEFRAMES:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Unsupported timeframe '{req.timeframe}'. "
+                f"Use one of {sorted(_VALID_TIMEFRAMES)}."
+            ),
+        )
+    if req.objective != "robust":
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Unsupported objective '{req.objective}'. "
+                "Only 'robust' is available in this iteration."
+            ),
+        )
+
+    app = raw_request.app
+    config = _build_config(req)
+    budget = _build_budget(req)
+    session_id = str(uuid.uuid4())
+
+    # Create the live session in the store FIRST so it shows up immediately in
+    # GET /api/sessions (a new session tab) with no browser interaction.
+    auto_run = initial_auto_run(budget, status=STATUS_RUNNING)
+    await asyncio.to_thread(
+        session_store.write_session_meta,
+        session_id,
+        {
+            "name": config.session_name,
+            "backtestParams": config.backtest_params(),
+            "autoRun": auto_run,
+            "lastAccessedAt": int(time.time() * 1000),
+        },
+    )
+
+    # Launch the loop as a non-blocking background task (no broker/queue — the
+    # in-memory handle is ephemeral; durability is the persisted autoRun status).
+    pipeline = _resolve_pipeline(app)
+    semaphore = _resolve_semaphore(app)
+    controller = AutoSessionController(
+        session_id, config, budget, pipeline, semaphore=semaphore,
+    )
+    registry = _registry(app)
+    task = asyncio.create_task(controller.run())
+    registry[session_id] = task
+    task.add_done_callback(lambda _t, sid=session_id: registry.pop(sid, None))
+
+    return {"sessionId": session_id, "status": auto_run["status"], "autoRun": auto_run}
+
+
+@router.post("/{session_id}/stop")
+async def stop_auto_session(session_id: str):
+    """Request cancellation of a running automated session.
+
+    Flips the persisted ``stopRequested`` flag; the loop honors it at its next
+    checkpoint and transitions to ``stopped``.  Idempotent 200 if already
+    terminal; 404 if the session is unknown / not an auto-session.
+    """
+    meta = await asyncio.to_thread(session_store.read_session_meta, session_id)
+    if not meta or not isinstance(meta.get("autoRun"), dict):
+        raise HTTPException(status_code=404, detail=f"Auto-session {session_id} not found")
+
+    auto_run = meta["autoRun"]
+    if is_terminal(auto_run.get("status")):
+        # Already finished — no-op (idempotent).
+        return {"sessionId": session_id, "status": auto_run.get("status"), "autoRun": auto_run}
+
+    updated = {**auto_run, "stopRequested": True}
+    await asyncio.to_thread(
+        session_store.write_session_meta, session_id, {"autoRun": updated}
+    )
+    return {"sessionId": session_id, "status": updated.get("status"), "autoRun": updated}

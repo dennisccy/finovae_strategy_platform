@@ -51,3 +51,10 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+# Live external-integration tests (real LLM + Binance) are excluded from the
+# default run so the hermetic suite stays fast and token-free. Run them with:
+#   .venv/bin/python -m pytest -m integration
+markers = [
+    "integration: live external-integration test (real OpenAI + Binance); deselected by default",
+]
+addopts = "-m 'not integration'"
