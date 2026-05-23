@@ -11,6 +11,64 @@ export interface SessionTab {
   lastAccessedAt: number
 }
 
+// =============================================================================
+// Automated (headless) session — the durable backend Auto Run engine.
+// `autoRun` is the single source of truth for run state; the UI reads it from
+// the canonical GET /api/sessions/{id} and never recomputes it locally.
+// =============================================================================
+
+export type AutoRunStatusValue =
+  | 'queued' | 'running'
+  | 'criteria-met' | 'budget-exhausted' | 'stopped' | 'interrupted' | 'error'
+
+export interface AutoRunBudget {
+  iterationsDone: number
+  maxIterations: number
+  wallClockSec: number
+  maxWallClockSec: number | null
+  tokens: number
+  usd: number
+}
+
+export interface AutoRunStatus {
+  status: AutoRunStatusValue
+  stopReason: string | null
+  stopRequested?: boolean
+  bestIterationId: string | null
+  budget: AutoRunBudget
+  startedAt: string | null
+  endedAt: string | null
+}
+
+/** A run is "active" (still in flight) while queued or running — matches the
+ *  backend ACTIVE_STATUSES. The UI polls only while active and resumes polling
+ *  after a reload whenever the hydrated status is active. */
+export function isAutoRunActive(status: string | null | undefined): boolean {
+  return status === 'queued' || status === 'running'
+}
+
+export interface StartAutoSessionRequest {
+  natural_language: string
+  symbol: string
+  timeframe: string
+  start_date: string
+  end_date: string
+  initial_capital: number
+  leverage?: number
+  allow_short?: boolean
+  model: string
+  budget: {
+    max_iterations: number
+    max_wall_clock_sec?: number
+  }
+}
+
+export interface AutoSessionResponse {
+  sessionId: string
+  status: AutoRunStatusValue
+  autoRun: AutoRunStatus
+}
+
 export interface ArchivedSessionHeader {
   id: string
   name: string
@@ -76,6 +134,37 @@ export async function loadSession(sessionId: string): Promise<object | null> {
   } catch {
     return null
   }
+}
+
+/**
+ * Start a durable, server-side automated strategy session (Auto Run).
+ * Returns the new sessionId + initial autoRun block. Throws on a 4xx/5xx
+ * (e.g. open-universe rejected, invalid budget) so the caller can surface it.
+ * The created session appears immediately in GET /api/sessions.
+ */
+export async function startAutoSession(
+  req: StartAutoSessionRequest
+): Promise<AutoSessionResponse> {
+  const res = await apiFetch('/api/auto-sessions', {
+    method: 'POST',
+    body: JSON.stringify(req),
+  })
+  return (await res.json()) as AutoSessionResponse
+}
+
+/**
+ * Request server-side cancellation of a running automated session. Idempotent
+ * 200 on an already-terminal session; 404 on an unknown / non-auto session.
+ * The loop transitions to `stopped` at its next checkpoint — the caller reflects
+ * the final state from the next poll of GET /api/sessions/{id}.
+ */
+export async function stopAutoSession(
+  sessionId: string
+): Promise<AutoSessionResponse> {
+  const res = await apiFetch(`/api/auto-sessions/${sessionId}/stop`, {
+    method: 'POST',
+  })
+  return (await res.json()) as AutoSessionResponse
 }
 
 export async function saveSessionMeta(

@@ -8,25 +8,18 @@ import {
   deleteIterationFromStore,
   fetchIterationDetail,
   beaconSaveSession,
+  startAutoSession,
+  stopAutoSession,
+  isAutoRunActive,
+  type AutoRunStatus,
 } from '../lib/sessionApi'
 import { FALLBACK_MODEL } from '../lib/modelsApi'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '';
 
-function createSemaphore(n: number) {
-  let count = 0
-  const queue: Array<() => void> = []
-  return {
-    acquire: () => new Promise<void>(resolve => {
-      if (count < n) { count++; resolve() }
-      else queue.push(() => { count++; resolve() })
-    }),
-    release: () => {
-      count--
-      queue.shift()?.()
-    },
-  }
-}
+// How often the UI polls the canonical GET /api/sessions/{id} while a backend
+// Auto Run is active (queued/running). Stops at any terminal status.
+const AUTO_RUN_POLL_MS = 2500
 
 // =============================================================================
 // Session Persistence Types
@@ -401,6 +394,28 @@ export interface IterationNode {
   walkForwardStatus?: 'idle' | 'running' | 'complete' | 'error'  // v0.10 additive
 }
 
+// Re-exported so components/strip can import the autoRun contract from the hook.
+export type { AutoRunStatus } from '../lib/sessionApi'
+
+/**
+ * Normalize a node from the LIGHTWEIGHT list/open (and poll) path back to the
+ * IterationNode contract's nullable defaults. The list path omits the heavy/bulk
+ * fields (prompt, scriptCode, result, rating, insights); this keeps list/tree
+ * rendering from reading an undefined heavy field — the real values are
+ * lazy-merged on selection via fetchIterationDetail.
+ */
+function normalizeLightweightNode(n: IterationNode): IterationNode {
+  return {
+    ...n,
+    prompt: n.prompt ?? '',
+    scriptCode: n.scriptCode ?? '',
+    scriptId: n.scriptId ?? '',
+    result: n.result ?? null,
+    rating: n.rating ?? null,
+    insights: n.insights ?? null,
+  }
+}
+
 export type Phase = 'idle' | 'generating' | 'executing' | 'results'
 export type ActivityStep = 'ai-writing' | 'validating' | 'fetching-data' | 'simulating' | 'calculating' | null
 
@@ -432,7 +447,17 @@ const DEFAULT_PARAMS: BacktestParams = {
   exchange: 'binance',
 }
 
-export function useBacktest(sessionId: string) {
+export interface UseBacktestOptions {
+  /** Called when a backend Auto Run mints a NEW durable session — the parent
+   *  adds it to the session list and switches to it (so the UI then polls it). */
+  onAutoSessionCreated?: (sessionId: string, name: string) => void
+}
+
+export function useBacktest(sessionId: string, opts?: UseBacktestOptions) {
+  // Keep the create-callback fresh without re-creating startAutoRun each render.
+  const onAutoSessionCreatedRef = useRef(opts?.onAutoSessionCreated)
+  useEffect(() => { onAutoSessionCreatedRef.current = opts?.onAutoSessionCreated })
+
   const [isHydrated, setIsHydrated] = useState(false)
   const [phase, setPhase] = useState<Phase>('idle')
   const [isLoading, setIsLoading] = useState(false)
@@ -448,16 +473,23 @@ export function useBacktest(sessionId: string) {
   const loadedDetailIdsRef = useRef<Set<string>>(new Set())
   const loadingDetailIdRef = useRef<string | null>(null)
 
-  // Auto-run state
-  const [isAutoRunning, setIsAutoRunning] = useState(false)
-  const [autoRunProgress, setAutoRunProgress] = useState<{ current: number; max: number } | null>(null)
-  const autoRunStopRef = useRef(false)
-  const autoRunIterationIdsRef = useRef<Set<string>>(new Set())
+  // Auto-run state — the backend `autoRun` block is the SINGLE SOURCE OF TRUTH.
+  // The UI running indicator, Stop/Auto-Run controls, progress, and SessionPicker
+  // spinner are all DERIVED from it (never a local boolean), so a browser reload
+  // (no local flag) still shows an active session as running and resumes polling.
+  const [autoRun, setAutoRun] = useState<AutoRunStatus | null>(null)
+  const isAutoRunning = autoRun != null && isAutoRunActive(autoRun.status)
+  const autoRunProgress = autoRun
+    ? { current: autoRun.budget.iterationsDone, max: autoRun.budget.maxIterations }
+    : null
+  // A session with an autoRun block is backend-owned: the server-side loop is
+  // the SOLE writer of its iterations/activity/meta. The frontend save-effects
+  // are disabled for it so they never echo or clobber backend writes through the
+  // non-atomic session.json merge (this is the "single source of truth" rule).
+  const isBackendOwned = autoRun != null
 
-  // Worker count (fetched from /api/config; controls auto-run concurrency)
+  // Worker count (fetched from /api/config; shown in the config bar)
   const [workerCount, setWorkerCount] = useState(1)
-  const workerCountRef = useRef(1)
-  useEffect(() => { workerCountRef.current = workerCount }, [workerCount])
 
   useEffect(() => {
     fetch(`${API_BASE_URL}/api/config`)
@@ -512,29 +544,20 @@ export function useBacktest(sessionId: string) {
           selectedIterationId: data.selectedIterationId ?? null,
         })
 
-        // The list/open path is lightweight: it omits the heavy/bulk fields
-        // (prompt, scriptCode, result, rating, insights). Normalize each node
-        // back to the IterationNode contract's nullable defaults so list/tree
-        // rendering never reads an undefined heavy field (e.g. prompt.length);
-        // the real values are lazy-merged on selection.
-        const normalizeLightweight = (n: IterationNode): IterationNode => ({
-          ...n,
-          prompt: n.prompt ?? '',
-          scriptCode: n.scriptCode ?? '',
-          scriptId: n.scriptId ?? '',
-          result: n.result ?? null,
-          rating: n.rating ?? null,
-          insights: n.insights ?? null,
-        })
+        // Capture the durable autoRun block (dropped before this iteration).
+        // It is the single source of truth for run state; if it is active
+        // (queued/running) the poll effect below resumes tracking automatically
+        // — this is what makes a backend Auto Run survive a browser reload.
+        setAutoRun((data.autoRun ?? null) as AutoRunStatus | null)
 
         // Fix up in-progress statuses that survived a page reload
         const restoredHistory = migrated.iterationHistory.flatMap((n: IterationNode) => {
           if (n.status === 'generating' || n.status === 'executing') {
-            if (n.result) return [normalizeLightweight({ ...n, status: 'complete' as const })]
+            if (n.result) return [normalizeLightweightNode({ ...n, status: 'complete' as const })]
             return []
           }
           if (n.status !== 'complete') return []  // drop error/cancelled/unknown on reload
-          return [normalizeLightweight(n)]
+          return [normalizeLightweightNode(n)]
         })
 
         const restoredIds = new Set(restoredHistory.map((n: IterationNode) => n.id))
@@ -599,6 +622,7 @@ export function useBacktest(sessionId: string) {
   // Save completed/errored iterations when they change
   useEffect(() => {
     if (!isHydrated) return
+    if (isBackendOwned) return   // backend auto-session: the loop is the sole writer
     let savedAny = false
     iterationHistory.forEach((node, idx) => {
       if (node.status !== 'complete' && node.status !== 'error') return
@@ -618,11 +642,12 @@ export function useBacktest(sessionId: string) {
         selectedIterationId: selectedIterationIdRef.current,
       })
     }
-  }, [isHydrated, sessionId, iterationHistory])
+  }, [isHydrated, isBackendOwned, sessionId, iterationHistory])
 
   // Activity log: append new entries immediately; debounced rewrite for updates
   useEffect(() => {
     if (!isHydrated) return
+    if (isBackendOwned) return   // backend auto-session writes its own activity log
     const prev = savedActivityCountRef.current
     const curr = activityLog.length
 
@@ -644,11 +669,12 @@ export function useBacktest(sessionId: string) {
         apiRewriteActivity(sessionId, snapshot)
       }, 1000)
     }
-  }, [isHydrated, sessionId, activityLog])
+  }, [isHydrated, isBackendOwned, sessionId, activityLog])
 
   // Meta save: debounced 2s on params / selectedIteration change
   useEffect(() => {
     if (!isHydrated) return
+    if (isBackendOwned) return   // never write meta for a backend auto-session
     if (metaSaveTimerRef.current) clearTimeout(metaSaveTimerRef.current)
     const params = backtestParams
     const selId = selectedIterationId
@@ -656,11 +682,12 @@ export function useBacktest(sessionId: string) {
       saveSessionMeta(sessionId, { backtestParams: params, selectedIterationId: selId })
     }, 2000)
     return () => { if (metaSaveTimerRef.current) clearTimeout(metaSaveTimerRef.current) }
-  }, [isHydrated, sessionId, backtestParams, selectedIterationId])
+  }, [isHydrated, isBackendOwned, sessionId, backtestParams, selectedIterationId])
 
   // Beacon save on page unload (fire-and-forget, survives page close)
   useEffect(() => {
     const handleBeforeUnload = () => {
+      if (isBackendOwned) return   // backend auto-session owns its meta
       beaconSaveSession(sessionId, {
         backtestParams: backtestParamsRef.current,
         selectedIterationId: selectedIterationIdRef.current,
@@ -668,7 +695,99 @@ export function useBacktest(sessionId: string) {
     }
     window.addEventListener('beforeunload', handleBeforeUnload)
     return () => window.removeEventListener('beforeunload', handleBeforeUnload)
-  }, [sessionId])
+  }, [sessionId, isBackendOwned])
+
+  // Merge a polled snapshot of a backend auto-session into hook state. Reads the
+  // canonical lightweight GET /api/sessions/{id} (no heavy-payload parse) and:
+  //   - updates the autoRun block (single source of truth for run state),
+  //   - appends newly-appeared iteration cards (lightweight; heavy detail stays
+  //     lazy-loaded on selection — never downgrades a detail-loaded node),
+  //   - replaces the backend-owned activity log.
+  const mergePolledSession = useCallback((data: {
+    autoRun?: AutoRunStatus | null
+    iterationHistory?: IterationNode[]
+    activityLog?: ActivityEntry[]
+  }) => {
+    setAutoRun((data.autoRun ?? null) as AutoRunStatus | null)
+
+    const polled = Array.isArray(data.iterationHistory) ? data.iterationHistory : []
+    if (polled.length) {
+      setIterationHistory(prev => {
+        const byId = new Map(prev.map(n => [n.id, n]))
+        let changed = false
+        const next = prev.slice()
+        for (const raw of polled) {
+          const incoming = normalizeLightweightNode(raw as IterationNode)
+          const existing = byId.get(incoming.id)
+          if (!existing) {
+            next.push(incoming)
+            changed = true
+          } else if (!loadedDetailIdsRef.current.has(incoming.id)) {
+            // Refresh lightweight summary fields only; keep heavy fields as-is.
+            const merged: IterationNode = {
+              ...existing,
+              ...incoming,
+              prompt: existing.prompt,
+              scriptCode: existing.scriptCode,
+              result: existing.result,
+              rating: existing.rating,
+              insights: existing.insights,
+            }
+            const idx = next.findIndex(n => n.id === incoming.id)
+            if (idx >= 0 && JSON.stringify(merged) !== JSON.stringify(existing)) {
+              next[idx] = merged
+              changed = true
+            }
+          }
+        }
+        return changed ? next : prev   // iterationHistoryRef is synced by its own effect
+      })
+    }
+
+    if (Array.isArray(data.activityLog)) {
+      const incoming = data.activityLog as ActivityEntry[]
+      setActivityLog(prev =>
+        prev.length === incoming.length &&
+        prev[prev.length - 1]?.id === incoming[incoming.length - 1]?.id
+          ? prev   // unchanged — avoid a needless re-render
+          : incoming
+      )
+    }
+  }, [])
+
+  // Live tracking (J-08): while a backend Auto Run is active (queued/running),
+  // poll the canonical lightweight GET /api/sessions/{id} every ~2.5s. This is
+  // the EXISTING list/open endpoint — NOT a new status endpoint and NOT an eager
+  // heavy-payload parse; heavy iteration detail is still lazy-loaded on
+  // selection. Polling stops at any terminal status and resumes after a reload
+  // whenever the hydrated status is active.
+  useEffect(() => {
+    if (!isHydrated) return
+    if (!autoRun || !isAutoRunActive(autoRun.status)) return
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const tick = async () => {
+      let raw: unknown = null
+      try {
+        raw = await apiLoadSession(sessionId)
+      } catch {
+        /* transient poll error — keep last known status, don't crash the panel */
+      }
+      if (cancelled) return
+      if (raw) mergePolledSession(raw as Parameters<typeof mergePolledSession>[0])
+      if (!cancelled) timer = setTimeout(tick, AUTO_RUN_POLL_MS)
+    }
+    timer = setTimeout(tick, AUTO_RUN_POLL_MS)
+    return () => {
+      cancelled = true
+      if (timer) clearTimeout(timer)
+    }
+    // Subscribe on the STATUS (a string): a steady run keeps one self-scheduling
+    // timer chain (no churn, robust to a transient poll error); a transition —
+    // including to a terminal status — re-runs the effect, which tears down the
+    // chain and, when terminal, does not restart it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isHydrated, sessionId, autoRun?.status, mergePolledSession])
 
   // Derived live session status for multi-session UI
   const sessionStatus: LiveSessionStatus = useMemo(() => {
@@ -1463,42 +1582,6 @@ export function useBacktest(sessionId: string) {
   }, [sessionId, selectedIterationId])
 
   // ==========================================================================
-  // markSuggestionDisabled
-  // ==========================================================================
-
-  const markSuggestionDisabled = useCallback((iterationId: string, suggestionIdx: number) => {
-    const updater = (prev: IterationNode[]) =>
-      prev.map(n => {
-        if (n.id !== iterationId || !n.insights) return n
-        const suggestions = n.insights.suggestions.map((s, i) =>
-          i === suggestionIdx ? { ...s, disabled: true } : s
-        )
-        return { ...n, insights: { ...n.insights, suggestions } }
-      })
-    setIterationHistory(updater)
-    iterationHistoryRef.current = updater(iterationHistoryRef.current)
-
-    // Keep the activity log entry in sync so the UI reflects the disabled state immediately.
-    // Match by title (not global index) so second-batch entries (local indices 0–9) are found correctly.
-    setActivityLog(prev => {
-      const disabledTitle = iterationHistoryRef.current
-        .find(n => n.id === iterationId)?.insights?.suggestions[suggestionIdx]?.title
-      if (!disabledTitle) return prev
-      return prev.map(e => {
-        if (e.type !== 'insights' || e.iterationId !== iterationId || !e.detail) return e
-        try {
-          const sArr = JSON.parse(e.detail) as InsightsSuggestion[]
-          const updated = sArr.map(s => s.title === disabledTitle ? { ...s, disabled: true } : s)
-          if (updated.every((s, i) => s === sArr[i])) return e  // no change — skip re-render
-          return { ...e, detail: JSON.stringify(updated) }
-        } catch {
-          return e
-        }
-      })
-    })
-  }, [])
-
-  // ==========================================================================
   // selectIteration
   // ==========================================================================
 
@@ -2044,219 +2127,83 @@ export function useBacktest(sessionId: string) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [iterationHistory, backtestParams, addLogEntry, executeSingleTimeframe, generateInsightsForIteration, validateSymbolExists])
 
+  // Start a durable, SERVER-SIDE Auto Run (J-10). The in-browser iterate loop
+  // is gone: this seeds a NEW backend auto-session from the baseline iteration's
+  // NL prompt + params, then asks the parent to switch to it. That new session
+  // hydrates with an active autoRun block and the poll effect tracks it live —
+  // so the run keeps going (and survives a reload) independent of the browser.
+  // The backend RobustScorer is now the sole "best" definition (no local score).
   const startAutoRun = useCallback(async (maxAttempts: number, model: string, fromIterationId: string) => {
-    const baseline = iterationHistoryRef.current.find(n => n.id === fromIterationId)
+    let baseline = iterationHistoryRef.current.find(n => n.id === fromIterationId)
     if (!baseline) return
 
-    autoRunStopRef.current = false
-    setIsAutoRunning(true)
-    setAutoRunProgress({ current: 0, max: maxAttempts })
-
-    const abortController = new AbortController()
-    abortControllerRef.current = abortController
-    const { signal } = abortController
-
-    if (baseline.params) {
-      setBacktestParams(baseline.params)
+    // The list/open path is lightweight — ensure the NL prompt + params are
+    // present (lazy-load the baseline's detail if needed) before seeding.
+    if (!baseline.prompt || !baseline.params) {
+      try {
+        const detail = await fetchIterationDetail(sessionId, fromIterationId) as Partial<IterationNode>
+        baseline = {
+          ...baseline,
+          prompt: detail.prompt || baseline.prompt,
+          params: detail.params || baseline.params,
+        }
+      } catch {
+        /* fall through — the guards below surface a clear error */
+      }
     }
 
-    let baselineId = baseline.id
-    let attempt = 0
-    let generatedNewBatch = false
-
-    while (attempt < maxAttempts && !autoRunStopRef.current) {
-      const currentBaseline = iterationHistoryRef.current.find(n => n.id === baselineId)
-      const suggestions = currentBaseline?.insights?.suggestions ?? []
-
-      // Identify all untried suggestions
-      const untriedSuggestions: Array<{
-        suggestion: InsightsSuggestion
-        index: number
-      }> = []
-
-      suggestions.forEach((s, idx) => {
-        if (!s.disabled) {
-          untriedSuggestions.push({ suggestion: s, index: idx })
-        }
-      })
-
-      if (untriedSuggestions.length === 0) {
-        if (suggestions.length === 0) break // No suggestions at all
-
-        // All suggestions tried. Generate a new batch once per baseline.
-        if (!generatedNewBatch) {
-          addLogEntry({ type: 'auto-run', content: 'All suggestions tried — generating new batch...', iterationId: baselineId })
-          await generateInsightsForIteration(baselineId, model, suggestions)
-          generatedNewBatch = true
-          const refreshed = iterationHistoryRef.current.find(n => n.id === baselineId)
-          const refreshedSuggestions = refreshed?.insights?.suggestions ?? []
-
-          if (refreshedSuggestions.filter(s => !s.disabled).length === 0) break // API failed to produce new suggestions
-          continue
-        }
-        break // New batch was already generated and also exhausted — stop
-      }
-
-      const scoreIteration = (node: IterationNode): number => {
-        const trades = node.numTrades ?? 0
-        if (trades === 0) return -Infinity
-        // Ramps from 0.5× at 1 trade → 1.0× at 50+ trades
-        const freqMultiplier = Math.min(1, 0.5 + (trades / 100))
-        const base = node.totalReturn ?? -Infinity
-        const sharpeBonus = (node.sharpe ?? 0) > 0 ? (node.sharpe ?? 0) * 0.05 : 0
-        return (base + sharpeBonus) * freqMultiplier
-      }
-
-      const baselineScore = scoreIteration(currentBaseline ?? {} as IterationNode)
-      const fmt = (v: number) => `${v >= 0 ? '+' : ''}${(v * 100).toFixed(2)}%`
-
-      const workers = workerCountRef.current
-      const concurrencyNote = workers === 1 ? '1 at a time' : `${workers} at a time`
+    const params = baseline.params
+    const nl = (baseline.prompt || '').trim()
+    if (!params || nl.length < 10) {
       addLogEntry({
-        type: 'auto-run',
-        content: `Running ${untriedSuggestions.length} suggestions (${concurrencyNote})...`,
-        iterationId: baselineId
+        type: 'error',
+        content: 'Cannot start Auto Run: the selected iteration has no strategy prompt to seed from.',
       })
-
-      const baselineResult = currentBaseline?.result
-      const metrics = baselineResult ? {
-        total_return: baselineResult.total_return,
-        max_drawdown: baselineResult.max_drawdown,
-        num_trades: baselineResult.num_trades,
-        win_rate: baselineResult.win_rate,
-        sharpe_ratio: baselineResult.sharpe_ratio,
-        profit_factor: baselineResult.profit_factor,
-      } : null
-
-      // Use a worker-pool semaphore so at most workerCount backtests run at once
-      autoRunIterationIdsRef.current = new Set()
-      const baselineWf = iterationHistoryRef.current.find(n => n.id === baselineId)?.walkForwardResult
-      const wfvConfigForRun: WalkForwardConfig = {
-        isMonths: baselineWf?.is_months ?? 6,
-        oosMonths: baselineWf?.oos_months ?? 3,
-      }
-
-      const sem = createSemaphore(workers)
-      const executionPromises = untriedSuggestions.map(async ({ suggestion, index }) => {
-        await sem.acquire()
-        try {
-          const node = await generateAndExecute(
-            suggestion.prompt, model, currentBaseline?.scriptCode, metrics,
-            undefined, undefined, true, suggestion.title, signal,
-            undefined, undefined, undefined, baselineId,
-            currentBaseline?.params ?? undefined,
-            wfvConfigForRun,
-          )
-          const id = node?.id ?? null
-          if (id) autoRunIterationIdsRef.current.add(id)
-          return { id, suggestion, index }
-        } catch {
-          return { id: null, suggestion, index }
-        } finally {
-          sem.release()
-        }
-      })
-
-      const results = await Promise.all(executionPromises)
-
-      if (autoRunStopRef.current || signal.aborted) {
-        results.forEach(({ id }) => { if (id) deleteIteration(id) })
-        break
-      }
-
-      let bestScore = -Infinity
-      let bestId: string | null = null
-
-      const finishedIds: string[] = []
-
-      // Evaluate results
-      results.forEach(({ id, index }) => {
-        if (!id) {
-          markSuggestionDisabled(baselineId, index)
-          return
-        }
-        finishedIds.push(id)
-        const newIteration = iterationHistoryRef.current.find(n => n.id === id)
-        const newScore = newIteration ? scoreIteration(newIteration) : -Infinity
-
-        if (newIteration?.status === 'complete' && newScore > bestScore) {
-          bestScore = newScore
-          bestId = id
-        }
-      })
-
-      const WF_ACCEPT_THRESHOLD = 0.3
-
-      if (bestId && bestScore > baselineScore) {
-        // Read walk-forward result from inline WFV (ran as phase 5 of backtest)
-        const bestIteration = iterationHistoryRef.current.find(n => n.id === bestId)
-        const wfResult = bestIteration?.walkForwardResult ?? null
-
-        if (wfResult && wfResult.wfe < WF_ACCEPT_THRESHOLD) {
-          addLogEntry({
-            type: 'auto-run',
-            content: `Walk-forward rejected candidate (WFE ${wfResult.wfe.toFixed(2)} < ${WF_ACCEPT_THRESHOLD}) — discarding.`,
-            iterationId: baselineId,
-          })
-          deleteIteration(bestId)
-          untriedSuggestions.forEach(({ index }) => markSuggestionDisabled(baselineId, index))
-          continue
-        }
-
-        attempt++
-        setAutoRunProgress({ current: attempt, max: maxAttempts })
-        addLogEntry({ type: 'auto-run', content: `Kept (${attempt}/${maxAttempts}): ${fmt(bestScore)} > ${fmt(baselineScore)} — generating suggestions...`, iterationId: bestId })
-
-        // Delete all others
-        finishedIds.forEach(id => {
-          if (id !== bestId) deleteIteration(id)
-        })
-
-        // Disable all suggestions on the old baseline since we're moving on
-        untriedSuggestions.forEach(({ index }) => markSuggestionDisabled(baselineId, index))
-
-        baselineId = bestId
-        generatedNewBatch = false
-        await generateInsightsForIteration(bestId, model)
-      } else {
-        addLogEntry({
-          type: 'auto-run',
-          content: `All ${untriedSuggestions.length} concurrent runs failed to beat baseline (${fmt(baselineScore)}). Generating new batch...`,
-          iterationId: baselineId,
-        })
-
-        // Delete all generated iterations since none beat the baseline
-        finishedIds.forEach(id => deleteIteration(id))
-
-        // Mark all as disabled
-        untriedSuggestions.forEach(({ index }) => markSuggestionDisabled(baselineId, index))
-      }
+      return
     }
 
-    setIsAutoRunning(false)
-    setAutoRunProgress(null)
-    autoRunStopRef.current = false
-    abortControllerRef.current = null
+    // Budget: max_iterations = the Auto Run count (clamped to the backend's
+    // 1..50), plus a bounded wall-clock so a run can never go unbounded yet is
+    // generous enough not to prematurely kill a legitimate multi-round run.
+    const maxIterations = Math.max(1, Math.min(50, Math.round(maxAttempts)))
+    try {
+      const res = await startAutoSession({
+        natural_language: nl,
+        symbol: params.symbol,
+        timeframe: params.timeframe,
+        start_date: params.start_date,
+        end_date: params.end_date,
+        initial_capital: params.initial_capital,
+        leverage: params.leverage ?? 1,
+        allow_short: params.allow_short ?? false,
+        model,
+        budget: {
+          max_iterations: maxIterations,
+          max_wall_clock_sec: Math.max(120, maxIterations * 180),
+        },
+      })
+      const label = `Auto · ${baseline.strategyName || nl.slice(0, 32)}`
+      onAutoSessionCreatedRef.current?.(res.sessionId, label)
+    } catch (e) {
+      addLogEntry({
+        type: 'error',
+        content: `Failed to start Auto Run: ${e instanceof Error ? e.message : String(e)}`,
+      })
+    }
+  }, [sessionId, addLogEntry])
 
-    const reason = attempt >= maxAttempts ? `${maxAttempts} improvements done` : 'no more suggestions'
-    addLogEntry({ type: 'auto-run', content: `Auto Run finished — ${reason}`, iterationId: baselineId })
-  }, [generateAndExecute, deleteIteration, markSuggestionDisabled, addLogEntry, generateInsightsForIteration])
-
-  const stopAutoRun = useCallback(() => {
-    autoRunStopRef.current = true
-    abortControllerRef.current?.abort()
-    abortControllerRef.current = null
-    setPhase('idle')
-    setIsLoading(false)
-    const toRemove = autoRunIterationIdsRef.current
-    setIterationHistory(prev => prev.filter(n => !toRemove.has(n.id)))
-    autoRunIterationIdsRef.current = new Set()
-    setActivityLog(prev => prev.map(e =>
-      (e.status === 'active' || e.status === 'pending')
-        ? { ...e, status: 'done' as const, completedAt: Date.now() }
-        : e
-    ))
-  }, [])
+  // Stop the backend Auto Run for THIS session (J-11): a server-side
+  // cancellation. The loop transitions to `stopped` at its next checkpoint and
+  // the next poll reflects it; we optimistically apply the returned block so the
+  // controls update immediately.
+  const stopAutoRun = useCallback(async () => {
+    try {
+      const res = await stopAutoSession(sessionId)
+      setAutoRun((res.autoRun ?? null) as AutoRunStatus | null)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to stop Auto Run')
+    }
+  }, [sessionId])
 
   return {
     isHydrated,
@@ -2278,6 +2225,7 @@ export function useBacktest(sessionId: string) {
     selectIteration,
     loadCachedIteration,
     loadCachedAsStartingPoint,
+    autoRun,
     isAutoRunning,
     autoRunProgress,
     startAutoRun,

@@ -20,6 +20,8 @@ interface SessionContainerProps {
   onLastUsedModelChange: (model: string) => void
   onStatusChange: (status: LiveSessionStatus) => void
   onNameChange: (name: string) => void
+  /** A backend Auto Run minted a NEW durable session — add a tab and switch. */
+  onAutoSessionCreated: (sessionId: string, name: string) => void
 }
 
 export function SessionContainer({
@@ -32,6 +34,7 @@ export function SessionContainer({
   onLastUsedModelChange,
   onStatusChange,
   onNameChange,
+  onAutoSessionCreated,
 }: SessionContainerProps) {
   const {
     phase,
@@ -51,6 +54,7 @@ export function SessionContainer({
     selectIteration,
     loadCachedIteration,
     loadCachedAsStartingPoint,
+    autoRun,
     isAutoRunning,
     autoRunProgress,
     startAutoRun,
@@ -58,7 +62,7 @@ export function SessionContainer({
     runWalkForward,
     sessionStatus,
     workerCount,
-  } = useBacktest(sessionId)
+  } = useBacktest(sessionId, { onAutoSessionCreated })
 
   // Directions cache
   const {
@@ -238,6 +242,7 @@ export function SessionContainer({
             detailLoading={detailLoading}
             detailError={detailError}
             onRetryDetail={retryDetailLoad}
+            autoRun={autoRun}
           />
         </div>
       </main>

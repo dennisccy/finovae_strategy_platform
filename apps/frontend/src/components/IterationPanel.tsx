@@ -1,8 +1,9 @@
 import { useEffect, useRef, useMemo } from 'react'
 import { GitBranch, Loader2, AlertCircle, ChevronLeft } from 'lucide-react'
-import type { IterationNode, WalkForwardConfig } from '../hooks/useBacktest'
+import type { IterationNode, WalkForwardConfig, AutoRunStatus } from '../hooks/useBacktest'
 import { IterationCard } from './IterationCard'
 import { IterationDetailView } from './IterationDetailView'
+import { AutoSessionStatusStrip } from './AutoSessionStatusStrip'
 
 interface IterationPanelProps {
   iterations: IterationNode[]
@@ -19,6 +20,9 @@ interface IterationPanelProps {
   detailError?: string | null
   /** Retry the lazy detail fetch for the currently selected run. */
   onRetryDetail?: () => void
+  /** Backend automated-session status (null for a manual session). Rendered as
+   *  the status strip pinned above the iteration tree. */
+  autoRun?: AutoRunStatus | null
 }
 
 // =============================================================================
@@ -125,7 +129,7 @@ function IterationTreeItem({ node, latestId, onSelect, onDelete, onRerun, onStar
 // IterationPanel
 // =============================================================================
 
-export function IterationPanel({ iterations, selectedId, onSelect, onDelete, onRerun, onStartAutoRun, onRunWalkForward, detailLoading, detailError, onRetryDetail }: IterationPanelProps) {
+export function IterationPanel({ iterations, selectedId, onSelect, onDelete, onRerun, onStartAutoRun, onRunWalkForward, detailLoading, detailError, onRetryDetail, autoRun }: IterationPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const isUserScrolledUp = useRef(false)
   const lastScrollHeight = useRef(0)
@@ -247,20 +251,26 @@ export function IterationPanel({ iterations, selectedId, onSelect, onDelete, onR
     }
   }
 
-  // Empty state
+  // Empty state — still show the auto-session strip if a run just started but
+  // hasn't produced its first iteration yet (so "Running" is visible).
   if (sortedIterations.length === 0) {
     return (
-      <div className="flex-1 flex items-center justify-center bg-slate-50 p-4">
-        <div className="text-center">
-          <div className="w-12 h-12 lg:w-16 lg:h-16 bg-slate-200 rounded-full flex items-center justify-center mx-auto">
-            <GitBranch className="w-6 h-6 lg:w-8 lg:h-8 text-slate-400" />
+      <div className="flex-1 flex flex-col bg-slate-50 p-4 lg:p-6">
+        {autoRun && <AutoSessionStatusStrip autoRun={autoRun} />}
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center">
+            <div className="w-12 h-12 lg:w-16 lg:h-16 bg-slate-200 rounded-full flex items-center justify-center mx-auto">
+              <GitBranch className="w-6 h-6 lg:w-8 lg:h-8 text-slate-400" />
+            </div>
+            <h3 className="mt-3 lg:mt-4 text-base lg:text-lg font-semibold text-slate-600">
+              {autoRun ? 'Waiting for the first iteration…' : 'No Iterations Yet'}
+            </h3>
+            <p className="mt-2 text-xs lg:text-sm text-slate-500 max-w-xs">
+              {autoRun
+                ? 'The automated session is generating and backtesting its first strategy.'
+                : 'Your strategy iterations will appear here. Describe a strategy to get started.'}
+            </p>
           </div>
-          <h3 className="mt-3 lg:mt-4 text-base lg:text-lg font-semibold text-slate-600">
-            No Iterations Yet
-          </h3>
-          <p className="mt-2 text-xs lg:text-sm text-slate-500 max-w-xs">
-            Your strategy iterations will appear here. Describe a strategy to get started.
-          </p>
         </div>
       </div>
     )
@@ -268,6 +278,7 @@ export function IterationPanel({ iterations, selectedId, onSelect, onDelete, onR
 
   return (
     <div ref={scrollRef} className="flex-1 overflow-y-auto bg-slate-50 p-4 lg:p-6">
+      {autoRun && <AutoSessionStatusStrip autoRun={autoRun} />}
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-sm font-semibold text-slate-700">
           Iterations ({sortedIterations.length})

@@ -12,10 +12,12 @@ Covers the iter-1 anti-goals:
 And the J-09 terminal/best-marking journey.
 """
 
+import asyncio
 import dataclasses
 
 import pytest
 
+import backend.auto_session as auto_session_mod
 import backend.session_store as ss
 from backend.auto_session import (
     AutoSessionController,
@@ -383,3 +385,71 @@ async def test_stop_request_transitions_to_stopped_keeping_best(store):
     # No iterations appended after the stop (only the baseline ran).
     assert len(ss.list_iteration_dirs(sid)) == 1
     assert len(fake.execute_calls) == 1
+
+
+# =============================================================================
+# B1+B2 co-design regression — a /stop racing a controller _save_auto_run must
+# NOT be dropped once the autoRun store I/O moves off the event loop.
+# =============================================================================
+
+async def test_stop_racing_save_auto_run_is_not_dropped(store, monkeypatch):
+    """B1 (off-loop autoRun I/O) and B2 (single-writer serialization) are ONE
+    design.  This forces the exact TOCTOU the iter-1 lesson warned about: a
+    ``/stop`` issued while the controller is between its autoRun READ and WRITE.
+
+    The controller's ``_save_auto_run`` and the competing stop share the SAME
+    per-session ``asyncio.Lock``.  Holding it across the off-loop read+write means
+    the stop must queue behind the controller's RMW instead of interleaving into
+    it — so the persisted ``stopRequested=True`` is preserved (not clobbered) and
+    the loop reaches ``stopped`` retaining the best-so-far.
+
+    (Verified during development that REMOVING the shared lock — leaving only the
+    off-loop ``to_thread`` — drops the stop and the loop runs to
+    ``budget-exhausted``, which is precisely the regression this guards.)
+    """
+    sid = "auto-race"
+    cfg = build_config(targets={})
+    lock = asyncio.Lock()
+
+    # The competing /stop, mirroring stop_auto_session's locked RMW (shares `lock`).
+    async def fire_stop():
+        async with lock:
+            meta = await asyncio.to_thread(ss.read_session_meta, sid)
+            auto_run = dict((meta or {}).get("autoRun", {}))
+            auto_run["stopRequested"] = True
+            await asyncio.to_thread(ss.write_session_meta, sid, {"autoRun": auto_run})
+
+    armed = {"on": True}
+    real_off_loop = auto_session_mod._run_off_loop
+
+    async def racing_off_loop(fn, *args):
+        result = await real_off_loop(fn, *args)
+        # Fire the race exactly once, right after the controller's first autoRun
+        # READ — i.e. inside _save_auto_run, before its WRITE, while it holds the
+        # shared lock. The stop must wait for the lock here; without it, the stop
+        # would complete now and the controller's stale write would clobber it.
+        if armed["on"] and fn is ss.read_session_meta:
+            armed["on"] = False
+            asyncio.ensure_future(fire_stop())
+            await asyncio.sleep(0.05)  # let fire_stop reach (and block on) the lock
+        return result
+
+    monkeypatch.setattr(auto_session_mod, "_run_off_loop", racing_off_loop)
+
+    fake = FakePipeline(
+        sequence=[FakeSpec(total_return=0.1, num_trades=10, wfe=0.6)] * 8,
+        suggestions_per_round=1,
+    )
+    ctrl = AutoSessionController(
+        sid, cfg, BudgetTracker(max_iterations=5), fake, auto_run_lock=lock,
+    )
+
+    auto_run = await ctrl.run()
+
+    # The concurrent stop was honored, not dropped.
+    assert auto_run["status"] == "stopped"
+    assert auto_run["stopReason"] == "stopped"
+    assert ss.read_session_meta(sid)["autoRun"]["stopRequested"] is True
+    # Best-so-far retained; loop stopped at its first checkpoint (only baseline ran).
+    assert auto_run["bestIterationId"] is not None
+    assert len(ss.list_iteration_dirs(sid)) == 1

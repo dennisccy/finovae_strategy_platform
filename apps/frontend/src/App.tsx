@@ -162,6 +162,18 @@ function App() {
     setActiveSessionId(id)
   }, [])
 
+  // A backend Auto Run minted a NEW durable session — add it to the picker and
+  // switch to it. Its useBacktest hook then hydrates the active autoRun block
+  // and begins live polling (backend is the single source of truth).
+  const handleAutoSessionCreated = useCallback((newId: string, name: string) => {
+    setLiveSessions(prev =>
+      prev.some(s => s.id === newId)
+        ? prev.map(s => (s.id === newId ? { ...s, lastAccessedAt: Date.now() } : s))
+        : [...prev, { id: newId, name, lastAccessedAt: Date.now() }]
+    )
+    setActiveSessionId(newId)
+  }, [])
+
   const handleRestoreArchived = useCallback(async (archivedId: string) => {
     const session = archivedSessions.find(s => s.id === archivedId)
     if (!session) return
@@ -285,6 +297,7 @@ function App() {
           onLastUsedModelChange={setLastUsedModel}
           onStatusChange={handleStatusChange}
           onNameChange={(name) => handleNameChange(session.id, name)}
+          onAutoSessionCreated={handleAutoSessionCreated}
         />
       ))}
     </div>

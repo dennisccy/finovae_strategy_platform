@@ -327,6 +327,20 @@ def initial_auto_run(budget: BudgetTracker, *, status: str = STATUS_RUNNING) -> 
     }
 
 
+async def _run_off_loop(fn, *args):
+    """Run a blocking ``session_store`` call in a worker thread so the headless
+    loop never blocks the API event loop (anti-goal B1: the background job must
+    not block the loop; the UI poll / other requests stay responsive while a run
+    is active).
+
+    Centralizing the off-loop hop here — rather than scattering ``to_thread`` —
+    keeps the ``autoRun`` read-modify-write a single critical section that
+    :meth:`AutoSessionController._save_auto_run` wraps in the shared per-session
+    lock (B1 and B2 are co-designed; see that method).
+    """
+    return await asyncio.to_thread(fn, *args)
+
+
 # =============================================================================
 # Controller
 # =============================================================================
@@ -348,6 +362,7 @@ class AutoSessionController:
         *,
         scorer: Optional[RobustScorer] = None,
         semaphore: Optional[asyncio.Semaphore] = None,
+        auto_run_lock: Optional[asyncio.Lock] = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.session_id = session_id
@@ -356,6 +371,10 @@ class AutoSessionController:
         self.pipeline = pipeline
         self.scorer = scorer or RobustScorer()
         self.semaphore = semaphore or asyncio.Semaphore(1)
+        # Per-session lock serializing every ``autoRun`` read-modify-write against
+        # a concurrent ``/stop`` (B2).  The production route passes the SAME lock
+        # to ``stop_auto_session``; a standalone controller (tests) gets its own.
+        self._lock = auto_run_lock or asyncio.Lock()
         self._clock = clock
 
         self.status = STATUS_RUNNING
@@ -372,25 +391,43 @@ class AutoSessionController:
 
     # ---- persistence helpers ------------------------------------------------
 
-    def _save_auto_run(self) -> dict:
-        """Write the current autoRun block to session.json, PRESERVING an
-        externally-set ``stopRequested`` flag (the /stop endpoint owns it)."""
-        persisted = (session_store.read_session_meta(self.session_id) or {}).get("autoRun", {})
-        auto_run = {
-            "status": self.status,
-            "stopReason": self.stop_reason,
-            "stopRequested": bool(persisted.get("stopRequested", False)),
-            "bestIterationId": self.best_id,
-            "budget": self.budget.to_dict(),
-            "startedAt": self.started_at,
-            "endedAt": self.ended_at,
-        }
-        session_store.write_session_meta(self.session_id, {"autoRun": auto_run})
+    async def _save_auto_run(self) -> dict:
+        """Persist the current autoRun block to session.json OFF the event loop,
+        PRESERVING an externally-set ``stopRequested`` flag (the /stop endpoint
+        owns it).
+
+        **B1+B2 co-design.** The whole read-modify-write runs under the
+        per-session ``self._lock`` (shared with :func:`stop_auto_session`).  That
+        is what lets the blocking I/O move off-loop via :func:`_run_off_loop`
+        safely: without the lock, the ``await`` between this read and write would
+        let a concurrent ``/stop`` interleave and its ``stopRequested=True`` would
+        be clobbered by our stale read (the TOCTOU the iter-1 lesson warned
+        about).  ``write_session_meta`` top-level-merges but REPLACES the whole
+        ``autoRun`` dict, so the lock — not disjoint keys — is the correctness
+        guarantee here.
+        """
+        async with self._lock:
+            meta = await _run_off_loop(session_store.read_session_meta, self.session_id)
+            persisted = (meta or {}).get("autoRun", {})
+            auto_run = {
+                "status": self.status,
+                "stopReason": self.stop_reason,
+                "stopRequested": bool(persisted.get("stopRequested", False)),
+                "bestIterationId": self.best_id,
+                "budget": self.budget.to_dict(),
+                "startedAt": self.started_at,
+                "endedAt": self.ended_at,
+            }
+            await _run_off_loop(
+                session_store.write_session_meta, self.session_id, {"autoRun": auto_run})
         return auto_run
 
-    def _stop_requested(self) -> bool:
-        meta = session_store.read_session_meta(self.session_id) or {}
-        return bool(meta.get("autoRun", {}).get("stopRequested", False))
+    async def _stop_requested(self) -> bool:
+        """Read the persisted stop flag under the shared lock (a torn read while
+        ``/stop`` writes would otherwise mask a real stop request)."""
+        async with self._lock:
+            meta = await _run_off_loop(session_store.read_session_meta, self.session_id)
+        return bool((meta or {}).get("autoRun", {}).get("stopRequested", False))
 
     def _append_activity(self, type_: str, content: str, *, iteration_id: Optional[str] = None,
                          status: str = "done") -> None:
@@ -533,12 +570,12 @@ class AutoSessionController:
             self.stop_reason = STATUS_ERROR
             self.ended_at = _now_iso()
             self._append_activity("error", f"Automated session failed: {exc}")
-        return self._save_auto_run()
+        return await self._save_auto_run()
 
     async def _run_inner(self) -> None:
         cfg = self.config
         self.status = STATUS_RUNNING
-        self._save_auto_run()
+        await self._save_auto_run()
         self._append_activity("user-prompt", cfg.natural_language)
 
         # ---- Step 0: baseline iteration (generate → backtest → rating → insights)
@@ -550,7 +587,7 @@ class AutoSessionController:
         )
         if baseline is None:
             # Baseline could not be produced (e.g., generation/backtest error).
-            self._finish(STATUS_BUDGET_EXHAUSTED, "budget-exhausted")
+            await self._finish(STATUS_BUDGET_EXHAUSTED, "budget-exhausted")
             return
 
         node, wf_result = baseline
@@ -560,7 +597,7 @@ class AutoSessionController:
         self.best_metrics = self._metrics_from(node, wf_result)
         node["insights"] = await self._insights(node)
         self._baseline_index = self._persist_new(node)
-        self._save_auto_run()
+        await self._save_auto_run()
 
         # ---- Improvement rounds (hard-bounded by budget) ------------------
         while True:
@@ -569,13 +606,13 @@ class AutoSessionController:
             # Terminal checks, in priority order.
             if has_targets(cfg.targets) and self.best_metrics is not None \
                     and targets_satisfied(cfg.targets, self.best_metrics):
-                self._finish(STATUS_CRITERIA_MET, "criteria-met")
+                await self._finish(STATUS_CRITERIA_MET, "criteria-met")
                 return
             if self.budget.exceeded():
-                self._finish(STATUS_BUDGET_EXHAUSTED, "budget-exhausted")
+                await self._finish(STATUS_BUDGET_EXHAUSTED, "budget-exhausted")
                 return
-            if self._stop_requested():
-                self._finish(STATUS_STOPPED, "stopped")
+            if await self._stop_requested():
+                await self._finish(STATUS_STOPPED, "stopped")
                 return
 
             suggestions = [
@@ -584,7 +621,7 @@ class AutoSessionController:
             ]
             if not suggestions:
                 # No remaining suggestions — documented budget-exhausted variant.
-                self._finish(STATUS_BUDGET_EXHAUSTED, "budget-exhausted")
+                await self._finish(STATUS_BUDGET_EXHAUSTED, "budget-exhausted")
                 return
 
             self._append_activity(
@@ -628,13 +665,13 @@ class AutoSessionController:
                 )
 
             self.budget = self.budget.with_wall_clock(self._clock() - self._start_monotonic)
-            self._save_auto_run()
+            await self._save_auto_run()
 
             # Regenerate a fresh suggestion batch for the next round, unless we
             # are about to terminate (avoids a wasted LLM call past the cap).
             terminating = (
                 self.budget.exceeded()
-                or self._stop_requested()
+                or await self._stop_requested()
                 or (has_targets(cfg.targets) and self.best_metrics is not None
                     and targets_satisfied(cfg.targets, self.best_metrics))
             )
@@ -690,7 +727,7 @@ class AutoSessionController:
 
     # ---- terminal transition ------------------------------------------------
 
-    def _finish(self, status: str, reason: str) -> None:
+    async def _finish(self, status: str, reason: str) -> None:
         self.status = status
         self.stop_reason = reason
         self.ended_at = _now_iso()
@@ -701,7 +738,7 @@ class AutoSessionController:
                if self.best_metrics is not None else ""),
             iteration_id=self.best_id,
         )
-        self._save_auto_run()
+        await self._save_auto_run()
 
 
 # =============================================================================

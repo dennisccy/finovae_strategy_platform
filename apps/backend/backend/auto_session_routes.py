@@ -16,6 +16,7 @@ import asyncio
 import logging
 import time
 import uuid
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
 
@@ -103,6 +104,24 @@ class CreateAutoSessionRequest(BaseModel):
         if self.start_date >= self.end_date:
             raise ValueError("end_date must be after start_date")
         return self
+
+
+# =============================================================================
+# Running-session handle (registered on app.state.auto_sessions)
+# =============================================================================
+
+@dataclass
+class AutoSessionHandle:
+    """In-memory handle for a launched auto-session.
+
+    Holds the background ``task`` and the per-session ``lock`` that serializes
+    every ``autoRun`` read-modify-write between the controller's ``_save_auto_run``
+    and :func:`stop_auto_session` (B2 — see ``auto_session._save_auto_run``).  The
+    handle is ephemeral; durability is the persisted ``autoRun`` status.
+    """
+
+    task: asyncio.Task
+    lock: asyncio.Lock
 
 
 # =============================================================================
@@ -224,38 +243,52 @@ async def create_auto_session(req: CreateAutoSessionRequest, raw_request: Reques
 
     # Launch the loop as a non-blocking background task (no broker/queue — the
     # in-memory handle is ephemeral; durability is the persisted autoRun status).
+    # The per-session lock is shared with the controller so a concurrent /stop
+    # serializes against its autoRun writes (B2).
     pipeline = _resolve_pipeline(app)
     semaphore = _resolve_semaphore(app)
+    lock = asyncio.Lock()
     controller = AutoSessionController(
-        session_id, config, budget, pipeline, semaphore=semaphore,
+        session_id, config, budget, pipeline, semaphore=semaphore, auto_run_lock=lock,
     )
     registry = _registry(app)
     task = asyncio.create_task(controller.run())
-    registry[session_id] = task
+    registry[session_id] = AutoSessionHandle(task=task, lock=lock)
     task.add_done_callback(lambda _t, sid=session_id: registry.pop(sid, None))
 
     return {"sessionId": session_id, "status": auto_run["status"], "autoRun": auto_run}
 
 
 @router.post("/{session_id}/stop")
-async def stop_auto_session(session_id: str):
-    """Request cancellation of a running automated session.
+async def stop_auto_session(session_id: str, raw_request: Request):
+    """Request cancellation of a running automated session (J-11).
 
     Flips the persisted ``stopRequested`` flag; the loop honors it at its next
     checkpoint and transitions to ``stopped``.  Idempotent 200 if already
     terminal; 404 if the session is unknown / not an auto-session.
+
+    **B2.** The read-modify-write runs under the SAME per-session lock the
+    controller's ``_save_auto_run`` holds, so a stop issued mid-``_save_auto_run``
+    is serialized after it and never lost (TOCTOU).  If no live handle exists on
+    this worker (run already finished, or started on another worker), a transient
+    lock is used — there is no local controller to race, and durability is the
+    persisted flag the controller re-reads at its next checkpoint.
     """
-    meta = await asyncio.to_thread(session_store.read_session_meta, session_id)
-    if not meta or not isinstance(meta.get("autoRun"), dict):
-        raise HTTPException(status_code=404, detail=f"Auto-session {session_id} not found")
+    handle = _registry(raw_request.app).get(session_id)
+    lock = handle.lock if handle is not None else asyncio.Lock()
 
-    auto_run = meta["autoRun"]
-    if is_terminal(auto_run.get("status")):
-        # Already finished — no-op (idempotent).
-        return {"sessionId": session_id, "status": auto_run.get("status"), "autoRun": auto_run}
+    async with lock:
+        meta = await asyncio.to_thread(session_store.read_session_meta, session_id)
+        if not meta or not isinstance(meta.get("autoRun"), dict):
+            raise HTTPException(status_code=404, detail=f"Auto-session {session_id} not found")
 
-    updated = {**auto_run, "stopRequested": True}
-    await asyncio.to_thread(
-        session_store.write_session_meta, session_id, {"autoRun": updated}
-    )
+        auto_run = meta["autoRun"]
+        if is_terminal(auto_run.get("status")):
+            # Already finished — no-op (idempotent).
+            return {"sessionId": session_id, "status": auto_run.get("status"), "autoRun": auto_run}
+
+        updated = {**auto_run, "stopRequested": True}
+        await asyncio.to_thread(
+            session_store.write_session_meta, session_id, {"autoRun": updated}
+        )
     return {"sessionId": session_id, "status": updated.get("status"), "autoRun": updated}
