@@ -1,0 +1,353 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<title>goal-financial_free-iter-3 — Iteration Summary</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  margin: 0; padding: 0; color: #1f2328; background: #f6f8fa; line-height: 1.5;
+}
+.container { max-width: 880px; margin: 0 auto; padding: 24px 16px 80px; }
+.hero {
+  background: white; border: 1px solid #d0d7de; border-radius: 8px;
+  padding: 28px; margin-bottom: 16px; text-align: center;
+}
+.hero.pass { border-top: 6px solid #1a7f37; }
+.hero.fail { border-top: 6px solid #cf222e; }
+.hero.inprogress { border-top: 6px solid #d4a72c; }
+.hero h1 { margin: 0 0 6px 0; font-size: 1.6rem; }
+.hero h2 { margin: 0 0 14px 0; font-size: 1rem; color: #57606a; font-weight: 500; }
+.badge-row { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin-bottom: 10px; }
+.badge {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 6px 14px; border-radius: 999px; font-weight: 600; font-size: 0.95rem;
+}
+.badge.pass { background: #dafbe1; color: #1a7f37; }
+.badge.fail { background: #ffebe9; color: #cf222e; }
+.badge.inprogress { background: #fff8c5; color: #9a6700; }
+.signal-badge { padding: 6px 14px; border-radius: 999px; font-weight: 600; font-size: 0.9rem; }
+.signal-badge.improving { background: #dafbe1; color: #1a7f37; }
+.signal-badge.holding { background: #ddf4ff; color: #0969da; }
+.signal-badge.stalling { background: #fff8c5; color: #9a6700; }
+.signal-badge.regressing { background: #ffebe9; color: #cf222e; }
+.signal-badge.na { background: #f6f8fa; color: #57606a; }
+.meta { color: #57606a; font-size: 0.875rem; margin: 10px 0 16px; }
+.journey-row {
+  display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin: 12px 0 4px;
+}
+.journey-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 10px; border-radius: 999px; font-size: 0.85rem;
+  background: #f6f8fa; border: 1px solid #d0d7de;
+}
+.journey-pill.passing, .journey-pill.already_passing { background: #dafbe1; color: #1a7f37; border-color: #b4e2c0; }
+.journey-pill.failing, .journey-pill.regressed { background: #ffebe9; color: #cf222e; border-color: #f1aeb0; }
+.journey-pill.partial { background: #fff8c5; color: #9a6700; border-color: #eed888; }
+.journey-pill.unknown { background: #f6f8fa; color: #57606a; }
+.hero-image { margin-top: 18px; }
+.hero-image img { max-width: 100%; height: auto; border-radius: 6px; border: 1px solid #d0d7de; }
+details {
+  background: white; border: 1px solid #d0d7de; border-radius: 8px;
+  margin-bottom: 12px;
+}
+details > summary {
+  cursor: pointer; padding: 14px 18px; font-weight: 600; font-size: 1.05rem;
+  list-style: none; user-select: none; display: flex; align-items: center; gap: 8px;
+}
+details > summary::-webkit-details-marker { display: none; }
+details > summary::before {
+  content: '▶'; transition: transform 0.15s; font-size: 0.75rem; color: #57606a;
+}
+details[open] > summary::before { transform: rotate(90deg); }
+.accordion-body { padding: 0 18px 18px; }
+.accordion-body h3 { font-size: 0.95rem; color: #57606a; margin: 16px 0 6px; }
+.why-text { background: #f6f8fa; padding: 10px 12px; border-radius: 6px; margin: 4px 0 12px; }
+ul.bullets { margin: 6px 0 14px; padding-left: 22px; }
+ul.bullets li { margin-bottom: 4px; }
+ol.steps { padding-left: 0; list-style: none; counter-reset: step; }
+ol.steps > li {
+  counter-increment: step; padding: 12px 0 12px 44px;
+  border-top: 1px solid #eaeef2; position: relative;
+}
+ol.steps > li:first-child { border-top: none; }
+ol.steps > li::before {
+  content: counter(step); position: absolute; left: 0; top: 14px;
+  width: 30px; height: 30px; border-radius: 50%;
+  background: #0969da; color: white; display: flex;
+  align-items: center; justify-content: center; font-size: 0.85rem; font-weight: 600;
+}
+.step-shot { margin-top: 10px; }
+.step-shot img { max-width: 100%; height: auto; border-radius: 6px; border: 1px solid #d0d7de; }
+.next-step-box {
+  background: #ddf4ff; padding: 12px 16px; border-radius: 6px;
+  border-left: 4px solid #0969da; margin: 12px 0;
+}
+.drill-table { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
+.drill-table th, .drill-table td {
+  text-align: left; padding: 8px 6px; border-bottom: 1px solid #eaeef2;
+}
+.drill-table th { background: #f6f8fa; }
+.verdict-cell.PASS, .verdict-cell.CLOSURE-PASS, .verdict-cell.GOAL_ACHIEVED { color: #1a7f37; font-weight: 600; }
+.verdict-cell.FAIL, .verdict-cell.CLOSURE-FAIL, .verdict-cell.REGRESSION { color: #cf222e; font-weight: 600; }
+.verdict-cell.CONTINUE, .verdict-cell.ESCALATE, .verdict-cell.STALLED { color: #9a6700; font-weight: 600; }
+.verdict-cell.SKIPPED, .verdict-cell.UNKNOWN, .verdict-cell.IN-PROGRESS { color: #57606a; }
+.footer-note { text-align: center; color: #6e7781; font-size: 0.8rem; margin-top: 24px; }
+.iter-card {
+  background: white; border: 1px solid #d0d7de; border-radius: 8px;
+  padding: 16px 18px; margin-bottom: 12px; display: flex; align-items: center; gap: 14px;
+}
+.iter-card .left { flex-shrink: 0; }
+.iter-card .body { flex: 1 1 auto; }
+.iter-card .body .title { font-weight: 600; }
+.iter-card .body .sub { color: #57606a; font-size: 0.88rem; margin-top: 2px; }
+.iter-card a.open { color: #0969da; text-decoration: none; font-weight: 500; }
+.iter-card a.open:hover { text-decoration: underline; }
+.matrix { width: 100%; border-collapse: collapse; margin: 12px 0 22px; font-size: 0.88rem; }
+.matrix th, .matrix td { padding: 6px 8px; border: 1px solid #d0d7de; text-align: center; }
+.matrix th:first-child, .matrix td:first-child { text-align: left; }
+.matrix .cell-passing, .matrix .cell-already_passing { background: #dafbe1; color: #1a7f37; }
+.matrix .cell-failing, .matrix .cell-regressed { background: #ffebe9; color: #cf222e; }
+.matrix .cell-partial { background: #fff8c5; color: #9a6700; }
+.matrix .cell-unknown { background: #f6f8fa; color: #57606a; }
+.no-summary {
+  background: #fff8c5; border: 1px solid #eed888; padding: 14px 18px;
+  border-radius: 8px; color: #9a6700; margin-bottom: 14px;
+}
+/* Plain-language layer — the primary, non-technical view. */
+.plain-words {
+  background: linear-gradient(180deg, #ffffff 0%, #f6fbff 100%);
+  border: 1px solid #d6e4f0; border-radius: 10px;
+  padding: 22px 24px; margin: 18px 0 6px;
+  box-shadow: 0 1px 2px rgba(20, 40, 80, 0.04);
+}
+.plain-words .pw-heading {
+  margin: 0 0 14px; font-size: 1.15rem; color: #0969da;
+  text-transform: uppercase; letter-spacing: 0.05em;
+}
+.pw-grid {
+  display: grid; gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+.pw-card {
+  background: white; border-radius: 8px; padding: 14px 16px;
+  border: 1px solid #e3eaf3;
+}
+.pw-card .pw-label {
+  font-size: 0.78rem; font-weight: 600; color: #57606a;
+  text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px;
+}
+.pw-card .pw-text {
+  margin: 0; font-size: 1rem; color: #1f2328; line-height: 1.45;
+}
+.pw-empty { color: #8c959f; font-style: italic; font-size: 0.95rem; }
+.tech-divider {
+  margin: 18px 0 8px; text-align: center;
+  color: #6e7781; font-size: 0.82rem; font-style: italic;
+  border-top: 1px dashed #d0d7de; padding-top: 12px;
+}
+/* Watch-it-work — narrated screenshot gallery from demo-narrator. */
+.watch-it-work {
+  background: white; border: 1px solid #d6e4f0; border-radius: 10px;
+  padding: 18px 22px; margin: 10px 0 6px;
+}
+.wiw-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; margin-bottom: 14px; flex-wrap: wrap;
+}
+.wiw-heading {
+  margin: 0; font-size: 1.05rem; color: #0969da;
+  text-transform: uppercase; letter-spacing: 0.05em;
+}
+.demo-badge {
+  font-size: 0.75rem; font-weight: 600; padding: 4px 10px; border-radius: 12px;
+  border: 1px solid transparent; letter-spacing: 0.04em;
+}
+.demo-badge.demo-recorded { background: #dafbe1; color: #1a7f37; border-color: #aceebb; }
+.demo-badge.demo-notes    { background: #fff8c5; color: #9a6700; border-color: #e8d97e; }
+.demo-badge.demo-skipped  { background: #f6f8fa; color: #57606a; border-color: #d0d7de; }
+.demo-badge.demo-pending  { background: #ddf4ff; color: #0969da; border-color: #b6e3ff; }
+.demo-grid {
+  display: grid; gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}
+.demo-step {
+  margin: 0; padding: 12px; background: #f6f8fa;
+  border: 1px solid #d0d7de; border-radius: 8px;
+}
+.demo-step-head {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
+  font-size: 0.9rem;
+}
+.demo-step-num {
+  font-weight: 600; color: #57606a; font-variant-numeric: tabular-nums;
+}
+.demo-step-title { color: #1f2328; font-weight: 500; }
+.demo-new {
+  background: #ddf4ff; color: #0969da; font-size: 0.7rem; font-weight: 700;
+  padding: 2px 6px; border-radius: 4px; letter-spacing: 0.06em;
+}
+.demo-shot { margin-bottom: 8px; }
+.demo-shot img {
+  width: 100%; height: auto; border-radius: 4px; border: 1px solid #d0d7de;
+  display: block;
+}
+.demo-narration {
+  margin: 0; color: #1f2328; font-size: 0.92rem; line-height: 1.4;
+}
+.demo-empty {
+  margin: 8px 0 0; color: #57606a; font-style: italic;
+}
+.demo-notes-wrap { margin-top: 14px; }
+.demo-notes-wrap summary {
+  cursor: pointer; color: #9a6700; font-weight: 500; font-size: 0.9rem;
+}
+.demo-notes-wrap[open] summary { margin-bottom: 6px; }
+/* Story so far + latest demo (session index plain-language top). */
+.story-so-far {
+  background: linear-gradient(180deg, #ffffff 0%, #f6fbff 100%);
+  border: 1px solid #d6e4f0; border-radius: 10px;
+  padding: 22px 26px; margin: 14px 0 6px;
+  box-shadow: 0 1px 2px rgba(20, 40, 80, 0.04);
+}
+.story-heading {
+  margin: 0 0 12px; font-size: 1.1rem; color: #0969da;
+  text-transform: uppercase; letter-spacing: 0.05em;
+}
+.story-body { font-size: 1rem; color: #1f2328; line-height: 1.55; }
+.story-body .story-h { margin: 14px 0 6px; color: #1f2328; }
+.story-body p { margin: 0 0 10px; }
+.session-demo {
+  background: white; border: 1px solid #d6e4f0; border-radius: 10px;
+  padding: 0; margin: 8px 0 6px; overflow: hidden;
+}
+.session-demo-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; padding: 12px 22px;
+  background: #f6f8fa; border-bottom: 1px solid #d6e4f0;
+  font-weight: 600; color: #1f2328; font-size: 0.95rem;
+}
+.session-demo-head a.open { color: #0969da; text-decoration: none; font-weight: 500; font-size: 0.9rem; }
+.session-demo-head a.open:hover { text-decoration: underline; }
+.session-demo .watch-it-work {
+  border: none; border-radius: 0; box-shadow: none; margin: 0;
+}
+/* Delivered link banner — sits on the session index when GOAL_ACHIEVED. */
+.delivered-link {
+  margin: 14px 0; padding: 14px 22px;
+  background: #dafbe1; border: 1px solid #aceebb; border-radius: 10px;
+  color: #1a7f37; font-size: 1rem;
+}
+.delivered-link a {
+  color: #1a7f37; font-weight: 600; text-decoration: none; margin-left: 8px;
+}
+.delivered-link a:hover { text-decoration: underline; }
+.delivered-back {
+  margin: 8px 0 14px; padding: 0; font-size: 0.9rem;
+}
+.delivered-back a { color: #0969da; text-decoration: none; }
+.delivered-back a:hover { text-decoration: underline; }
+.delivered-body {
+  background: white; border: 1px solid #d6e4f0; border-radius: 10px;
+  padding: 22px 28px; margin: 12px 0;
+}
+.delivered-body h2.story-h { margin-top: 0; }
+/* Feature manual (session index, top of page). */
+.cover-vision {
+  margin: 8px 0 14px; color: #57606a; font-size: 1.02rem;
+  font-style: italic; max-width: 60ch;
+}
+.feature-toc {
+  background: white; border: 1px solid #d6e4f0; border-radius: 10px;
+  padding: 20px 26px; margin: 14px 0;
+  box-shadow: 0 1px 2px rgba(20, 40, 80, 0.04);
+}
+.feature-toc-heading {
+  margin: 0 0 14px; font-size: 1.05rem; color: #0969da;
+  text-transform: uppercase; letter-spacing: 0.05em;
+}
+.feature-toc-list {
+  margin: 0; padding-left: 22px; font-size: 1rem; line-height: 1.7;
+}
+.feature-toc-list li { padding: 2px 0; }
+.feature-toc-list a {
+  color: #1f2328; text-decoration: none; font-weight: 500;
+}
+.feature-toc-list a:hover { color: #0969da; text-decoration: underline; }
+.toc-extra-header {
+  list-style: none; margin: 10px 0 4px -22px;
+  font-size: 0.82rem; color: #57606a; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.04em;
+}
+.feature-manual { margin: 14px 0; }
+.feature-section {
+  background: white; border: 1px solid #d6e4f0; border-radius: 10px;
+  padding: 22px 26px; margin: 16px 0;
+  box-shadow: 0 1px 2px rgba(20, 40, 80, 0.04);
+  scroll-margin-top: 12px;
+}
+.feature-heading {
+  margin: 0 0 10px; font-size: 1.2rem; color: #1f2328;
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+}
+.feature-description {
+  margin: 0 0 16px; color: #1f2328; font-size: 1rem; line-height: 1.55;
+}
+.feature-description-label {
+  font-weight: 600; color: #57606a; margin-right: 4px;
+}
+.feature-note {
+  margin: 8px 0 12px; padding: 8px 12px;
+  background: #fff8c5; border: 1px solid #eed888; border-radius: 6px;
+  color: #9a6700; font-size: 0.88rem;
+}
+.feature-source {
+  margin: 12px 0 0; font-size: 0.88rem; color: #57606a;
+}
+.feature-source a { color: #0969da; text-decoration: none; }
+.feature-source a:hover { text-decoration: underline; }
+.feature-empty {
+  margin: 10px 0; padding: 12px 16px;
+  background: #f6f8fa; border: 1px solid #d0d7de; border-radius: 6px;
+  color: #57606a; font-style: italic;
+}
+.status-pill {
+  font-size: 0.78rem; font-weight: 600; padding: 3px 10px; border-radius: 12px;
+  letter-spacing: 0.04em; white-space: nowrap; display: inline-block;
+}
+.status-pill-passing { background: #dafbe1; color: #1a7f37; border: 1px solid #aceebb; }
+.status-pill-failing { background: #ffebe9; color: #cf222e; border: 1px solid #f2b8b5; }
+.status-pill-regressed { background: #ffebe9; color: #cf222e; border: 1px solid #f2b8b5; }
+.status-pill-partial { background: #fff8c5; color: #9a6700; border: 1px solid #e8d97e; }
+.status-pill-unknown { background: #f6f8fa; color: #57606a; border: 1px solid #d0d7de; }
+.status-pill-coming-soon { background: #f6f8fa; color: #57606a; border: 1px solid #d0d7de; }
+.developer-view {
+  margin: 28px 0 6px;
+  border: 1px dashed #d0d7de; border-radius: 8px;
+}
+.developer-view > summary {
+  cursor: pointer; padding: 12px 16px;
+  color: #57606a; font-size: 0.92rem; font-weight: 500;
+  background: #f6f8fa; border-radius: 8px;
+}
+.developer-view[open] > summary {
+  border-bottom: 1px dashed #d0d7de;
+  border-radius: 8px 8px 0 0;
+}
+.developer-view-body { padding: 12px 18px; }
+</style>
+</head><body><div class='container'>
+<section class='hero inprogress'><div class='badge-row'><div class='badge inprogress'><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+<circle cx="12" cy="12" r="11" fill="#d4a72c"/>
+<path d="M12 6v6l4 2.5" stroke="white" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+</svg><span>CONTINUE</span></div><span class='signal-badge improving'>Direction: improving</span></div><h1>Iteration 3  ·  session financial_free</h1><h2>Open-universe search from one API call (objective + budget), bounded by a hard token/USD/configs cost budget.</h2><div class='meta'>2026-05-23 · goal-full</div><div class='meta'>Journeys: 13/16 passing</div><div class='journey-row'><span class='journey-pill already_passing' title='Run a backtest from natural language'>J-01 · already_passing</span><span class='journey-pill already_passing' title='Inspect and browse run history'>J-02 · already_passing</span><span class='journey-pill already_passing' title='Walk-forward validation'>J-03 · already_passing</span><span class='journey-pill already_passing' title='AI insights'>J-04 · already_passing</span><span class='journey-pill already_passing' title='Reference data loads'>J-05 · already_passing</span><span class='journey-pill already_passing' title='Warm-cache re-run works end-to-end'>J-06 · already_passing</span><span class='journey-pill passing' title='Start a headless automated session via the API (pinned config)'>J-07 · passing</span><span class='journey-pill passing' title='Track the automated run live in the UI'>J-08 · passing</span><span class='journey-pill passing' title='Automated chain stops on robust target or budget; best is marked'>J-09 · passing</span><span class='journey-pill passing' title='Backend is the single source of truth (button rewired, survives reload)'>J-10 · passing</span><span class='journey-pill passing' title='Stop a running automated session'>J-11 · passing</span><span class='journey-pill passing' title='Open-universe run from only an objective + budget'>J-12 · passing</span><span class='journey-pill passing' title='AI-token/cost budget is hard-enforced'>J-13 · passing</span><span class='journey-pill failing' title='Staged screening — full cost only on survivors'>J-14 · failing</span><span class='journey-pill failing' title='Learns from global history (warm start) and is opt-out-able'>J-15 · failing</span><span class='journey-pill failing' title='Robust objective gates overfit'>J-16 · failing</span></div></section>
+<section class='plain-words'><h2 class='pw-heading'>In plain words</h2><div class='pw-grid'><div class='pw-card'><div class='pw-label'>What you can do now</div><p class='pw-text'>Describe a trading strategy in plain English and run it against real crypto price history; browse and reopen past runs with their full trades and results; stress-test a strategy across rolling out-of-sample windows; get ranked AI suggestions; choose from the available coins and timeframes; and re-run quickly from a warm cache. You can also kick off a hands-free automated strategy search, watch it work live, stop it from the screen, and reload the page without losing it — it keeps the most robust result and never runs past its budget.</p></div><div class='pw-card'><div class='pw-label'>What changed this time</div><p class='pw-text'>You can now start an automated search that picks which coins and timeframes to try on its own — give it just a goal and a budget instead of a fixed setup, and it explores a few different combinations and keeps the best one. Every automated run is now held to a hard spending limit, and the status strip at the top of the results shows the AI usage and the dollar cost climbing live (each against its cap), plus how many setups it has explored so far.</p></div><div class='pw-card'><div class='pw-label'>What&#x27;s next</div><p class='pw-text'>Next, the search will try ideas cheaply first and spend the full, deeper effort only on the most promising ones.</p></div></div></section>
+<section class='watch-it-work'><div class='wiw-head'><h2 class='wiw-heading'>Watch it work</h2><span class='demo-badge demo-skipped'>SKIPPED</span></div><p class='demo-empty'>No browser walkthrough this iteration — backend-only work or the app wasn&#x27;t reachable.</p></section>
+<div class='tech-divider'><span>Technical detail below — open if you want the developer view.</span></div>
+<details><summary>What was done</summary><div class='accordion-body'><ul class='bullets'><li>**Open-universe search (J-12):** one API call carrying only `objective` + `budget` (no symbol/timeframe) now launches a server-side search that explores ≥2 distinct configs (e.g. `BTC/USDT 1h`, `ETH/USDT 1h`) from a bounded seed universe, each evaluated through the existing `BacktestPipeline` + `RobustScorer`, marking the single cross-config best (`_run_open_universe`).</li><li>**Hard token/USD/max_configs budget (J-13):** `BudgetTracker.exceeded()` now hard-enforces tokens, USD, configs, and wall-clock, checked *before* each unit of work — never &quot;one more&quot;; the run finishes `budget-exhausted` when any cap is reached.</li><li>**Real spend accounting:** SDK token usage captured via a side channel (script/insights generators → pipeline → `BudgetTracker.with_usage()`), mapped to USD by a new per-model rate table in `shared/model_catalog.py`; frozen `shared/contracts.py` left untouched.</li><li>**Frontend (display-only):** `AutoSessionStatusStrip` gained live token / USD / configs counter chips read straight from `autoRun.budget`; the `AutoRunBudget` TS type was extended to mirror the backend `to_dict()`.</li><li>**Invariants preserved:** the pinned J-07 path is byte-for-byte unchanged, the B1+B2 shared-lock invariant holds for the new loop, and OHLCV cache reuse + code-hash backtest dedup were added.</li><li>**Verification:** functional QA passed 17/17 (J-12, J-13 newly passing on real live-LLM runs; J-07–J-11 + J-01–J-06 regressions green); the dedicated browser-QA SKIPPED (FE/BE down in its window) so interactive strip pixels remain owed — though one clean real-pixel app render was captured (J-05 pixel debt cleared).</li></ul></div></details>
+<details><summary>What's left + Next step</summary><div class='accordion-body'><h3>Still open</h3><ul class='bullets'><li>Journey J-14 (Staged screening — full cost only on survivors) failing — deferred this iteration; `_create_iteration` was left as one reusable method so SCREEN/PROMOTE stages can wrap it without a rewrite.</li><li>Journey J-15 (Learns from global history / warm start, opt-out-able) failing — deferred.</li><li>Journey J-16 (Robust objective gates overfit — multi-candidate leaderboard) failing — the single WFE-gated best badge exists; the ranked overfit-gating board is deferred.</li><li>Recurring live-pixel debt: the status-strip token/USD/configs chips live-updating and the J-10 reload-mid-run step (J-08/J-10) were not captured at the pixel layer (Chrome-MCP hidden-tab throttle + concurrent QA + browser-QA SKIP) — must be captured in the J-14 browser-QA window on an uncontended foreground tab.</li><li>No UI control to trigger an open-universe run (API-only by design; the in-UI Auto Run stays pinned-config).</li><li>Open-universe runs have no &quot;targets met&quot; early-stop (budget/stop only) and write no per-config insights (`insights:null`) — deferred to J-14.</li><li>Non-blocking: pre-existing red `test_directions_cache`; flaky route timing test `test_post_returns_before_loop_completes_and_get_stays_responsive`; review NOTEs (`_backtest_cache_key` omits `initial_capital`/`commission`; `AutoSessionConfig.symbol/timeframe` typed `str` but `None` in open-universe).</li></ul><h3>Next step</h3><div class='next-step-box'>Continue Layer-2 at **full** depth with **J-14 (staged SCREEN→PROMOTE cost tiering + model routing)** — wrap the now-reusable `_create_iteration` per-config evaluation in a cheap `SCREEN` stage (no walk-forward, cheapest model) that promotes only the top-k survivors to full evaluation (walk-forward + stronger model), honoring the &quot;SCREEN-skips-WF / strongest-model&quot; anti-goal. The activity log must show the `SCREEN` candidates and the `PROMOTE` subset (k &lt; screened). J-14 is the prerequisite for J-15 (global-history warm start, read-only, opt-out) and J-16 (multi-candidate overfit-gating leaderboard UI), which follow. **Clear the recurring live-pixel debt this time, decisively (J-08/J-10):** J-14 adds genuinely new UI (SCREEN/PROMOTE in the activity log), so browser-QA runs again — it MUST run against the same live services in the same window on an uncontended foreground tab and capture the strip token/USD/configs chips live-updating, config cards streaming without reload, and the reload-mid-run survival step. Non-blocking carry-forward: pre-existing red `test_directions_cache`, the flaky route timing test (de-flake the scaffold), and the two review NOTEs. Do NOT re-litigate the eager-load anti-goal (resolved iter-1) or the in-browser scorer/loop removal (done iter-2).</div></div></details>
+<details><summary>Direction signal</summary><div class='accordion-body'><div class='why-text'><strong>Why:</strong> This iter landed J-12 (open-universe multi-config search via `_run_open_universe`, exploring ≥2 distinct configs from a bounded seed universe `SEED_UNIVERSE_MAX=4`) and J-13 (hard token/USD/`max_configs` budget enforced by `BudgetTracker.exceeded()`), both newly passing on real live-LLM backend runs plus a re-run hermetic suite (194 passed / 1 pre-existing red). Layer-1 (J-07–J-11) stayed green and J-01–J-06 showed no regression; coherence PASS, zero anti-goal violations. J-14/J-15/J-16 remain the failing Layer-2 targets, with J-14 (staged SCREEN→PROMOTE) recommended next — and the recurring J-08/J-10 live-pixel strip-chip debt must finally be cleared in that browser-QA window.</div><h3>Trend</h3><ul class='bullets'><li>Newly passing this iter: J-12, J-13</li><li>Newly passing in last 4 iters total: J-07, J-08, J-09, J-10, J-11, J-12, J-13</li><li>Regressions in last 4 iters: none</li><li>Anti-goal violations in last 4 iters: none</li><li>Iters with no journey state change: 0 of last 4</li></ul><h3>Latest evaluator reasoning</h3><div class='why-text'>Layer-2 opens cleanly: J-12 (open-universe multi-config search from objective + budget) and J-13 (hard token/USD/`max_configs` budget) are both newly passing on real live-LLM backend runs plus a hermetic test suite re-run by the evaluator (194 passed / 1 pre-existing red / 1 deselected). The five Layer-1 journeys (J-07–J-11) remain green and J-01–J-06 show no regression; coherence is PASS and no anti-goal was violated (frozen `contracts.py` untouched, zero secrets, no new infra). Not GOAL_ACHIEVED — J-14, J-15, J-16 are still failing (Layer-2 incomplete).</div></div></details>
+<details><summary>Quick verify (5 min)</summary><div class='accordion-body'><ol class='steps'><li><span class='step-action'>In a terminal, launch an open-universe run:</span></li><li><span class='step-action'>Open `http://localhost:3692` in your browser and select the session you just created.</span></li><li><span class='step-action'>Find the counter group on the right side of the strip (chips separated by `·`).</span></li><li><span class='step-action'>Watch the `tok` chip and the `$` chip for ~5–10 seconds without refreshing.</span></li><li><span class='step-action'>Watch the iteration list below the strip (still no manual refresh).</span></li></ol></div></details>
+<details><summary>Artifacts</summary><div class='accordion-body'><table class='drill-table'><thead><tr><th>Report</th><th>Verdict</th><th>Path</th></tr></thead><tbody><tr><td>Iter spec</td><td><span class='verdict-cell —'>—</span></td><td><a href='../docs/phases/goal-financial_free-iter-3.md'>docs/phases/goal-financial_free-iter-3.md</a></td></tr><tr><td>Dev handoff</td><td><span class='verdict-cell —'>—</span></td><td><a href='../docs/handoffs/goal-financial_free-iter-3-dev.md'>docs/handoffs/goal-financial_free-iter-3-dev.md</a></td></tr><tr><td>Review</td><td><span class='verdict-cell PASS_WITH_NOTES'>PASS_WITH_NOTES</span></td><td><a href='reviews/goal-financial_free-iter-3-review.md'>reports/reviews/goal-financial_free-iter-3-review.md</a></td></tr><tr><td>Browser QA</td><td><span class='verdict-cell SKIPPED'>SKIPPED</span></td><td><a href='phase-goal-financial_free-iter-3-ui-test-results.md'>reports/phase-goal-financial_free-iter-3-ui-test-results.md</a></td></tr><tr><td>Implementation summary</td><td><span class='verdict-cell —'>—</span></td><td><a href='phase-goal-financial_free-iter-3-implementation-summary.md'>reports/phase-goal-financial_free-iter-3-implementation-summary.md</a></td></tr><tr><td>User-visible changes</td><td><span class='verdict-cell —'>—</span></td><td><a href='phase-goal-financial_free-iter-3-user-visible-changes.md'>reports/phase-goal-financial_free-iter-3-user-visible-changes.md</a></td></tr><tr><td>What to click</td><td><span class='verdict-cell —'>—</span></td><td><a href='phase-goal-financial_free-iter-3-what-to-click.md'>reports/phase-goal-financial_free-iter-3-what-to-click.md</a></td></tr><tr><td>UI surface map</td><td><span class='verdict-cell —'>—</span></td><td><a href='phase-goal-financial_free-iter-3-ui-surface-map.md'>reports/phase-goal-financial_free-iter-3-ui-surface-map.md</a></td></tr><tr><td>UI test plan</td><td><span class='verdict-cell —'>—</span></td><td><a href='phase-goal-financial_free-iter-3-ui-test-plan.md'>reports/phase-goal-financial_free-iter-3-ui-test-plan.md</a></td></tr><tr><td>QA</td><td><span class='verdict-cell PASS'>PASS</span></td><td><a href='qa/goal-financial_free-iter-3-qa.md'>reports/qa/goal-financial_free-iter-3-qa.md</a></td></tr><tr><td>Goal evaluation</td><td><span class='verdict-cell CONTINUE'>CONTINUE</span></td><td><a href='../runs/goal-session-financial_free/iter-3/eval.md'>runs/goal-session-financial_free/iter-3/eval.md</a></td></tr><tr><td>Journey history</td><td><span class='verdict-cell —'>—</span></td><td><a href='../runs/goal-session-financial_free/state/journey-history.json'>runs/goal-session-financial_free/state/journey-history.json</a></td></tr></tbody></table></div></details>
+<div class='footer-note'>Generated 2026-05-23 22:56 by <code>render_iteration_summary.py</code> · source: <a href='phase-goal-financial_free-iter-3-iteration-summary.md'>phase-goal-financial_free-iter-3-iteration-summary.md</a></div>
+</div></body></html>

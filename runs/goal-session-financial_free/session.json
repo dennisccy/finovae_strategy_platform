@@ -1,7 +1,7 @@
 {
   "session_id": "financial_free",
   "started_at": "2026-05-23T00:12:21.200915Z",
-  "current_iter": 3,
+  "current_iter": 4,
   "cli": "claude",
   "halt_config": {
     "max_iterations": 50,
@@ -14,5 +14,9 @@
   "auto_release": false,
   "push_per_iter": true,
   "push_branch": "goal/financial_free",
-  "updated_at": "2026-05-23T10:19:35.842378Z"
+  "updated_at": "2026-05-23T21:56:10.032405Z",
+  "finished_at": "2026-05-23T19:44:15.937705Z",
+  "total_iterations": 3,
+  "wall_time_seconds": 46207,
+  "quota_pause_count": 0
 }

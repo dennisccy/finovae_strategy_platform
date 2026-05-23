@@ -123,17 +123,42 @@ def test_post_returns_before_loop_completes_and_get_stays_responsive(client):
 # Error cases
 # =============================================================================
 
-def test_open_universe_rejected_4xx(client):
+def test_open_universe_accepted_200_and_listed(client):
+    # J-12: omitting BOTH symbol and timeframe now starts an open-universe run.
     resp = client.post("/api/auto-sessions", json=_payload(symbol=None, timeframe=None))
-    assert resp.status_code == 400
-    assert "symbol" in resp.json()["detail"].lower()
+    assert resp.status_code == 200
+    body = resp.json()
+    sid = body["sessionId"]
+    assert body["autoRun"]["status"] in ("running", "queued")
+    # An open-universe run gets a config cap (defaulted from max_iterations here).
+    assert body["autoRun"]["budget"]["maxConfigs"] == 2
+    # Appears immediately in the session list (no browser interaction to start).
+    tabs = client.get("/api/sessions").json()["tabs"]
+    assert any(t["id"] == sid for t in tabs)
 
 
 def test_missing_symbol_only_rejected_4xx(client):
+    # Exactly one of symbol/timeframe present is ambiguous → 400 (not open-universe).
     body = _payload()
     del body["symbol"]
     resp = client.post("/api/auto-sessions", json=body)
     assert resp.status_code == 400
+
+
+def test_open_universe_without_natural_language_accepted_200(client):
+    # natural_language is optional in open-universe mode (a seed idea is drawn).
+    body = _payload(symbol=None, timeframe=None)
+    del body["natural_language"]
+    resp = client.post("/api/auto-sessions", json=body)
+    assert resp.status_code == 200
+
+
+def test_pinned_without_natural_language_is_422(client):
+    # A fully-pinned config still requires a ≥10-char prompt.
+    body = _payload()
+    del body["natural_language"]
+    resp = client.post("/api/auto-sessions", json=body)
+    assert resp.status_code == 422
 
 
 def test_missing_budget_is_422(client):
@@ -145,6 +170,25 @@ def test_missing_budget_is_422(client):
 
 def test_missing_max_iterations_is_422(client):
     resp = client.post("/api/auto-sessions", json=_payload(budget={}))
+    assert resp.status_code == 422
+
+
+def test_max_configs_le_zero_is_422(client):
+    resp = client.post("/api/auto-sessions",
+                       json=_payload(symbol=None, timeframe=None,
+                                     budget={"max_iterations": 2, "max_configs": 0}))
+    assert resp.status_code == 422
+
+
+def test_max_tokens_le_zero_is_422(client):
+    resp = client.post("/api/auto-sessions",
+                       json=_payload(budget={"max_iterations": 2, "max_tokens": 0}))
+    assert resp.status_code == 422
+
+
+def test_max_usd_le_zero_is_422(client):
+    resp = client.post("/api/auto-sessions",
+                       json=_payload(budget={"max_iterations": 2, "max_usd": 0}))
     assert resp.status_code == 422
 
 

@@ -85,11 +85,26 @@ def test_budget_to_dict_shape():
     assert d == {
         "iterationsDone": 1,
         "maxIterations": 2,
+        "configsDone": 0,
+        "maxConfigs": None,
         "wallClockSec": 1.234,   # rounded to 3dp
         "maxWallClockSec": 60.0,
         "tokens": 5,
+        "maxTokens": None,
         "usd": 0.01,
+        "maxUsd": None,
     }
+
+
+def test_budget_to_dict_shape_open_universe():
+    d = BudgetTracker(max_iterations=9, max_configs=2, configs_done=1,
+                      tokens=1200, max_tokens=50_000, usd=0.0123, max_usd=0.05).to_dict()
+    assert d["configsDone"] == 1
+    assert d["maxConfigs"] == 2
+    assert d["tokens"] == 1200
+    assert d["maxTokens"] == 50_000
+    assert d["usd"] == 0.0123
+    assert d["maxUsd"] == 0.05
 
 
 # =============================================================================
@@ -453,3 +468,317 @@ async def test_stop_racing_save_auto_run_is_not_dropped(store, monkeypatch):
     # Best-so-far retained; loop stopped at its first checkpoint (only baseline ran).
     assert auto_run["bestIterationId"] is not None
     assert len(ss.list_iteration_dirs(sid)) == 1
+
+
+# =============================================================================
+# iter-3 — BudgetTracker hard caps: configs + tokens + USD (J-13)
+# =============================================================================
+
+def test_with_config_completed_returns_new_instance():
+    b = BudgetTracker(max_iterations=9, max_configs=3)
+    b2 = b.with_config_completed()
+    assert b.configs_done == 0           # original unchanged (immutable)
+    assert b2.configs_done == 1
+    assert b2 is not b
+
+
+def test_budget_exceeded_on_max_configs():
+    assert BudgetTracker(max_iterations=9, max_configs=2, configs_done=1).exceeded() is False
+    assert BudgetTracker(max_iterations=9, max_configs=2, configs_done=2).exceeded() is True
+    # No config cap (pinned) → configs never trip the cap.
+    assert BudgetTracker(max_iterations=9, configs_done=99).exceeded() is False
+
+
+def test_budget_exceeded_on_tokens():
+    b = BudgetTracker(max_iterations=99, max_tokens=1000)
+    assert b.with_usage(tokens=999).exceeded() is False
+    assert b.with_usage(tokens=1000).exceeded() is True
+    # No token cap → tokens never trip the cap.
+    assert BudgetTracker(max_iterations=99).with_usage(tokens=10**9).exceeded() is False
+
+
+def test_budget_exceeded_on_usd():
+    b = BudgetTracker(max_iterations=99, max_usd=0.05)
+    assert b.with_usage(usd=0.049).exceeded() is False
+    assert b.with_usage(usd=0.05).exceeded() is True
+    assert BudgetTracker(max_iterations=99).with_usage(usd=1000.0).exceeded() is False
+
+
+def test_with_usage_is_immutable_and_maps_tokens_to_usd():
+    from shared.model_catalog import cost_usd
+    b = BudgetTracker(max_iterations=2)
+    usd = cost_usd("gpt-5.4-mini", 600, 400)
+    b2 = b.with_usage(tokens=1000, usd=usd)
+    assert (b.tokens, b.usd) == (0, 0.0)          # original untouched (frozen)
+    assert b2.tokens == 1000
+    assert b2.usd == pytest.approx(usd)
+    assert b2 is not b
+
+
+# =============================================================================
+# iter-3 — Open-universe controller (J-12) + token/USD threading (J-13)
+# =============================================================================
+
+def _ou_config(**overrides):
+    """A base open-universe config (no pinned symbol/timeframe)."""
+    base = dict(symbol=None, timeframe=None, natural_language="")
+    base.update(overrides)
+    return build_config(**base)
+
+
+async def test_open_universe_explores_distinct_configs_and_marks_best(store):
+    cfg = _ou_config(natural_language="A pinned strategy idea long enough to pass")
+    seq = [
+        FakeSpec(total_return=0.1, num_trades=10, wfe=0.6),  # config 1
+        FakeSpec(total_return=0.5, num_trades=10, wfe=0.6),  # config 2 (best)
+    ]
+    fake = FakePipeline(sequence=seq)
+    ctrl = AutoSessionController("ou-best", cfg, BudgetTracker(max_iterations=9, max_configs=2),
+                                 fake, open_universe=True)
+
+    auto_run = await ctrl.run()
+
+    assert auto_run["status"] == "budget-exhausted"
+    dirs = ss.list_iteration_dirs("ou-best")
+    assert len(dirs) == 2
+    nodes = [ss.read_iteration_full("ou-best", d.name.split("_", 1)[1]) for d in dirs]
+    # ≥2 DISTINCT configs (differ in symbol and/or timeframe).
+    keys = {(n["params"]["symbol"], n["params"]["timeframe"]) for n in nodes}
+    assert len(keys) == 2
+    # Pinned idea reused across configs; bounded seed symbols only (no fan-out).
+    assert all("A pinned strategy idea" in n["prompt"] for n in nodes)
+    assert all(n["params"]["symbol"] in {"BTC/USDT", "ETH/USDT"} for n in nodes)
+    # Best marked by the robust scorer across configs (the 0.5 config).
+    best = ss.read_iteration_full("ou-best", auto_run["bestIterationId"])
+    assert best["result"]["total_return"] == pytest.approx(0.5)
+    # No secrets leaked into the activity log / autoRun block.
+    blob = repr(ss.read_session_meta("ou-best")) + repr(ss.read_activity_log("ou-best"))
+    for needle in ("api_key", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "sk-"):
+        assert needle not in blob
+
+
+async def test_open_universe_best_is_wfe_gated_not_highest_return(store):
+    cfg = _ou_config()
+    seq = [
+        FakeSpec(total_return=0.9, num_trades=10, wfe=0.1),  # config 1: high return, WFE FAIL
+        FakeSpec(total_return=0.2, num_trades=10, wfe=0.6),  # config 2: lower, eligible
+    ]
+    fake = FakePipeline(sequence=seq)
+    ctrl = AutoSessionController("ou-wfe", cfg, BudgetTracker(max_iterations=9, max_configs=2),
+                                 fake, open_universe=True)
+
+    auto_run = await ctrl.run()
+
+    best = ss.read_iteration_full("ou-wfe", auto_run["bestIterationId"])
+    assert best["result"]["total_return"] == pytest.approx(0.2)   # eligible one, not 0.9
+    # Both configs persisted (browsable), each ran walk-forward (WFE gate needs it).
+    assert len(ss.list_iteration_dirs("ou-wfe")) == 2
+    assert [c["wfv_enabled"] for c in fake.execute_calls] == [True, True]
+
+
+async def test_open_universe_terminal_at_max_configs(store):
+    cfg = _ou_config()
+    fake = FakePipeline(sequence=[FakeSpec(total_return=0.1, num_trades=10, wfe=0.6)])
+    # max_configs=2 but the seed grid is larger — the hard cap stops at 2.
+    ctrl = AutoSessionController("ou-mc", cfg, BudgetTracker(max_iterations=9, max_configs=2),
+                                 fake, open_universe=True)
+
+    auto_run = await ctrl.run()
+
+    assert auto_run["status"] == "budget-exhausted"
+    assert auto_run["budget"]["configsDone"] == 2
+    assert len(ss.list_iteration_dirs("ou-mc")) == 2
+
+
+async def test_open_universe_threads_tokens_and_usd(store):
+    from shared.model_catalog import TokenUsage, cost_usd
+    cfg = _ou_config()
+    usage = TokenUsage(input_tokens=600, output_tokens=400, model="gpt-5.4-mini")
+    fake = FakePipeline(sequence=[FakeSpec(num_trades=10, wfe=0.6)], usage=usage)
+    ctrl = AutoSessionController("ou-tok", cfg, BudgetTracker(max_iterations=9, max_configs=2),
+                                 fake, open_universe=True)
+
+    auto_run = await ctrl.run()
+
+    assert auto_run["budget"]["configsDone"] == 2
+    # 2 configs × 1 generate each × (600+400) tokens — real (faked) SDK usage.
+    assert auto_run["budget"]["tokens"] == 2000
+    assert auto_run["budget"]["usd"] == pytest.approx(2 * cost_usd("gpt-5.4-mini", 600, 400))
+
+
+async def test_open_universe_stops_at_token_cap_no_config_after(store):
+    from shared.model_catalog import TokenUsage
+    cfg = _ou_config()
+    usage = TokenUsage(input_tokens=600, output_tokens=400, model="gpt-5.4-mini")  # 1000/config
+    fake = FakePipeline(sequence=[FakeSpec(num_trades=10, wfe=0.6)], usage=usage)
+    # cap 1500: config1→1000 (<cap, continue), config2→2000 (≥cap before config3).
+    budget = BudgetTracker(max_iterations=99, max_configs=99, max_tokens=1500)
+    ctrl = AutoSessionController("ou-tcap", cfg, budget, fake, open_universe=True)
+
+    auto_run = await ctrl.run()
+
+    assert auto_run["status"] == "budget-exhausted"
+    assert auto_run["stopReason"] == "budget-exhausted"
+    assert auto_run["budget"]["configsDone"] == 2          # checked before config 3
+    assert len(ss.list_iteration_dirs("ou-tcap")) == 2     # nothing appended past the cap
+
+
+async def test_open_universe_stops_at_usd_cap(store):
+    from shared.model_catalog import TokenUsage, cost_usd
+    cfg = _ou_config()
+    usage = TokenUsage(input_tokens=600, output_tokens=400, model="gpt-5.4-mini")
+    per_config = cost_usd("gpt-5.4-mini", 600, 400)   # 0.00033
+    fake = FakePipeline(sequence=[FakeSpec(num_trades=10, wfe=0.6)], usage=usage)
+    # cap between 1× and 2× per-config cost → stops before the 3rd config.
+    budget = BudgetTracker(max_iterations=99, max_configs=99, max_usd=per_config * 1.5)
+    ctrl = AutoSessionController("ou-ucap", cfg, budget, fake, open_universe=True)
+
+    auto_run = await ctrl.run()
+
+    assert auto_run["status"] == "budget-exhausted"
+    assert auto_run["budget"]["configsDone"] == 2
+    assert len(ss.list_iteration_dirs("ou-ucap")) == 2
+
+
+async def test_open_universe_single_config_failure_is_non_fatal(store):
+    cfg = _ou_config()
+    seq = [FakeSpec(num_trades=10, wfe=0.6), FakeSpec(total_return=0.3, num_trades=10, wfe=0.6)]
+    fake = FakePipeline(sequence=seq, fail_exec_indices={1})   # config 1 backtest fails
+    ctrl = AutoSessionController("ou-fail", cfg, BudgetTracker(max_iterations=9, max_configs=2),
+                                 fake, open_universe=True)
+
+    auto_run = await ctrl.run()
+
+    assert auto_run["status"] == "budget-exhausted"
+    # The failed config is not persisted; the search continued to config 2.
+    assert len(ss.list_iteration_dirs("ou-fail")) == 1
+    assert auto_run["budget"]["configsDone"] == 2          # both attempts counted
+    best = ss.read_iteration_full("ou-fail", auto_run["bestIterationId"])
+    assert best["result"]["total_return"] == pytest.approx(0.3)
+
+
+async def test_open_universe_all_configs_fail_terminates_cleanly(store):
+    cfg = _ou_config()
+    fake = FakePipeline(sequence=[FakeSpec(), FakeSpec()], fail_exec_indices={1, 2})
+    ctrl = AutoSessionController("ou-allfail", cfg, BudgetTracker(max_iterations=9, max_configs=2),
+                                 fake, open_universe=True)
+
+    auto_run = await ctrl.run()
+
+    assert auto_run["status"] == "budget-exhausted"        # clean terminal, no crash
+    assert auto_run["bestIterationId"] is None
+    assert len(ss.list_iteration_dirs("ou-allfail")) == 0
+
+
+async def test_open_universe_stop_request_transitions_to_stopped(store):
+    sid = "ou-stop"
+    cfg = _ou_config()
+
+    def request_stop_after_first(call_index: int) -> None:
+        if call_index == 1:   # right after the first config's backtest
+            meta = ss.read_session_meta(sid) or {}
+            auto_run = dict(meta.get("autoRun", {}))
+            auto_run["stopRequested"] = True
+            ss.write_session_meta(sid, {"autoRun": auto_run})
+
+    fake = FakePipeline(sequence=[FakeSpec(num_trades=10, wfe=0.6)] * 4,
+                        on_exec=request_stop_after_first)
+    ctrl = AutoSessionController(sid, cfg, BudgetTracker(max_iterations=99, max_configs=4),
+                                 fake, open_universe=True)
+
+    auto_run = await ctrl.run()
+
+    assert auto_run["status"] == "stopped"
+    assert auto_run["stopReason"] == "stopped"
+    assert auto_run["bestIterationId"] is not None          # best-so-far retained
+    # Only the first config ran; the stop was honored before the second.
+    assert len(ss.list_iteration_dirs(sid)) == 1
+    assert auto_run["budget"]["configsDone"] == 1
+
+
+async def test_pinned_path_unchanged_runs_improvement_rounds(store):
+    """J-07 regression: a pinned config (symbol+timeframe present) still runs the
+    single-config improvement-rounds loop (NOT the open-universe path)."""
+    cfg = build_config(targets={})   # pinned BTC/USDT 1h
+    seq = [
+        FakeSpec(total_return=0.1, num_trades=10, wfe=0.6),
+        FakeSpec(total_return=0.3, num_trades=10, wfe=0.6),
+    ]
+    fake = FakePipeline(sequence=seq, suggestions_per_round=1)
+    ctrl = AutoSessionController("pinned", cfg, BudgetTracker(max_iterations=1), fake)
+
+    auto_run = await ctrl.run()
+
+    assert auto_run["status"] == "budget-exhausted"
+    # Pinned terminator is rounds (max_iterations), not configs.
+    assert auto_run["budget"]["iterationsDone"] == 1
+    assert auto_run["budget"]["configsDone"] == 0
+    assert auto_run["budget"]["maxConfigs"] is None
+    # All persisted iterations share the one pinned symbol/timeframe.
+    nodes = [ss.read_iteration_full("pinned", d.name.split("_", 1)[1])
+             for d in ss.list_iteration_dirs("pinned")]
+    pinned_keys = {(n["params"]["symbol"], n["params"]["timeframe"]) for n in nodes}
+    assert pinned_keys == {("BTC/USDT", "1h")}
+
+
+async def test_identical_strategy_backtest_is_deduped(store):
+    """Anti-goal: an identical generated strategy on identical params is NOT
+    re-backtested — the second evaluation is served from the dedup cache."""
+    cfg = build_config()
+    fake = FakePipeline(sequence=[FakeSpec(num_trades=10, wfe=0.6)],
+                        fixed_code="class Strategy:\n    pass\n")
+    ctrl = AutoSessionController("dedup", cfg, BudgetTracker(max_iterations=1), fake)
+
+    r1 = await ctrl._create_iteration(cfg, prompt="p", previous_script_code=None,
+                                      parent_id=None, wfv_enabled=False)
+    r2 = await ctrl._create_iteration(cfg, prompt="p", previous_script_code=None,
+                                      parent_id=None, wfv_enabled=False)
+
+    assert r1 is not None and r2 is not None
+    assert len(fake.generate_calls) == 2     # generation ran twice
+    assert len(fake.execute_calls) == 1      # identical-code backtest ran ONCE
+
+
+async def test_open_universe_stop_racing_save_is_not_dropped(store, monkeypatch):
+    """B1+B2 co-design holds for the open-universe loop too: a ``/stop`` racing
+    the controller's autoRun read-modify-write (both under the SAME shared
+    per-session lock) is serialized AFTER it, never clobbered — so the loop
+    reaches ``stopped`` retaining the best-so-far (mirrors the pinned regression).
+    """
+    sid = "ou-race"
+    cfg = _ou_config()
+    lock = asyncio.Lock()
+
+    async def fire_stop():
+        async with lock:
+            meta = await asyncio.to_thread(ss.read_session_meta, sid)
+            auto_run = dict((meta or {}).get("autoRun", {}))
+            auto_run["stopRequested"] = True
+            await asyncio.to_thread(ss.write_session_meta, sid, {"autoRun": auto_run})
+
+    armed = {"on": True}
+    real_off_loop = auto_session_mod._run_off_loop
+
+    async def racing_off_loop(fn, *args):
+        result = await real_off_loop(fn, *args)
+        if armed["on"] and fn is ss.read_session_meta:
+            armed["on"] = False
+            asyncio.ensure_future(fire_stop())
+            await asyncio.sleep(0.05)  # let fire_stop reach (and block on) the lock
+        return result
+
+    monkeypatch.setattr(auto_session_mod, "_run_off_loop", racing_off_loop)
+
+    fake = FakePipeline(sequence=[FakeSpec(total_return=0.1, num_trades=10, wfe=0.6)] * 4)
+    ctrl = AutoSessionController(sid, cfg, BudgetTracker(max_iterations=99, max_configs=4),
+                                 fake, auto_run_lock=lock, open_universe=True)
+
+    auto_run = await ctrl.run()
+
+    assert auto_run["status"] == "stopped"
+    assert auto_run["stopReason"] == "stopped"
+    # The concurrent stop was honored, NOT dropped (the controller's stale write
+    # did not clobber stopRequested).
+    assert ss.read_session_meta(sid)["autoRun"]["stopRequested"] is True
+    # Honored at the very first config checkpoint → no config appended after the stop.
+    assert len(ss.list_iteration_dirs(sid)) == 0

@@ -56,9 +56,14 @@ class AutoSessionTargets(BaseModel):
 
 
 class AutoSessionBudget(BaseModel):
-    """Hard budget.  ``max_iterations`` and ``max_wall_clock_sec`` are enforced
-    in iter-1; ``max_tokens``/``max_usd`` are accepted but enforced in J-13."""
+    """Hard budget — ALL caps are hard-enforced as of iter-3 (J-13).
+
+    ``max_iterations`` bounds pinned improvement rounds; ``max_configs`` bounds
+    the open-universe config search (defaults to ``max_iterations`` when an
+    open-universe request omits it).  ``max_wall_clock_sec`` / ``max_tokens`` /
+    ``max_usd`` are optional caps, each enforced when present."""
     max_iterations: int = Field(..., ge=1, le=50)
+    max_configs: Optional[int] = Field(default=None, gt=0, le=50)
     max_wall_clock_sec: Optional[float] = Field(default=None, gt=0)
     max_tokens: Optional[int] = Field(default=None, gt=0)
     max_usd: Optional[float] = Field(default=None, gt=0)
@@ -70,13 +75,16 @@ class AutoSessionWalkForward(BaseModel):
 
 
 class CreateAutoSessionRequest(BaseModel):
-    """Pinned-config request for ``POST /api/auto-sessions``.
+    """Request for ``POST /api/auto-sessions`` — pinned OR open-universe.
 
-    ``symbol`` and ``timeframe`` are Optional only so that omitting them yields a
-    clear 4xx (open-universe = J-12) rather than a 422 — they are required in
-    iter-1.  ``budget`` (with ``max_iterations``) is required.
+    Pinning: provide BOTH ``symbol`` and ``timeframe`` (+ a ≥10-char
+    ``natural_language``).  Open-universe (J-12): omit BOTH ``symbol`` and
+    ``timeframe``; ``natural_language`` is then optional (a seed idea is drawn
+    when omitted, or it pins the idea and the seed universe varies
+    symbol/timeframe).  Providing exactly one of symbol/timeframe is ambiguous →
+    rejected 400 in the route.  ``budget`` (with ``max_iterations``) is required.
     """
-    natural_language: str = Field(..., min_length=10, max_length=2000)
+    natural_language: Optional[str] = Field(default=None, max_length=2000)
     symbol: Optional[str] = None
     timeframe: Optional[str] = None
     start_date: str
@@ -103,6 +111,15 @@ class CreateAutoSessionRequest(BaseModel):
     def _end_after_start(self):
         if self.start_date >= self.end_date:
             raise ValueError("end_date must be after start_date")
+        return self
+
+    @model_validator(mode="after")
+    def _pinned_requires_natural_language(self):
+        """A fully-pinned config (both symbol + timeframe) requires a real
+        ≥10-char strategy prompt; open-universe may omit it."""
+        pinned = bool(self.symbol and self.timeframe)
+        if pinned and (not self.natural_language or len(self.natural_language.strip()) < 10):
+            raise ValueError("natural_language (min 10 chars) is required for a pinned config")
         return self
 
 
@@ -158,14 +175,19 @@ def _registry(app) -> dict:
 # Mapping request → controller config
 # =============================================================================
 
-def _build_config(req: CreateAutoSessionRequest) -> AutoSessionConfig:
+def _build_config(req: CreateAutoSessionRequest, *, open_universe: bool) -> AutoSessionConfig:
     targets = req.targets.model_dump(exclude_none=True) if req.targets else {}
     wf = req.walk_forward
-    stripped_nl = req.natural_language.strip()
-    nl_snippet = stripped_nl.splitlines()[0][:48] if stripped_nl else "session"
+    stripped_nl = (req.natural_language or "").strip()
+    if stripped_nl:
+        session_name = f"Auto · {stripped_nl.splitlines()[0][:48]}"
+    elif open_universe:
+        session_name = "Auto · open-universe search"
+    else:
+        session_name = "Auto · session"
     return AutoSessionConfig(
-        natural_language=req.natural_language,
-        symbol=req.symbol,            # validated non-None before this is called
+        natural_language=req.natural_language or "",
+        symbol=req.symbol,            # None for open-universe (seed configs vary it)
         timeframe=req.timeframe,
         start_date=req.start_date,
         end_date=req.end_date,
@@ -177,14 +199,23 @@ def _build_config(req: CreateAutoSessionRequest) -> AutoSessionConfig:
         targets=targets,
         wfv_is_months=(wf.is_months if wf and wf.is_months else 6),
         wfv_oos_months=(wf.oos_months if wf and wf.oos_months else 3),
-        session_name=f"Auto · {nl_snippet}",
+        session_name=session_name,
     )
 
 
-def _build_budget(req: CreateAutoSessionRequest) -> BudgetTracker:
+def _build_budget(req: CreateAutoSessionRequest, *, open_universe: bool) -> BudgetTracker:
+    b = req.budget
+    # Open-universe needs a config cap; default it to max_iterations when the
+    # request omits it (a minimal `{max_iterations: N}` budget explores N configs).
+    max_configs = b.max_configs
+    if open_universe and max_configs is None:
+        max_configs = b.max_iterations
     return BudgetTracker(
-        max_iterations=req.budget.max_iterations,
-        max_wall_clock_sec=req.budget.max_wall_clock_sec,
+        max_iterations=b.max_iterations,
+        max_configs=max_configs,
+        max_wall_clock_sec=b.max_wall_clock_sec,
+        max_tokens=b.max_tokens,
+        max_usd=b.max_usd,
     )
 
 
@@ -194,25 +225,24 @@ def _build_budget(req: CreateAutoSessionRequest) -> BudgetTracker:
 
 @router.post("")
 async def create_auto_session(req: CreateAutoSessionRequest, raw_request: Request):
-    """Start a headless automated strategy session (J-07)."""
-    # Open-universe (omitted symbol/timeframe) is J-12 / Layer-2 — reject clearly.
-    if not req.symbol or not req.timeframe:
+    """Start a headless automated strategy session — pinned (J-07) or
+    open-universe (J-12).
+
+    Pinned = both ``symbol`` and ``timeframe`` present; open-universe = both
+    omitted (routes to the seed-universe search). Exactly one present is
+    ambiguous → 400."""
+    symbol_present = bool(req.symbol)
+    timeframe_present = bool(req.timeframe)
+    if symbol_present != timeframe_present:
         raise HTTPException(
             status_code=400,
             detail=(
-                "Open-universe runs (omitted symbol/timeframe) are not supported "
-                "yet — pin both 'symbol' and 'timeframe'. (Open-universe is J-12 / "
-                "Layer-2.)"
+                "Provide BOTH 'symbol' and 'timeframe' to pin a config, or NEITHER "
+                "for an open-universe search (objective + budget only)."
             ),
         )
-    if req.timeframe not in _VALID_TIMEFRAMES:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"Unsupported timeframe '{req.timeframe}'. "
-                f"Use one of {sorted(_VALID_TIMEFRAMES)}."
-            ),
-        )
+    open_universe = not symbol_present  # both omitted
+
     if req.objective != "robust":
         raise HTTPException(
             status_code=400,
@@ -221,10 +251,18 @@ async def create_auto_session(req: CreateAutoSessionRequest, raw_request: Reques
                 "Only 'robust' is available in this iteration."
             ),
         )
+    if not open_universe and req.timeframe not in _VALID_TIMEFRAMES:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Unsupported timeframe '{req.timeframe}'. "
+                f"Use one of {sorted(_VALID_TIMEFRAMES)}."
+            ),
+        )
 
     app = raw_request.app
-    config = _build_config(req)
-    budget = _build_budget(req)
+    config = _build_config(req, open_universe=open_universe)
+    budget = _build_budget(req, open_universe=open_universe)
     session_id = str(uuid.uuid4())
 
     # Create the live session in the store FIRST so it shows up immediately in
@@ -250,6 +288,7 @@ async def create_auto_session(req: CreateAutoSessionRequest, raw_request: Reques
     lock = asyncio.Lock()
     controller = AutoSessionController(
         session_id, config, budget, pipeline, semaphore=semaphore, auto_run_lock=lock,
+        open_universe=open_universe,
     )
     registry = _registry(app)
     task = asyncio.create_task(controller.run())

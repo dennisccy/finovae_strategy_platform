@@ -33,6 +33,15 @@ const STOP_REASON_LABEL: Record<string, string> = {
   error: 'Run error',
 }
 
+// Display-only formatting of the canonical budget counters (no recomputation).
+// Tokens compact (e.g. 1.2k); USD fixed to 4dp (e.g. $0.0123).
+function fmtTokens(n: number): string {
+  return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`
+}
+function fmtUsd(n: number): string {
+  return `$${n.toFixed(4)}`
+}
+
 /**
  * Compact status strip for an automated (backend Auto Run) session, pinned at
  * the top of the Iterations panel. Reads the canonical autoRun block (single
@@ -48,6 +57,8 @@ export function AutoSessionStatusStrip({ autoRun }: AutoSessionStatusStripProps)
   const isActive = autoRun.status === 'queued' || autoRun.status === 'running'
   const wallClock = Math.round(budget.wallClockSec)
   const maxWallClock = budget.maxWallClockSec != null ? Math.round(budget.maxWallClockSec) : null
+  // Open-universe sessions track configs explored; pinned sessions track rounds.
+  const isOpenUniverse = budget.maxConfigs != null
   const showSecondRow = Boolean(autoRun.bestIterationId) || (!isActive && Boolean(autoRun.stopReason))
 
   return (
@@ -62,10 +73,27 @@ export function AutoSessionStatusStrip({ autoRun }: AutoSessionStatusStripProps)
           {isActive ? 'Optimizing server-side' : 'Automated session'}
         </span>
 
-        {/* Budget counters (read from the canonical autoRun.budget) */}
+        {/* Budget counters — read-only from the canonical autoRun.budget block
+            (single source of truth; the API and this strip share the same tally). */}
         <span className="ml-auto flex items-center gap-2 text-xs text-slate-500">
-          <span title="Improvement rounds done / max">
-            {budget.iterationsDone}/{budget.maxIterations} rounds
+          {isOpenUniverse ? (
+            <span title="Configs explored / max (open-universe search)">
+              {budget.configsDone}/{budget.maxConfigs} configs
+            </span>
+          ) : (
+            <span title="Improvement rounds done / max">
+              {budget.iterationsDone}/{budget.maxIterations} rounds
+            </span>
+          )}
+          <span className="text-slate-300">·</span>
+          <span title="AI tokens spent / cap">
+            {fmtTokens(budget.tokens)}
+            {budget.maxTokens != null ? ` / ${fmtTokens(budget.maxTokens)}` : ''} tok
+          </span>
+          <span className="text-slate-300">·</span>
+          <span title="AI cost (USD) spent / cap">
+            {fmtUsd(budget.usd)}
+            {budget.maxUsd != null ? ` / ${fmtUsd(budget.maxUsd)}` : ''}
           </span>
           <span className="text-slate-300">·</span>
           <span title="Elapsed / max wall-clock (seconds)">

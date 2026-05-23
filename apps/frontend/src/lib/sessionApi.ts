@@ -24,10 +24,16 @@ export type AutoRunStatusValue =
 export interface AutoRunBudget {
   iterationsDone: number
   maxIterations: number
+  // Open-universe config search counters (null on a pinned session).
+  configsDone: number
+  maxConfigs: number | null
   wallClockSec: number
   maxWallClockSec: number | null
+  // AI-token / USD spend, each against its hard cap (cap null when unset).
   tokens: number
+  maxTokens: number | null
   usd: number
+  maxUsd: number | null
 }
 
 export interface AutoRunStatus {

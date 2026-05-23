@@ -68,3 +68,56 @@ def models_payload() -> list[dict]:
     return [
         {"value": m.id, "label": m.label, "default": m.default} for m in MODELS
     ]
+
+
+# =============================================================================
+# Token usage + token→USD pricing (single source of truth for the cost tracker)
+# =============================================================================
+
+@dataclass(frozen=True)
+class TokenUsage:
+    """Real LLM token usage captured at the SDK response level for ONE call.
+
+    Threaded out of the strategy / insights generators (a side channel, NOT a
+    frozen-contract field) into the headless cost tracker
+    (``backend.auto_session.BudgetTracker``) so AI-token spend is accounted from
+    real usage rather than estimated."""
+
+    input_tokens: int
+    output_tokens: int
+    model: str
+
+    @property
+    def total_tokens(self) -> int:
+        return self.input_tokens + self.output_tokens
+
+
+@dataclass(frozen=True)
+class TokenRate:
+    """Per-model list price, USD per 1,000,000 tokens (input / output)."""
+
+    input_usd_per_1m: float
+    output_usd_per_1m: float
+
+
+# Public list prices (USD per 1,000,000 tokens). THE single source of truth for
+# token→USD conversion used by the headless budget tracker — tests assert exact
+# costs against these constants, so update pricing here and nowhere else.
+MODEL_RATES: dict[str, TokenRate] = {
+    "gpt-5.4-mini":               TokenRate(0.15, 0.60),
+    "claude-haiku-4-5":           TokenRate(1.00, 5.00),
+    "claude-sonnet-4-5-20250929": TokenRate(3.00, 15.00),
+    "claude-sonnet-4-6":          TokenRate(3.00, 15.00),
+    "claude-opus-4-6":            TokenRate(15.00, 75.00),
+}
+
+
+def cost_usd(model: str, input_tokens: int, output_tokens: int) -> float:
+    """Map token counts → USD via the per-model rate table.
+
+    An unknown model id falls back to the project DEFAULT_MODEL rate (the cheap
+    default tier) so a typo never silently inflates the budget; the rate table
+    IS the source of truth (no estimation elsewhere)."""
+    rate = MODEL_RATES.get(model, MODEL_RATES[DEFAULT_MODEL])
+    return (input_tokens * rate.input_usd_per_1m
+            + output_tokens * rate.output_usd_per_1m) / 1_000_000.0

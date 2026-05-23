@@ -26,6 +26,7 @@ from shared.model_catalog import (
     HAIKU_MODEL,
     OPENAI_MAX_COMPLETION_TOKENS,
     SONNET_MODEL,
+    TokenUsage,
     is_openai_model,
 )
 
@@ -216,6 +217,11 @@ class ScriptGenerator:
         self.model = model
         self._client: Optional[Anthropic] = None
         self._openai_client: Optional[OpenAI] = None
+        # Side channel: real SDK token usage from the most recent generate() call
+        # (None when no LLM call was made). Read by BacktestPipeline.generate_strategy
+        # and threaded into the headless cost tracker — keeps the frozen
+        # GenerateStrategyResult contract untouched.
+        self.last_usage: Optional[TokenUsage] = None
 
     def _get_client(self) -> Anthropic:
         if not self.api_key:
@@ -267,6 +273,7 @@ class ScriptGenerator:
         Returns:
             Tuple of (script_code, strategy_name, strategy_description, errors)
         """
+        self.last_usage = None
         try:
             is_refinement = previous_script_code is not None
 
@@ -404,13 +411,18 @@ class ScriptGenerator:
                 
                 if hasattr(response, "usage") and response.usage:
                     u = response.usage
+                    self.last_usage = TokenUsage(
+                        input_tokens=u.prompt_tokens,
+                        output_tokens=u.completion_tokens,
+                        model=effective_model,
+                    )
                     logger.info(
                         "ScriptGenerator tokens: model=%s input=%d output=%d",
                         effective_model,
                         u.prompt_tokens,
                         u.completion_tokens,
                     )
-                
+
                 script_code = response.choices[0].message.content.strip()
 
             else:
@@ -438,6 +450,11 @@ class ScriptGenerator:
                     u = response.usage
                     cache_read = getattr(u, "cache_read_input_tokens", 0)
                     cache_creation = getattr(u, "cache_creation_input_tokens", 0)
+                    self.last_usage = TokenUsage(
+                        input_tokens=u.input_tokens,
+                        output_tokens=u.output_tokens,
+                        model=effective_model,
+                    )
                     logger.info(
                         "ScriptGenerator tokens: model=%s input=%d output=%d "
                         "cache_read=%d cache_creation=%d",

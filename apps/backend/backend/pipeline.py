@@ -34,7 +34,7 @@ from strategy.compiler import StrategyCompiler
 from strategy.insights_generator import InsightsGenerator
 from strategy.script_generator import ScriptGenerator
 
-from shared.model_catalog import DEFAULT_MODEL
+from shared.model_catalog import DEFAULT_MODEL, TokenUsage
 
 
 class PipelineError(Exception):
@@ -99,6 +99,14 @@ class BacktestPipeline:
 
         self._run_history: list[RunRecord] = []
         self._script_store: dict[str, StoredScript] = {}
+
+        # Real SDK token usage from the most recent generate_strategy /
+        # generate_insights call (None when no LLM call was made / served from
+        # cache). Surfaced from the generators' side channel so the headless cost
+        # tracker can account real token spend without touching the frozen
+        # GenerateStrategyResult contract.
+        self.last_strategy_usage: Optional[TokenUsage] = None
+        self.last_insights_usage: Optional[TokenUsage] = None
 
     async def run(
         self,
@@ -338,6 +346,8 @@ class BacktestPipeline:
                 leverage=leverage,
             )
         )
+        # Surface real token usage to callers (e.g. the headless cost tracker).
+        self.last_strategy_usage = self.script_generator.last_usage
 
         # Determine the model that was actually used (may have been downgraded)
         is_refinement = previous_script_code is not None
@@ -759,7 +769,7 @@ class BacktestPipeline:
             Tuple of (summary, suggestions, errors)
         """
         self.insights_generator.model = model
-        return self.insights_generator.generate(
+        result = self.insights_generator.generate(
             backtest_result=backtest_result,
             strategy_name=strategy_name,
             strategy_description=strategy_description,
@@ -776,6 +786,9 @@ class BacktestPipeline:
             previous_suggestions=previous_suggestions,
             walk_forward_result=walk_forward_result,
         )
+        # Surface real token usage (None on a cache hit — no tokens spent).
+        self.last_insights_usage = self.insights_generator.last_usage
+        return result
 
     async def execute_walk_forward(
         self,

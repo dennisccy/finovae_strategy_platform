@@ -23,6 +23,7 @@ from shared.model_catalog import (
     DEFAULT_MODEL,
     OPENAI_JSON_RESPONSE_FORMAT,
     OPENAI_MAX_COMPLETION_TOKENS,
+    TokenUsage,
     is_openai_model,
 )
 
@@ -83,6 +84,10 @@ class InsightsGenerator:
         self._client: Optional[Anthropic] = None
         self._openai_client: Optional[OpenAI] = None
         self._cache: dict[str, tuple[str, list[dict]]] = {}
+        # Side channel: real SDK token usage from the most recent generate() call
+        # (None when served from cache or no LLM call was made). Read by
+        # BacktestPipeline.generate_insights and threaded into the cost tracker.
+        self.last_usage: Optional[TokenUsage] = None
 
     def _get_client(self) -> Anthropic:
         if not self.api_key:
@@ -155,6 +160,7 @@ class InsightsGenerator:
         Returns:
             Tuple of (summary, suggestions, errors)
         """
+        self.last_usage = None
         # --- Check cache ---
         cache_key = self._cache_key(backtest_result, script_code, allow_short, previous_summary, previous_suggestions, walk_forward_result)
         if cache_key in self._cache:
@@ -326,13 +332,18 @@ class InsightsGenerator:
                 
                 if hasattr(response, "usage") and response.usage:
                     u = response.usage
+                    self.last_usage = TokenUsage(
+                        input_tokens=u.prompt_tokens,
+                        output_tokens=u.completion_tokens,
+                        model=self.model,
+                    )
                     logger.info(
                         "InsightsGenerator tokens: model=%s input=%d output=%d",
                         self.model,
                         u.prompt_tokens,
                         u.completion_tokens,
                     )
-                
+
                 raw_text = response.choices[0].message.content.strip()
 
             else:
@@ -361,6 +372,11 @@ class InsightsGenerator:
                     u = response.usage
                     cache_read = getattr(u, "cache_read_input_tokens", 0)
                     cache_creation = getattr(u, "cache_creation_input_tokens", 0)
+                    self.last_usage = TokenUsage(
+                        input_tokens=u.input_tokens,
+                        output_tokens=u.output_tokens,
+                        model=self.model,
+                    )
                     logger.info(
                         "InsightsGenerator tokens: model=%s input=%d output=%d "
                         "cache_read=%d cache_creation=%d",

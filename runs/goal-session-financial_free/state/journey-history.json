@@ -4,171 +4,185 @@
       "id": "J-01",
       "name": "Run a backtest from natural language",
       "status": "already_passing",
-      "last_verified_iter": "goal-financial_free-iter-0",
-      "last_passing_iter": "goal-financial_free-iter-0",
+      "last_verified_iter": "goal-financial_free-iter-3",
+      "last_passing_iter": "goal-financial_free-iter-3",
       "first_seen_iter": "goal-financial_free-iter-0",
-      "last_evidence_path": "reports/qa/goal-financial_free-iter-0-evidence/api-probe-and-journey-evidence.md (§J-01); iter-2 no-regression despite heavy useBacktest.ts edit: build+lint(--max-warnings 0) clean, manual helpers intact (QA TC-01/TC-15 grep, 11 refs), data endpoints respond. Live-pixel re-check deferred (Vite server down in browser-qa window)."
+      "last_evidence_path": "reports/qa/goal-financial_free-iter-3-qa.md (§TC-14): manual POST /api/run-backtest (NL+symbol/tf/dates) → 200, run_id=cf1308bd, equity 2183 pts, metrics + strategy_spec, run history 28→29. Real-pixel render reports/qa/goal-financial_free-iter-3-evidence/TC-12-app-loaded.png shows the Strategy Builder. (0 trades = valid RSI no-trigger outcome.)"
     },
     "J-02": {
       "id": "J-02",
       "name": "Inspect and browse run history",
       "status": "already_passing",
-      "last_verified_iter": "goal-financial_free-iter-0",
-      "last_passing_iter": "goal-financial_free-iter-0",
+      "last_verified_iter": "goal-financial_free-iter-3",
+      "last_passing_iter": "goal-financial_free-iter-3",
       "first_seen_iter": "goal-financial_free-iter-0",
-      "last_evidence_path": "reports/qa/goal-financial_free-iter-0-evidence/api-probe-and-journey-evidence.md (§J-02); iter-2: QA TC-15 GET /api/sessions=200, lazy GET …/iterations/{id}=200; lazy-load path preserved (mergePolledSession keeps heavy fields lazy)."
+      "last_evidence_path": "iter-3 no-regression: lazy list/open path untouched; full suite green (evaluator re-run 194 passed); iter-1 eager-load verdict still resolved (not re-litigated)."
     },
     "J-03": {
       "id": "J-03",
       "name": "Walk-forward validation",
       "status": "already_passing",
-      "last_verified_iter": "goal-financial_free-iter-0",
-      "last_passing_iter": "goal-financial_free-iter-0",
+      "last_verified_iter": "goal-financial_free-iter-3",
+      "last_passing_iter": "goal-financial_free-iter-3",
       "first_seen_iter": "goal-financial_free-iter-0",
-      "last_evidence_path": "reports/qa/goal-financial_free-iter-0-evidence/api-probe-and-journey-evidence.md (§J-03); iter-2: walk_forward.py untouched, suite green (evaluator re-run)."
+      "last_evidence_path": "iter-3 no-regression: walk_forward.py untouched; WFE-gated scorer exercised by open-universe best-selection tests; suite green (evaluator re-run)."
     },
     "J-04": {
       "id": "J-04",
       "name": "AI insights",
       "status": "already_passing",
-      "last_verified_iter": "goal-financial_free-iter-0",
-      "last_passing_iter": "goal-financial_free-iter-0",
+      "last_verified_iter": "goal-financial_free-iter-3",
+      "last_passing_iter": "goal-financial_free-iter-3",
       "first_seen_iter": "goal-financial_free-iter-0",
-      "last_evidence_path": "reports/qa/goal-financial_free-iter-0-evidence/api-probe-and-journey-evidence.md (§J-04); iter-2: insights path untouched, suite green."
+      "last_evidence_path": "iter-3 no-regression: insights path unchanged; insights_generator.py only gained a last_usage side channel (None on cache hit, frozen contract untouched); open-universe carries insights:null (UI-handled shape); suite green."
     },
     "J-05": {
       "id": "J-05",
       "name": "Reference data loads",
       "status": "already_passing",
-      "last_verified_iter": "goal-financial_free-iter-0",
-      "last_passing_iter": "goal-financial_free-iter-0",
+      "last_verified_iter": "goal-financial_free-iter-3",
+      "last_passing_iter": "goal-financial_free-iter-3",
       "first_seen_iter": "goal-financial_free-iter-0",
-      "last_evidence_path": "reports/qa/goal-financial_free-iter-0-evidence/UT-J-05-rendered-ui-domtext.txt; iter-2: /api/symbols /api/timeframes untouched; config-bar controls untouched, build clean. Live-pixel re-check deferred (FE down)."
+      "last_evidence_path": "reports/qa/goal-financial_free-iter-3-qa.md (§TC-14 + §Step 4): /api/symbols=200 (26), /api/timeframes=200 (6); REAL-PIXEL render reports/qa/goal-financial_free-iter-3-evidence/TC-12-app-loaded.png shows Symbol/Timeframe/date/capital/exchange controls visibly populated. Pixel debt CLEARED for J-05."
     },
     "J-06": {
       "id": "J-06",
       "name": "Warm-cache re-run works end-to-end",
       "status": "already_passing",
-      "last_verified_iter": "goal-financial_free-iter-0",
-      "last_passing_iter": "goal-financial_free-iter-0",
+      "last_verified_iter": "goal-financial_free-iter-3",
+      "last_passing_iter": "goal-financial_free-iter-3",
       "first_seen_iter": "goal-financial_free-iter-0",
-      "last_evidence_path": "reports/qa/goal-financial_free-iter-0-evidence/api-probe-and-journey-evidence.md (§J-06); iter-2: Parquet loader / warm-cache path untouched, suite green."
+      "last_evidence_path": "iter-3 no-regression: Parquet loader / warm-cache path untouched; open-universe reuses the OHLCV cache across configs (no re-fetch when covered) + code-hash backtest dedup; suite green."
     },
     "J-07": {
       "id": "J-07",
       "name": "Start a headless automated session via the API (pinned config)",
       "status": "passing",
-      "last_verified_iter": "goal-financial_free-iter-2",
-      "last_passing_iter": "goal-financial_free-iter-2",
+      "last_verified_iter": "goal-financial_free-iter-3",
+      "last_passing_iter": "goal-financial_free-iter-3",
       "first_seen_iter": "goal-financial_free-iter-0",
-      "last_evidence_path": "reports/qa/goal-financial_free-iter-2-qa.md (§TC-06): live POST /api/auto-sessions → 200 + sessionId=449188b9, status=running, appears immediately in GET /api/sessions. Contracts unchanged from iter-1. Evaluator re-run: route/criteria tests green."
+      "last_evidence_path": "reports/qa/goal-financial_free-iter-3-qa.md (§TC-02): pinned POST /api/auto-sessions → 200 + appears in GET /api/sessions; pinned path byte-for-byte unchanged (pinned-path-unchanged regression test + route 200 tests green in evaluator re-run; maxConfigs=null + rounds preserved)."
     },
     "J-08": {
       "id": "J-08",
       "name": "Track the automated run live in the UI",
       "status": "passing",
-      "last_verified_iter": "goal-financial_free-iter-2",
-      "last_passing_iter": "goal-financial_free-iter-2",
+      "last_verified_iter": "goal-financial_free-iter-3",
+      "last_passing_iter": "goal-financial_free-iter-3",
       "first_seen_iter": "goal-financial_free-iter-0",
-      "last_evidence_path": "reports/qa/goal-financial_free-iter-2-qa.md (§TC-07): live poll of GET /api/sessions/{id} — autoRun.status advanced running→budget-exhausted, iteration nodes grew 1→11 with summary metrics (totalReturn/winRate/sharpe), bestIterationId set live. Poll wiring apiLoadSession@2500ms→terminal (useBacktest.ts:766-780); AutoSessionStatusStrip in Right/Iterations home (coherence §B). NOTE: verified via spec-sanctioned backend-endpoint + code fallback; live-pixel UI confirmation OWED (browser-qa SKIPPED — Vite server down mid-window) — must be captured in the Layer-2 browser-qa run."
+      "last_evidence_path": "reports/qa/goal-financial_free-iter-3-qa.md (§TC-13): live poll of GET /api/sessions/{id} showed 2 distinct config cards + budget accruing (configsDone 0→1→2, tokens accruing) WITHOUT reload; AutoSessionStatusStrip is a verified pure display-only re-format of autoRun.budget (coherence §B, builds+lints clean). NOTE: interactive strip pixels NOT captured (Chrome-MCP hidden-tab throttle + concurrent-QA holding the foreground tab; dedicated browser-qa SKIPPED — services down in its window). Live-pixel UI confirmation of the strip chips OWED — carry-forward to the J-14 browser-qa run."
     },
     "J-09": {
       "id": "J-09",
       "name": "Automated chain stops on robust target or budget; best is marked",
       "status": "passing",
-      "last_verified_iter": "goal-financial_free-iter-2",
-      "last_passing_iter": "goal-financial_free-iter-2",
+      "last_verified_iter": "goal-financial_free-iter-3",
+      "last_passing_iter": "goal-financial_free-iter-3",
       "first_seen_iter": "goal-financial_free-iter-0",
-      "last_evidence_path": "reports/qa/goal-financial_free-iter-2-qa.md (§TC-10): autoRun status=budget-exhausted, stopReason=budget-exhausted, bestIterationId=863c1bac set by backend RobustScorer (sole 'best' definition after iter-2 scorer removal). Evaluator re-run: test_best_is_wfe_gated_not_highest_raw_return + budget/criteria tests green."
+      "last_evidence_path": "reports/qa/goal-financial_free-iter-3-qa.md (§TC-15): pinned run → budget-exhausted, iterations capped 2/2, bestIterationId=72115c78 by backend RobustScorer, real spend 71786 tok/$0.020338. WFE-gated best tests green (evaluator re-run)."
     },
     "J-10": {
       "id": "J-10",
       "name": "Backend is the single source of truth (button rewired, survives reload)",
       "status": "passing",
-      "last_verified_iter": "goal-financial_free-iter-2",
-      "last_passing_iter": "goal-financial_free-iter-2",
+      "last_verified_iter": "goal-financial_free-iter-3",
+      "last_passing_iter": "goal-financial_free-iter-3",
       "first_seen_iter": "goal-financial_free-iter-0",
-      "last_evidence_path": "reports/qa/goal-financial_free-iter-2-qa.md (§TC-06/TC-08): run completed ENTIRELY server-side with no browser attached (strictly dominates reload-survival). In-browser iterate loop + duplicate scoreIteration REMOVED (evaluator grep: NONE FOUND; coherence §A). Running indicator derived from polled autoRun.status, not local flag (useBacktest.ts:535/766). NOTE: reload-mid-run pixel step not captured (FE down) — capture in Layer-2 browser-qa."
+      "last_evidence_path": "reports/qa/goal-financial_free-iter-3-qa.md (§TC-13): full autoRun (status + all budget keys) persisted server-side → reload restores from GET /api/sessions/{id}, not browser memory; runs complete entirely server-side. In-browser iterate loop + duplicate scorer remain removed (iter-2). NOTE: reload-mid-run pixel step NOT captured (same throttle/SKIP) — carry-forward to the J-14 browser-qa run."
     },
     "J-11": {
       "id": "J-11",
       "name": "Stop a running automated session",
       "status": "passing",
-      "last_verified_iter": "goal-financial_free-iter-2",
-      "last_passing_iter": "goal-financial_free-iter-2",
+      "last_verified_iter": "goal-financial_free-iter-3",
+      "last_passing_iter": "goal-financial_free-iter-3",
       "first_seen_iter": "goal-financial_free-iter-0",
-      "last_evidence_path": "reports/qa/goal-financial_free-iter-2-qa.md (§TC-09): live POST /api/auto-sessions/{id}/stop → 200; next poll status=stopped, stopRequested=True, nodes frozen at 1, best=c7c940a7 retained, still stopped +10s. Acceptance permits the API stop path; stopAutoRun rewired to /stop (handoff). B1+B2 race test test_stop_racing_save_auto_run_is_not_dropped green (evaluator re-run)."
+      "last_evidence_path": "reports/qa/goal-financial_free-iter-3-qa.md (§TC-15): POST /api/auto-sessions/{id}/stop on an active run → status=stopped (stopReason=stopped). B1+B2 stop-vs-save race test green for both pinned and the new open-universe loop (evaluator re-run)."
     },
     "J-12": {
       "id": "J-12",
       "name": "Open-universe run from only an objective + budget",
-      "status": "failing",
-      "last_verified_iter": "goal-financial_free-iter-2",
-      "last_passing_iter": null,
+      "status": "passing",
+      "last_verified_iter": "goal-financial_free-iter-3",
+      "last_passing_iter": "goal-financial_free-iter-3",
       "first_seen_iter": "goal-financial_free-iter-0",
-      "last_evidence_path": "reports/qa/goal-financial_free-iter-2-qa.md (§TC-14): open-universe POST (missing symbol/timeframe) correctly rejected HTTP 400 — Layer-2 boundary preserved by design; not built."
+      "last_evidence_path": "reports/qa/goal-financial_free-iter-3-qa.md (§TC-01/TC-04/TC-06): open-universe POST (no symbol/timeframe, objective:robust, small budget) → 200; ≥2 DISTINCT configs (BTC/USDT 1h, ETH/USDT 1h) from the bounded seed universe stream as iterations; terminal within budget (configsDone=2/maxConfigs=2); best marked by robust WFE-gated score (722cdad7) when a config passes the gate, None when none do (correct gating). Code: _run_open_universe (auto_session.py:809), seed_universe_configs + SEED_UNIVERSE_MAX=4 (:87). Unit tests (distinct-configs/best/terminal-at-max-configs) + coherence PASS (orchestration-only, no schema fork)."
     },
     "J-13": {
       "id": "J-13",
       "name": "AI-token/cost budget is hard-enforced",
-      "status": "failing",
-      "last_verified_iter": "goal-financial_free-iter-2",
-      "last_passing_iter": null,
+      "status": "passing",
+      "last_verified_iter": "goal-financial_free-iter-3",
+      "last_passing_iter": "goal-financial_free-iter-3",
       "first_seen_iter": "goal-financial_free-iter-0",
-      "last_evidence_path": "docs/handoffs/goal-financial_free-iter-2-dev.md (§Known Issues): max_iterations is the primary terminator + bounded max_wall_clock_sec; hard token/USD cap by the immutable cost tracker is J-13/Layer-2 (not built)."
+      "last_evidence_path": "reports/qa/goal-financial_free-iter-3-qa.md (§TC-05/TC-07/TC-08): real token/USD recorded (4720 tok/$0.001025; 71786 tok/$0.020338), stopReason=budget-exhausted, spend ≤ caps every run, visible in the autoRun.budget status block, no iteration appended after a cap. Code: BudgetTracker.exceeded() hard-enforces max_tokens/max_usd at auto_session.py:172-175 (checked before each unit); cost_usd single source (model_catalog.py:115, sole caller :532). Unit tests prove token-cap and USD-cap exceeded() independently True, immutability of with_usage/with_config_completed, and tokens→USD exact vs the rate table (test_model_rates 6 + 27 targeted green, evaluator re-run)."
     },
     "J-14": {
       "id": "J-14",
       "name": "Staged screening — full cost only on survivors",
       "status": "failing",
-      "last_verified_iter": "goal-financial_free-iter-0",
+      "last_verified_iter": "goal-financial_free-iter-3",
       "last_passing_iter": null,
       "first_seen_iter": "goal-financial_free-iter-0",
-      "last_evidence_path": "reports/qa/goal-financial_free-iter-0-evidence/api-probe-and-journey-evidence.md (§GATE); Layer-2 not built (iter-2 OUT OF SCOPE)."
+      "last_evidence_path": "iter-3 OUT OF SCOPE (deferred): per-config evaluation is uniform this iteration (not a cheap SCREEN stage), structured as the single reusable _create_iteration so J-14 can wrap it in SCREEN/PROMOTE stages without a rewrite. Not built."
     },
     "J-15": {
       "id": "J-15",
       "name": "Learns from global history (warm start) and is opt-out-able",
       "status": "failing",
-      "last_verified_iter": "goal-financial_free-iter-0",
+      "last_verified_iter": "goal-financial_free-iter-3",
       "last_passing_iter": null,
       "first_seen_iter": "goal-financial_free-iter-0",
-      "last_evidence_path": "reports/qa/goal-financial_free-iter-0-evidence/api-probe-and-journey-evidence.md (§GATE); Layer-2 not built (iter-2 OUT OF SCOPE)."
+      "last_evidence_path": "iter-3 OUT OF SCOPE (deferred): no cross-session warm start / planner history context this iteration. Not built."
     },
     "J-16": {
       "id": "J-16",
       "name": "Robust objective gates overfit",
       "status": "failing",
-      "last_verified_iter": "goal-financial_free-iter-0",
+      "last_verified_iter": "goal-financial_free-iter-3",
       "last_passing_iter": null,
       "first_seen_iter": "goal-financial_free-iter-0",
-      "last_evidence_path": "reports/qa/goal-financial_free-iter-0-evidence/api-probe-and-journey-evidence.md (§GATE); the WFE-gated RobustScorer is the canonical best definition (confirmed sole scorer after iter-2 in-browser-scorer removal), but the leaderboard / overfit-gating UI is J-16/Layer-2 (not built)."
+      "last_evidence_path": "iter-3 OUT OF SCOPE (deferred): the WFE-gated RobustScorer is the canonical best definition (now also driving cross-config open-universe best selection, QA TC-04), but the multi-candidate leaderboard / overfit-gating visualization is J-16. Not built."
     }
   },
   "anti_goal_violations": [],
   "observations": [
     {
+      "iter": "goal-financial_free-iter-3",
+      "kind": "verification-gap-carry-forward",
+      "note": "RECURRING live-pixel miss for the auto-session status-strip chips. iter-3 IMPROVED on iter-2 — a real-pixel app render (TC-12-app-loaded.png, 180KB) was captured proving the frontend serves and renders (J-05 controls visibly populated → J-05 pixel debt CLEARED) — and J-12/J-13 are functionally proven by real live-LLM backend runs + the hermetic suite. BUT the specific iter-3 strip chips (token/USD/configs live-updating) and the J-10 reload-mid-run step were NOT captured at the pixel layer: the documented Chrome-MCP hidden-tab throttle was compounded by a concurrent QA holding the foreground tab, and the dedicated browser-qa-agent SKIPPED entirely because the FE/BE were down (HTTP 000) in ITS window (same failure mode as iter-2). J-08/J-10 are marked passing on the spec-sanctioned backend-endpoint + real-live-run + pure-display-component evidence (iter-1/iter-2 precedent). The narrower strip-chip + reload-mid-run pixel debt persists. J-14 adds new UI (SCREEN/PROMOTE activity log) → browser-qa runs again; it MUST run against the same live services in the same window on an uncontended foreground tab and capture these pixels then.",
+      "evidence": "reports/phase-goal-financial_free-iter-3-ui-test-results.md (Browser QA Verdict: SKIPPED, 0/12 — FE/BE HTTP 000); reports/qa/goal-financial_free-iter-3-qa.md (§Step 4 — one real-pixel render + throttle fallback, §TC-12/TC-13); reports/qa/goal-financial_free-iter-3-evidence/TC-12-app-loaded.png",
+      "resolved": false
+    },
+    {
       "iter": "goal-financial_free-iter-2",
       "kind": "verification-gap-carry-forward",
-      "note": "J-08/J-10/J-11 + manual regressions J-01/J-05 were verified via the spec-sanctioned backend-endpoint + static-code fallback only. The dedicated browser-qa-agent returned SKIPPED (frontend Vite server returned HTTP 000 / down mid-window — it was 200 at QA start then went down). Live-pixel UI confirmation of the status strip live-updating, cards streaming without reload, reload-mid-run survival, and the manual single-run/reference-data controls was NOT obtained. Layer-2 adds UI (leaderboard) so browser-qa runs again — capture these pixels then with a reliably-serving frontend. The journeys are marked passing (data layer verified with real live runs + wiring verified by reviewer/qa/coherence + build/lint clean), consistent with the iter-1 precedent for J-07/J-09.",
-      "evidence": "reports/phase-goal-financial_free-iter-2-ui-test-results.md (Browser QA Verdict: SKIPPED, 0/15); reports/qa/goal-financial_free-iter-2-qa.md (§Step 4 — backend-endpoint fallback, TC-07/TC-08/TC-09/TC-15)",
+      "note": "J-08/J-10/J-11 + manual regressions J-01/J-05 were verified via the spec-sanctioned backend-endpoint + static-code fallback only. The dedicated browser-qa-agent returned SKIPPED (frontend Vite server HTTP 000 / down mid-window). Live-pixel UI confirmation of the status strip live-updating, cards streaming without reload, and reload-mid-run survival was NOT obtained. PARTIALLY addressed in iter-3 (a real-pixel app render obtained, J-05 pixel cleared); the narrower J-08/J-10 strip-chip + reload-mid-run pixel debt is carried forward by the iter-3 observation above.",
+      "evidence": "reports/phase-goal-financial_free-iter-2-ui-test-results.md (Browser QA Verdict: SKIPPED, 0/15); reports/qa/goal-financial_free-iter-2-qa.md (§Step 4 — backend-endpoint fallback)",
       "resolved": false
     },
     {
       "iter": "goal-financial_free-iter-1",
       "kind": "anti-goal-signal-resolved",
       "anti_goal": "GET /api/sessions/{id} (the list/open path) MUST NOT eagerly parse full per-iteration result.json/rating.json payloads; iteration detail is lazy-loaded via the existing per-iteration endpoint.",
-      "note": "RESOLVED — verdict delivered by the iter-1 coherence-auditor and confirmed by the evaluator. get_session builds its iteration list from read_iteration_meta (lightweight) and lazy-loads heavy result/rating/equity/trades ONLY via GET /{session_id}/iterations/{iteration_id} (session_routes.py:144-184). iter-2 re-confirms CONFORMS: the live poll's mergePolledSession appends lightweight nodes and preserves heavy fields lazily (coherence iter-2 §A, TC-11). Do not re-litigate.",
-      "evidence": "runs/goal-session-financial_free/iter-1/coherence.md (§Part C.2); runs/goal-session-financial_free/iter-2/coherence.md (Part A, TC-11); apps/backend/backend/session_routes.py:144-184",
+      "note": "RESOLVED — verdict delivered by the iter-1 coherence-auditor and confirmed by the evaluator. get_session builds its iteration list from read_iteration_meta (lightweight) and lazy-loads heavy result/rating/equity/trades ONLY via GET /{session_id}/iterations/{iteration_id} (session_routes.py:144-184). iter-2/iter-3 re-confirm CONFORMS: the open-universe path persists via the same lightweight write_iteration / lazy-detail; the live poll's mergePolledSession keeps heavy fields lazy. Do not re-litigate.",
+      "evidence": "runs/goal-session-financial_free/iter-1/coherence.md (§Part C.2); runs/goal-session-financial_free/iter-3/coherence.md (Part A); apps/backend/backend/session_routes.py:144-184",
       "resolved": true
     },
     {
       "iter": "goal-financial_free-iter-0",
       "kind": "pre-existing-test-failure",
-      "note": "Backend unit suite: 165 passed, 1 deselected (key-gated live smoke), 1 failed. Sole failure tests/test_directions_cache.py::test_write_and_read_full_round_trip — the directions cache is goal Capability #10 (nice-to-have), not a Must-have journey nor an anti-goal invariant. Pre-existing on an untouched module; re-confirmed red identically through iter-2. Not a regression. Anti-goal invariants (test_lookahead, test_determinism, test_sandbox) all PASS (evaluator re-run iter-2: 80 passed across auto-session + invariant suites).",
-      "evidence": "reports/qa/goal-financial_free-iter-2-qa.md (§Step 2); evaluator iter-2 re-run",
+      "note": "Backend unit suite: sole failure tests/test_directions_cache.py::test_write_and_read_full_round_trip — the directions cache is goal Capability #10 (nice-to-have), not a Must-have journey nor an anti-goal invariant. Pre-existing on an untouched module; re-confirmed red identically through iter-3 (evaluator re-run: 194 passed, 1 failed = this test, 1 deselected). Not a regression. Anti-goal invariants (test_lookahead, test_determinism, test_sandbox) all PASS.",
+      "evidence": "reports/qa/goal-financial_free-iter-3-qa.md (§Step 2); evaluator iter-3 re-run (194 passed / 1 failed / 1 deselected)",
+      "resolved": false
+    },
+    {
+      "iter": "goal-financial_free-iter-3",
+      "kind": "flaky-test-note",
+      "note": "tests/test_auto_session_routes.py::test_post_returns_before_loop_completes_and_get_stays_responsive is flaky under full-suite load (test-scaffolding timing race: gates the background loop on an asyncio.Event and asserts 'running' immediately after POST). Passed in the evaluator's full-suite re-run and in QA's re-run/isolation. NOT a product regression (POST returns 200 immediately, loop runs async). De-flake the scaffold (await the gate-park signal before asserting) in a future iteration.",
+      "evidence": "reports/qa/goal-financial_free-iter-3-qa.md (§Step 2); evaluator iter-3 full-suite re-run (this test passed)",
       "resolved": false
     }
   ],
-  "updated_at": "2026-05-23T10:11:19Z"
+  "updated_at": "2026-05-23T21:48:32Z"
 }
