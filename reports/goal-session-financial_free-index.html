@@ -1,0 +1,361 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<title>Project Goal — Session</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  margin: 0; padding: 0; color: #1f2328; background: #f6f8fa; line-height: 1.5;
+}
+.container { max-width: 880px; margin: 0 auto; padding: 24px 16px 80px; }
+.hero {
+  background: white; border: 1px solid #d0d7de; border-radius: 8px;
+  padding: 28px; margin-bottom: 16px; text-align: center;
+}
+.hero.pass { border-top: 6px solid #1a7f37; }
+.hero.fail { border-top: 6px solid #cf222e; }
+.hero.inprogress { border-top: 6px solid #d4a72c; }
+.hero h1 { margin: 0 0 6px 0; font-size: 1.6rem; }
+.hero h2 { margin: 0 0 14px 0; font-size: 1rem; color: #57606a; font-weight: 500; }
+.badge-row { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin-bottom: 10px; }
+.badge {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 6px 14px; border-radius: 999px; font-weight: 600; font-size: 0.95rem;
+}
+.badge.pass { background: #dafbe1; color: #1a7f37; }
+.badge.fail { background: #ffebe9; color: #cf222e; }
+.badge.inprogress { background: #fff8c5; color: #9a6700; }
+.signal-badge { padding: 6px 14px; border-radius: 999px; font-weight: 600; font-size: 0.9rem; }
+.signal-badge.improving { background: #dafbe1; color: #1a7f37; }
+.signal-badge.holding { background: #ddf4ff; color: #0969da; }
+.signal-badge.stalling { background: #fff8c5; color: #9a6700; }
+.signal-badge.regressing { background: #ffebe9; color: #cf222e; }
+.signal-badge.na { background: #f6f8fa; color: #57606a; }
+.meta { color: #57606a; font-size: 0.875rem; margin: 10px 0 16px; }
+.journey-row {
+  display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin: 12px 0 4px;
+}
+.journey-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 10px; border-radius: 999px; font-size: 0.85rem;
+  background: #f6f8fa; border: 1px solid #d0d7de;
+}
+.journey-pill.passing, .journey-pill.already_passing { background: #dafbe1; color: #1a7f37; border-color: #b4e2c0; }
+.journey-pill.failing, .journey-pill.regressed { background: #ffebe9; color: #cf222e; border-color: #f1aeb0; }
+.journey-pill.partial { background: #fff8c5; color: #9a6700; border-color: #eed888; }
+.journey-pill.unknown { background: #f6f8fa; color: #57606a; }
+.hero-image { margin-top: 18px; }
+.hero-image img { max-width: 100%; height: auto; border-radius: 6px; border: 1px solid #d0d7de; }
+details {
+  background: white; border: 1px solid #d0d7de; border-radius: 8px;
+  margin-bottom: 12px;
+}
+details > summary {
+  cursor: pointer; padding: 14px 18px; font-weight: 600; font-size: 1.05rem;
+  list-style: none; user-select: none; display: flex; align-items: center; gap: 8px;
+}
+details > summary::-webkit-details-marker { display: none; }
+details > summary::before {
+  content: '▶'; transition: transform 0.15s; font-size: 0.75rem; color: #57606a;
+}
+details[open] > summary::before { transform: rotate(90deg); }
+.accordion-body { padding: 0 18px 18px; }
+.accordion-body h3 { font-size: 0.95rem; color: #57606a; margin: 16px 0 6px; }
+.why-text { background: #f6f8fa; padding: 10px 12px; border-radius: 6px; margin: 4px 0 12px; }
+ul.bullets { margin: 6px 0 14px; padding-left: 22px; }
+ul.bullets li { margin-bottom: 4px; }
+ol.steps { padding-left: 0; list-style: none; counter-reset: step; }
+ol.steps > li {
+  counter-increment: step; padding: 12px 0 12px 44px;
+  border-top: 1px solid #eaeef2; position: relative;
+}
+ol.steps > li:first-child { border-top: none; }
+ol.steps > li::before {
+  content: counter(step); position: absolute; left: 0; top: 14px;
+  width: 30px; height: 30px; border-radius: 50%;
+  background: #0969da; color: white; display: flex;
+  align-items: center; justify-content: center; font-size: 0.85rem; font-weight: 600;
+}
+.step-shot { margin-top: 10px; }
+.step-shot img { max-width: 100%; height: auto; border-radius: 6px; border: 1px solid #d0d7de; }
+.next-step-box {
+  background: #ddf4ff; padding: 12px 16px; border-radius: 6px;
+  border-left: 4px solid #0969da; margin: 12px 0;
+}
+.drill-table { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
+.drill-table th, .drill-table td {
+  text-align: left; padding: 8px 6px; border-bottom: 1px solid #eaeef2;
+}
+.drill-table th { background: #f6f8fa; }
+.verdict-cell.PASS, .verdict-cell.CLOSURE-PASS, .verdict-cell.GOAL_ACHIEVED { color: #1a7f37; font-weight: 600; }
+.verdict-cell.FAIL, .verdict-cell.CLOSURE-FAIL, .verdict-cell.REGRESSION { color: #cf222e; font-weight: 600; }
+.verdict-cell.CONTINUE, .verdict-cell.ESCALATE, .verdict-cell.STALLED { color: #9a6700; font-weight: 600; }
+.verdict-cell.SKIPPED, .verdict-cell.UNKNOWN, .verdict-cell.IN-PROGRESS { color: #57606a; }
+.footer-note { text-align: center; color: #6e7781; font-size: 0.8rem; margin-top: 24px; }
+.iter-card {
+  background: white; border: 1px solid #d0d7de; border-radius: 8px;
+  padding: 16px 18px; margin-bottom: 12px; display: flex; align-items: center; gap: 14px;
+}
+.iter-card .left { flex-shrink: 0; }
+.iter-card .body { flex: 1 1 auto; }
+.iter-card .body .title { font-weight: 600; }
+.iter-card .body .sub { color: #57606a; font-size: 0.88rem; margin-top: 2px; }
+.iter-card a.open { color: #0969da; text-decoration: none; font-weight: 500; }
+.iter-card a.open:hover { text-decoration: underline; }
+.matrix { width: 100%; border-collapse: collapse; margin: 12px 0 22px; font-size: 0.88rem; }
+.matrix th, .matrix td { padding: 6px 8px; border: 1px solid #d0d7de; text-align: center; }
+.matrix th:first-child, .matrix td:first-child { text-align: left; }
+.matrix .cell-passing, .matrix .cell-already_passing { background: #dafbe1; color: #1a7f37; }
+.matrix .cell-failing, .matrix .cell-regressed { background: #ffebe9; color: #cf222e; }
+.matrix .cell-partial { background: #fff8c5; color: #9a6700; }
+.matrix .cell-unknown { background: #f6f8fa; color: #57606a; }
+.no-summary {
+  background: #fff8c5; border: 1px solid #eed888; padding: 14px 18px;
+  border-radius: 8px; color: #9a6700; margin-bottom: 14px;
+}
+/* Plain-language layer — the primary, non-technical view. */
+.plain-words {
+  background: linear-gradient(180deg, #ffffff 0%, #f6fbff 100%);
+  border: 1px solid #d6e4f0; border-radius: 10px;
+  padding: 22px 24px; margin: 18px 0 6px;
+  box-shadow: 0 1px 2px rgba(20, 40, 80, 0.04);
+}
+.plain-words .pw-heading {
+  margin: 0 0 14px; font-size: 1.15rem; color: #0969da;
+  text-transform: uppercase; letter-spacing: 0.05em;
+}
+.pw-grid {
+  display: grid; gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+.pw-card {
+  background: white; border-radius: 8px; padding: 14px 16px;
+  border: 1px solid #e3eaf3;
+}
+.pw-card .pw-label {
+  font-size: 0.78rem; font-weight: 600; color: #57606a;
+  text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px;
+}
+.pw-card .pw-text {
+  margin: 0; font-size: 1rem; color: #1f2328; line-height: 1.45;
+}
+.pw-empty { color: #8c959f; font-style: italic; font-size: 0.95rem; }
+.tech-divider {
+  margin: 18px 0 8px; text-align: center;
+  color: #6e7781; font-size: 0.82rem; font-style: italic;
+  border-top: 1px dashed #d0d7de; padding-top: 12px;
+}
+/* Watch-it-work — narrated screenshot gallery from demo-narrator. */
+.watch-it-work {
+  background: white; border: 1px solid #d6e4f0; border-radius: 10px;
+  padding: 18px 22px; margin: 10px 0 6px;
+}
+.wiw-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; margin-bottom: 14px; flex-wrap: wrap;
+}
+.wiw-heading {
+  margin: 0; font-size: 1.05rem; color: #0969da;
+  text-transform: uppercase; letter-spacing: 0.05em;
+}
+.demo-badge {
+  font-size: 0.75rem; font-weight: 600; padding: 4px 10px; border-radius: 12px;
+  border: 1px solid transparent; letter-spacing: 0.04em;
+}
+.demo-badge.demo-recorded { background: #dafbe1; color: #1a7f37; border-color: #aceebb; }
+.demo-badge.demo-notes    { background: #fff8c5; color: #9a6700; border-color: #e8d97e; }
+.demo-badge.demo-skipped  { background: #f6f8fa; color: #57606a; border-color: #d0d7de; }
+.demo-badge.demo-pending  { background: #ddf4ff; color: #0969da; border-color: #b6e3ff; }
+.demo-grid {
+  display: grid; gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}
+.demo-step {
+  margin: 0; padding: 12px; background: #f6f8fa;
+  border: 1px solid #d0d7de; border-radius: 8px;
+}
+.demo-step-head {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
+  font-size: 0.9rem;
+}
+.demo-step-num {
+  font-weight: 600; color: #57606a; font-variant-numeric: tabular-nums;
+}
+.demo-step-title { color: #1f2328; font-weight: 500; }
+.demo-new {
+  background: #ddf4ff; color: #0969da; font-size: 0.7rem; font-weight: 700;
+  padding: 2px 6px; border-radius: 4px; letter-spacing: 0.06em;
+}
+.demo-shot { margin-bottom: 8px; }
+.demo-shot img {
+  width: 100%; height: auto; border-radius: 4px; border: 1px solid #d0d7de;
+  display: block;
+}
+.demo-narration {
+  margin: 0; color: #1f2328; font-size: 0.92rem; line-height: 1.4;
+}
+.demo-empty {
+  margin: 8px 0 0; color: #57606a; font-style: italic;
+}
+.demo-notes-wrap { margin-top: 14px; }
+.demo-notes-wrap summary {
+  cursor: pointer; color: #9a6700; font-weight: 500; font-size: 0.9rem;
+}
+.demo-notes-wrap[open] summary { margin-bottom: 6px; }
+/* Story so far + latest demo (session index plain-language top). */
+.story-so-far {
+  background: linear-gradient(180deg, #ffffff 0%, #f6fbff 100%);
+  border: 1px solid #d6e4f0; border-radius: 10px;
+  padding: 22px 26px; margin: 14px 0 6px;
+  box-shadow: 0 1px 2px rgba(20, 40, 80, 0.04);
+}
+.story-heading {
+  margin: 0 0 12px; font-size: 1.1rem; color: #0969da;
+  text-transform: uppercase; letter-spacing: 0.05em;
+}
+.story-body { font-size: 1rem; color: #1f2328; line-height: 1.55; }
+.story-body .story-h { margin: 14px 0 6px; color: #1f2328; }
+.story-body p { margin: 0 0 10px; }
+.session-demo {
+  background: white; border: 1px solid #d6e4f0; border-radius: 10px;
+  padding: 0; margin: 8px 0 6px; overflow: hidden;
+}
+.session-demo-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; padding: 12px 22px;
+  background: #f6f8fa; border-bottom: 1px solid #d6e4f0;
+  font-weight: 600; color: #1f2328; font-size: 0.95rem;
+}
+.session-demo-head a.open { color: #0969da; text-decoration: none; font-weight: 500; font-size: 0.9rem; }
+.session-demo-head a.open:hover { text-decoration: underline; }
+.session-demo .watch-it-work {
+  border: none; border-radius: 0; box-shadow: none; margin: 0;
+}
+/* Delivered link banner — sits on the session index when GOAL_ACHIEVED. */
+.delivered-link {
+  margin: 14px 0; padding: 14px 22px;
+  background: #dafbe1; border: 1px solid #aceebb; border-radius: 10px;
+  color: #1a7f37; font-size: 1rem;
+}
+.delivered-link a {
+  color: #1a7f37; font-weight: 600; text-decoration: none; margin-left: 8px;
+}
+.delivered-link a:hover { text-decoration: underline; }
+.delivered-back {
+  margin: 8px 0 14px; padding: 0; font-size: 0.9rem;
+}
+.delivered-back a { color: #0969da; text-decoration: none; }
+.delivered-back a:hover { text-decoration: underline; }
+.delivered-body {
+  background: white; border: 1px solid #d6e4f0; border-radius: 10px;
+  padding: 22px 28px; margin: 12px 0;
+}
+.delivered-body h2.story-h { margin-top: 0; }
+/* Feature manual (session index, top of page). */
+.cover-vision {
+  margin: 8px 0 14px; color: #57606a; font-size: 1.02rem;
+  font-style: italic; max-width: 60ch;
+}
+.feature-toc {
+  background: white; border: 1px solid #d6e4f0; border-radius: 10px;
+  padding: 20px 26px; margin: 14px 0;
+  box-shadow: 0 1px 2px rgba(20, 40, 80, 0.04);
+}
+.feature-toc-heading {
+  margin: 0 0 14px; font-size: 1.05rem; color: #0969da;
+  text-transform: uppercase; letter-spacing: 0.05em;
+}
+.feature-toc-list {
+  margin: 0; padding-left: 22px; font-size: 1rem; line-height: 1.7;
+}
+.feature-toc-list li { padding: 2px 0; }
+.feature-toc-list a {
+  color: #1f2328; text-decoration: none; font-weight: 500;
+}
+.feature-toc-list a:hover { color: #0969da; text-decoration: underline; }
+.toc-extra-header {
+  list-style: none; margin: 10px 0 4px -22px;
+  font-size: 0.82rem; color: #57606a; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.04em;
+}
+.feature-manual { margin: 14px 0; }
+.feature-section {
+  background: white; border: 1px solid #d6e4f0; border-radius: 10px;
+  padding: 22px 26px; margin: 16px 0;
+  box-shadow: 0 1px 2px rgba(20, 40, 80, 0.04);
+  scroll-margin-top: 12px;
+}
+.feature-heading {
+  margin: 0 0 10px; font-size: 1.2rem; color: #1f2328;
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+}
+.feature-description {
+  margin: 0 0 16px; color: #1f2328; font-size: 1rem; line-height: 1.55;
+}
+.feature-description-label {
+  font-weight: 600; color: #57606a; margin-right: 4px;
+}
+.feature-note {
+  margin: 8px 0 12px; padding: 8px 12px;
+  background: #fff8c5; border: 1px solid #eed888; border-radius: 6px;
+  color: #9a6700; font-size: 0.88rem;
+}
+.feature-source {
+  margin: 12px 0 0; font-size: 0.88rem; color: #57606a;
+}
+.feature-source a { color: #0969da; text-decoration: none; }
+.feature-source a:hover { text-decoration: underline; }
+.feature-empty {
+  margin: 10px 0; padding: 12px 16px;
+  background: #f6f8fa; border: 1px solid #d0d7de; border-radius: 6px;
+  color: #57606a; font-style: italic;
+}
+.status-pill {
+  font-size: 0.78rem; font-weight: 600; padding: 3px 10px; border-radius: 12px;
+  letter-spacing: 0.04em; white-space: nowrap; display: inline-block;
+}
+.status-pill-passing { background: #dafbe1; color: #1a7f37; border: 1px solid #aceebb; }
+.status-pill-failing { background: #ffebe9; color: #cf222e; border: 1px solid #f2b8b5; }
+.status-pill-regressed { background: #ffebe9; color: #cf222e; border: 1px solid #f2b8b5; }
+.status-pill-partial { background: #fff8c5; color: #9a6700; border: 1px solid #e8d97e; }
+.status-pill-unknown { background: #f6f8fa; color: #57606a; border: 1px solid #d0d7de; }
+.status-pill-coming-soon { background: #f6f8fa; color: #57606a; border: 1px solid #d0d7de; }
+.developer-view {
+  margin: 28px 0 6px;
+  border: 1px dashed #d0d7de; border-radius: 8px;
+}
+.developer-view > summary {
+  cursor: pointer; padding: 12px 16px;
+  color: #57606a; font-size: 0.92rem; font-weight: 500;
+  background: #f6f8fa; border-radius: 8px;
+}
+.developer-view[open] > summary {
+  border-bottom: 1px dashed #d0d7de;
+  border-radius: 8px 8px 0 0;
+}
+.developer-view-body { padding: 12px 18px; }
+</style>
+</head><body><div class='container'>
+<section class='hero inprogress'><div class='badge-row'><div class='badge inprogress'><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+<circle cx="12" cy="12" r="11" fill="#d4a72c"/>
+<path d="M12 6v6l4 2.5" stroke="white" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+</svg><span>in_progress</span></div></div><h1>Project Goal</h1><p class='cover-vision'>Finovae Strategy Platform is an AI-assisted crypto strategy lab. A user describes a trading strategy in plain English; an LLM (OpenAI `gpt-5.4-mini` by default; Claude selectable) compiles it into a structured `StrategySpec`, a code generator emits a `signal(df, i) -&gt; int` function, that function executes inside a RestrictedPython sandbox, and it is backtested against real Binance OHLCV data with a next-bar-open fill model (commission + slippage). The platform returns an institutional-grade report — Sharpe, Sortino, max drawdown, profit factor, win rate, equity curve, trade log, and a 5-category rating — with optional walk-forward validation (rolling in-sample/out-of-sample windows, WFE) and AI-generated improvement insights. There is no database: OHLCV is cached as a single Parquet file per (symbol, timeframe), and sessions/runs are persisted to a durable filesystem location (never volatile `/tmp`).</p><h2>Session <code>financial_free</code></h2><div class='meta'>1 iterations · 6/16 journeys passing · 0 min wall time</div></section>
+<section class='story-so-far'><h2 class='story-heading'>The story so far</h2><div class='story-body'><h2 class='story-h'>Project story so far</h2>
+<p>Finovae Strategy Platform is an AI-assisted crypto strategy lab: you describe a trading idea in plain English and get a rigorous, backtested verdict on real market history.</p>
+<h3 class='story-h'>How it has grown</h3>
+<p>This session opened by taking careful stock of what the platform can already do, before adding anything new. Rather than guess, we ran every must-have capability against the live product and wrote down exactly what works today and what still needs building.</p>
+<p>The result is an encouraging starting point. Six core abilities are already in place and working: you can turn a plain-English strategy into a real backtest, browse and reopen your past runs, stress-test a strategy across rolling time windows to see if it holds up on data it wasn&#x27;t tuned on, get ranked AI suggestions for improvements, choose from the available coins and timeframes, and re-run a backtest quickly without re-downloading data.</p>
+<p>The big ambition still ahead is a hands-free, automated strategy search — kicking off a budget-capped session from a single command that explores many strategies on its own, learns from past runs to spend effort where it pays off, watches its own spending, and surfaces the most robust result right inside the same app. That whole automated layer doesn&#x27;t exist yet, so it&#x27;s the clear next focus. The plan is to build the foundation first — starting an automated session, watching it run live, stopping it, and making the app&#x27;s server the single source of truth that survives a reload — and then layer the smarter open-ended search on top.</p>
+<h3 class='story-h'>What it can do today</h3>
+<p>The product lets users describe a trading strategy in plain English and run it against real crypto price history, browse and reopen past runs with their full results and trades, validate a strategy across rolling out-of-sample windows, get ranked AI suggestions for improvements, pick from the available coins and timeframes, and re-run the same backtest quickly from a warm local cache.</p>
+<p><em>Last updated: 2026-05-23 after iteration 0.</em></p></div></section>
+<section class='feature-toc'><h2 class='feature-toc-heading'>Contents</h2><ol class='feature-toc-list'><li><a href='#feature-J-01'>1. Run a backtest from natural language</a> <span class='status-pill status-pill-passing'>✓ working</span></li><li><a href='#feature-J-02'>2. Inspect and browse run history</a> <span class='status-pill status-pill-passing'>✓ working</span></li><li><a href='#feature-J-03'>3. Walk-forward validation</a> <span class='status-pill status-pill-passing'>✓ working</span></li><li><a href='#feature-J-04'>4. AI insights</a> <span class='status-pill status-pill-passing'>✓ working</span></li><li><a href='#feature-J-05'>5. Reference data loads</a> <span class='status-pill status-pill-passing'>✓ working</span></li><li><a href='#feature-J-06'>6. Warm-cache re-run works end-to-end</a> <span class='status-pill status-pill-passing'>✓ working</span></li><li><a href='#feature-J-07'>7. Start a headless automated session via the API (pinned config)</a> <span class='status-pill status-pill-failing'>✗ broken</span></li><li><a href='#feature-J-08'>8. Track the automated run live in the UI</a> <span class='status-pill status-pill-failing'>✗ broken</span></li><li><a href='#feature-J-09'>9. Automated chain stops on robust target or budget; best is marked</a> <span class='status-pill status-pill-failing'>✗ broken</span></li><li><a href='#feature-J-10'>10. Backend is the single source of truth (button rewired, survives reload)</a> <span class='status-pill status-pill-failing'>✗ broken</span></li><li><a href='#feature-J-11'>11. Stop a running automated session</a> <span class='status-pill status-pill-failing'>✗ broken</span></li><li><a href='#feature-J-12'>12. Open-universe run from only an objective + budget</a> <span class='status-pill status-pill-failing'>✗ broken</span></li><li><a href='#feature-J-13'>13. AI-token/cost budget is hard-enforced</a> <span class='status-pill status-pill-failing'>✗ broken</span></li><li><a href='#feature-J-14'>14. Staged screening — full cost only on survivors</a> <span class='status-pill status-pill-failing'>✗ broken</span></li><li><a href='#feature-J-15'>15. Learns from global history (warm start) and is opt-out-able</a> <span class='status-pill status-pill-failing'>✗ broken</span></li><li><a href='#feature-J-16'>16. Robust objective gates overfit</a> <span class='status-pill status-pill-failing'>✗ broken</span></li></ol></section><section class='feature-manual'><section class='feature-section' id='feature-J-01'><h2 class='feature-heading'>1. Run a backtest from natural language <span class='status-pill status-pill-passing'>✓ working</span></h2><p class='feature-description'><span class='feature-description-label'>What this does:</span> the results panel shows non-empty metrics, an equity curve, and a trades</p><p class='feature-empty'>Walkthrough not yet captured for this feature.</p></section><section class='feature-section' id='feature-J-02'><h2 class='feature-heading'>2. Inspect and browse run history <span class='status-pill status-pill-passing'>✓ working</span></h2><p class='feature-description'><span class='feature-description-label'>What this does:</span> the selected run&#x27;s strategy spec, metrics, and trades reload into the</p><p class='feature-empty'>Walkthrough not yet captured for this feature.</p></section><section class='feature-section' id='feature-J-03'><h2 class='feature-heading'>3. Walk-forward validation <span class='status-pill status-pill-passing'>✓ working</span></h2><p class='feature-description'><span class='feature-description-label'>What this does:</span> a WFE badge (green ≥ 0.5 / yellow 0.3–0.5 / red &lt; 0.3), a per-window</p><p class='feature-empty'>Walkthrough not yet captured for this feature.</p></section><section class='feature-section' id='feature-J-04'><h2 class='feature-heading'>4. AI insights <span class='status-pill status-pill-passing'>✓ working</span></h2><p class='feature-description'><span class='feature-description-label'>What this does:</span> at least one ranked suggestion renders; suggestions are OOS-aware when</p><p class='feature-empty'>Walkthrough not yet captured for this feature.</p></section><section class='feature-section' id='feature-J-05'><h2 class='feature-heading'>5. Reference data loads <span class='status-pill status-pill-passing'>✓ working</span></h2><p class='feature-description'><span class='feature-description-label'>What this does:</span> `/api/symbols` and `/api/timeframes` populate the symbol and timeframe</p><p class='feature-empty'>Walkthrough not yet captured for this feature.</p></section><section class='feature-section' id='feature-J-06'><h2 class='feature-heading'>6. Warm-cache re-run works end-to-end <span class='status-pill status-pill-passing'>✓ working</span></h2><p class='feature-description'><span class='feature-description-label'>What this does:</span> the second run completes and renders metrics, an equity curve, and a</p><p class='feature-empty'>Walkthrough not yet captured for this feature.</p></section><section class='feature-section' id='feature-J-07'><h2 class='feature-heading'>7. Start a headless automated session via the API (pinned config) <span class='status-pill status-pill-failing'>✗ broken</span></h2><p class='feature-description'><span class='feature-description-label'>What this does:</span> the response is HTTP 200 with a `sessionId` and a run state of `running`</p></section><section class='feature-section' id='feature-J-08'><h2 class='feature-heading'>8. Track the automated run live in the UI <span class='status-pill status-pill-failing'>✗ broken</span></h2><p class='feature-description'><span class='feature-description-label'>What this does:</span> a run-status indicator shows &quot;running&quot;; at least one iteration with a</p></section><section class='feature-section' id='feature-J-09'><h2 class='feature-heading'>9. Automated chain stops on robust target or budget; best is marked <span class='status-pill status-pill-failing'>✗ broken</span></h2><p class='feature-description'><span class='feature-description-label'>What this does:</span> the session shows a terminal status with a visible stop reason</p></section><section class='feature-section' id='feature-J-10'><h2 class='feature-heading'>10. Backend is the single source of truth (button rewired, survives reload) <span class='status-pill status-pill-failing'>✗ broken</span></h2><p class='feature-description'><span class='feature-description-label'>What this does:</span> the run continues and completes server-side — progress keeps advancing</p></section><section class='feature-section' id='feature-J-11'><h2 class='feature-heading'>11. Stop a running automated session <span class='status-pill status-pill-failing'>✗ broken</span></h2><p class='feature-description'><span class='feature-description-label'>What this does:</span> the run transitions to a `stopped` terminal state, no further iterations</p></section><section class='feature-section' id='feature-J-12'><h2 class='feature-heading'>12. Open-universe run from only an objective + budget <span class='status-pill status-pill-failing'>✗ broken</span></h2><p class='feature-description'><span class='feature-description-label'>What this does:</span> at least two distinct configs (differing symbol and/or timeframe) appear</p></section><section class='feature-section' id='feature-J-13'><h2 class='feature-heading'>13. AI-token/cost budget is hard-enforced <span class='status-pill status-pill-failing'>✗ broken</span></h2><p class='feature-description'><span class='feature-description-label'>What this does:</span> the stop reason is `budget-exhausted`; the recorded token/cost spend is</p></section><section class='feature-section' id='feature-J-14'><h2 class='feature-heading'>14. Staged screening — full cost only on survivors <span class='status-pill status-pill-failing'>✗ broken</span></h2><p class='feature-description'><span class='feature-description-label'>What this does:</span> the activity log shows a `SCREEN` stage with several cheap candidates and</p></section><section class='feature-section' id='feature-J-15'><h2 class='feature-heading'>15. Learns from global history (warm start) and is opt-out-able <span class='status-pill status-pill-failing'>✗ broken</span></h2><p class='feature-description'><span class='feature-description-label'>What this does:</span> run #2&#x27;s activity log shows a planner decision citing prior-session</p></section><section class='feature-section' id='feature-J-16'><h2 class='feature-heading'>16. Robust objective gates overfit <span class='status-pill status-pill-failing'>✗ broken</span></h2><p class='feature-description'><span class='feature-description-label'>What this does:</span> the marked best satisfies WFE ≥ threshold and the min-trades floor and</p></section></section>
+<details class='developer-view'><summary>Developer view — journey matrix, per-iteration cards, evaluator note</summary><div class='developer-view-body'><h2 style='font-size:1rem;color:#57606a;margin:14px 0 6px'>Journey progress</h2><table class='matrix'><thead><tr><th>Journey</th><th title='CONTINUE'>iter-0</th><th>Latest</th></tr></thead><tbody><tr><td title='Run a backtest from natural language'>J-01</td><td class='cell-passing'>✓</td><td class='cell-already_passing'>already_passing</td></tr><tr><td title='Inspect and browse run history'>J-02</td><td class='cell-passing'>✓</td><td class='cell-already_passing'>already_passing</td></tr><tr><td title='Walk-forward validation'>J-03</td><td class='cell-passing'>✓</td><td class='cell-already_passing'>already_passing</td></tr><tr><td title='AI insights'>J-04</td><td class='cell-passing'>✓</td><td class='cell-already_passing'>already_passing</td></tr><tr><td title='Reference data loads'>J-05</td><td class='cell-passing'>✓</td><td class='cell-already_passing'>already_passing</td></tr><tr><td title='Warm-cache re-run works end-to-end'>J-06</td><td class='cell-passing'>✓</td><td class='cell-already_passing'>already_passing</td></tr><tr><td title='Start a headless automated session via the API (pinned config)'>J-07</td><td class='cell-failing'>✗</td><td class='cell-failing'>failing</td></tr><tr><td title='Track the automated run live in the UI'>J-08</td><td class='cell-failing'>✗</td><td class='cell-failing'>failing</td></tr><tr><td title='Automated chain stops on robust target or budget; best is marked'>J-09</td><td class='cell-failing'>✗</td><td class='cell-failing'>failing</td></tr><tr><td title='Backend is the single source of truth (button rewired, survives reload)'>J-10</td><td class='cell-failing'>✗</td><td class='cell-failing'>failing</td></tr><tr><td title='Stop a running automated session'>J-11</td><td class='cell-failing'>✗</td><td class='cell-failing'>failing</td></tr><tr><td title='Open-universe run from only an objective + budget'>J-12</td><td class='cell-failing'>✗</td><td class='cell-failing'>failing</td></tr><tr><td title='AI-token/cost budget is hard-enforced'>J-13</td><td class='cell-failing'>✗</td><td class='cell-failing'>failing</td></tr><tr><td title='Staged screening — full cost only on survivors'>J-14</td><td class='cell-failing'>✗</td><td class='cell-failing'>failing</td></tr><tr><td title='Learns from global history (warm start) and is opt-out-able'>J-15</td><td class='cell-failing'>✗</td><td class='cell-failing'>failing</td></tr><tr><td title='Robust objective gates overfit'>J-16</td><td class='cell-failing'>✗</td><td class='cell-failing'>failing</td></tr></tbody></table>
+<h2 style='font-size:1rem;color:#57606a;margin:14px 0 6px'>Iterations</h2><div class='iter-card'><div class='left'><div class='badge inprogress'><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+<circle cx="12" cy="12" r="11" fill="#d4a72c"/>
+<path d="M12 6v6l4 2.5" stroke="white" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+</svg><span>CONTINUE</span></div></div><div class='body'><div class='title'>Iteration 0 — Verify-only baseline: 6 of 16 must-have journeys already pass; the 10 automated-session journeys are unbuilt.</div><div class='sub'>2026-05-23 · goal-lean · <code>goal-financial_free-iter-0</code></div></div><a class='open' href='phase-goal-financial_free-iter-0-summary.html'>Open summary →</a></div>
+<details><summary>Latest evaluator note</summary><div class='accordion-body'><pre style='white-space:pre-wrap;font-size:0.85rem;color:#3b4252'>## Iteration 0 — goal-financial_free-iter-0<br><br>**Date:** 2026-05-23T01:01:12Z<br>**Verdict:** CONTINUE<br>**Depth dispatched:** lean<br>**Depth recommended next:** full<br>**Journey deltas:**<br>- Newly already_passing (baseline): J-01, J-02, J-03, J-04, J-05, J-06<br>- Newly failing (fail-by-absence, net-new scope): J-07, J-08, J-09, J-10, J-11, J-12, J-13, J-14, J-15, J-16<br>- Regressed: none (prior journey-history empty)<br>- Anti-goal violations: none introduced (zero code changes). One pre-existing signal recorded: `GET /api/sessions/{id}` open payload (~245KB) embeds `equity_curve` — needs a coherence verdict, not attributed to iter-0.<br><br>**Reasoning:** Verify-only baseline confirmed (`git diff HEAD`/`--cached` empty). J-01…J-06 verified functionally against the live backend endpoints the UI calls (concrete payloads: 143 trades + run_id `db758f99`, lazy per-iteration detail, wfe=0.4218 8-window WF, 10 OOS-aware suggestions, 26 symbols/6 timeframes, warm re-run 10.2s vs 43.5s) → marked `already_passing`. J-07…J-16 fail-by-absence: `POST /api/auto-sessions` → 404, no auto routes in OpenAPI. Anti-goal invariants intact (`test_lookahead`/`test_determinism`/`test_sandbox` pass; sole pytest failure is the nice-to-have directions cache). Blank pixel screenshots are the documented headless-tab throttle, not an app defect — backend-endpoint verification is the sanctioned substitute. No coherence.md (nothing to audit on a zero diff) → no structural veto. Not goal-achieved (10 failing), not a regression (no…</pre></div></details></div></details>
+<div class='footer-note'>Generated 2026-05-23 02:08</div>
+</div></body></html>

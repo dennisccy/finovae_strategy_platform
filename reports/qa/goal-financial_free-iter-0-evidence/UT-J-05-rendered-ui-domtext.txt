@@ -1,0 +1,22 @@
+Evidence: full rendered DOM innerText of http://localhost:3692 (frontend 3692 -> backend 8692, GOAL_SESSION_ID=financial_free)
+Captured via Chrome MCP eval at the peak of a React mount (headless tab throttles the async-init commit; pixel screenshots came back blank because a backgrounded headless tab does not composite, but the DOM rendered the complete UI). 2687 buttons / 1586 inputs present.
+
+--- BEGIN innerText ---
+Finovae Strategy Platform
+Sessions: 122        v0.3.0
+[Left panel — config bar + NL strategy + directions]
+Symbol
+Timeframe: 1 Minute / 5 Minutes / 15 Minutes / 1 Hour / 4 Hours / 1 Day   <- J-05: from /api/timeframes
+Start | End | Capital
+Exchange: Binance (0.075%) / Bybit (0.1%) / OKX (0.1%) / Kraken (0.26%) / Coinbase (0.6%)
+Shorts | Leverage | Max Order | Max Loss/Day
+Strategy Builder — "20 strategies for BNB//USDT · 4h"  [Run All] [Parallel]
+  EMA Trend Follow; RSI Mean Reversion; Momentum Continuation; Bollinger Band Bounce;
+  Range Breakout; MACD Crossover; EMA Pullback Entry; Stochastic Reversal; Volume Surge
+  Breakout; ATR Volatility Trend; VWAP Reversion; Ichimoku Breakout; Supertrend Follow;
+  Donchian Breakout; OBV Divergence; Williams %R Reversal; Parabolic SAR Flip; Keltner
+  Squeeze; ADX Trend Strength; CCI Mean Reversion
+Model selector: GPT-5.4 Mini / Claude Haiku 4.5 / Claude Sonnet 4.5 / Claude Sonnet 4.6 / Claude Opus 4.6  <- matches /api/models
+[Right panel — Iterations]
+  "No Iterations Yet — Your strategy iterations will appear here. Describe a strategy to get started."
+--- END innerText ---

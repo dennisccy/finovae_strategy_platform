@@ -1,0 +1,165 @@
+{
+  "journeys": {
+    "J-01": {
+      "id": "J-01",
+      "name": "Run a backtest from natural language",
+      "status": "already_passing",
+      "last_verified_iter": "goal-financial_free-iter-0",
+      "last_passing_iter": "goal-financial_free-iter-0",
+      "first_seen_iter": "goal-financial_free-iter-0",
+      "last_evidence_path": "reports/qa/goal-financial_free-iter-0-evidence/api-probe-and-journey-evidence.md (§J-01)"
+    },
+    "J-02": {
+      "id": "J-02",
+      "name": "Inspect and browse run history",
+      "status": "already_passing",
+      "last_verified_iter": "goal-financial_free-iter-0",
+      "last_passing_iter": "goal-financial_free-iter-0",
+      "first_seen_iter": "goal-financial_free-iter-0",
+      "last_evidence_path": "reports/qa/goal-financial_free-iter-0-evidence/api-probe-and-journey-evidence.md (§J-02)"
+    },
+    "J-03": {
+      "id": "J-03",
+      "name": "Walk-forward validation",
+      "status": "already_passing",
+      "last_verified_iter": "goal-financial_free-iter-0",
+      "last_passing_iter": "goal-financial_free-iter-0",
+      "first_seen_iter": "goal-financial_free-iter-0",
+      "last_evidence_path": "reports/qa/goal-financial_free-iter-0-evidence/api-probe-and-journey-evidence.md (§J-03)"
+    },
+    "J-04": {
+      "id": "J-04",
+      "name": "AI insights",
+      "status": "already_passing",
+      "last_verified_iter": "goal-financial_free-iter-0",
+      "last_passing_iter": "goal-financial_free-iter-0",
+      "first_seen_iter": "goal-financial_free-iter-0",
+      "last_evidence_path": "reports/qa/goal-financial_free-iter-0-evidence/api-probe-and-journey-evidence.md (§J-04)"
+    },
+    "J-05": {
+      "id": "J-05",
+      "name": "Reference data loads",
+      "status": "already_passing",
+      "last_verified_iter": "goal-financial_free-iter-0",
+      "last_passing_iter": "goal-financial_free-iter-0",
+      "first_seen_iter": "goal-financial_free-iter-0",
+      "last_evidence_path": "reports/qa/goal-financial_free-iter-0-evidence/UT-J-05-rendered-ui-domtext.txt"
+    },
+    "J-06": {
+      "id": "J-06",
+      "name": "Warm-cache re-run works end-to-end",
+      "status": "already_passing",
+      "last_verified_iter": "goal-financial_free-iter-0",
+      "last_passing_iter": "goal-financial_free-iter-0",
+      "first_seen_iter": "goal-financial_free-iter-0",
+      "last_evidence_path": "reports/qa/goal-financial_free-iter-0-evidence/api-probe-and-journey-evidence.md (§J-06)"
+    },
+    "J-07": {
+      "id": "J-07",
+      "name": "Start a headless automated session via the API (pinned config)",
+      "status": "failing",
+      "last_verified_iter": "goal-financial_free-iter-0",
+      "last_passing_iter": null,
+      "first_seen_iter": "goal-financial_free-iter-0",
+      "last_evidence_path": "reports/qa/goal-financial_free-iter-0-evidence/api-probe-and-journey-evidence.md (§GATE — POST /api/auto-sessions 404)"
+    },
+    "J-08": {
+      "id": "J-08",
+      "name": "Track the automated run live in the UI",
+      "status": "failing",
+      "last_verified_iter": "goal-financial_free-iter-0",
+      "last_passing_iter": null,
+      "first_seen_iter": "goal-financial_free-iter-0",
+      "last_evidence_path": "reports/qa/goal-financial_free-iter-0-evidence/api-probe-and-journey-evidence.md (§GATE)"
+    },
+    "J-09": {
+      "id": "J-09",
+      "name": "Automated chain stops on robust target or budget; best is marked",
+      "status": "failing",
+      "last_verified_iter": "goal-financial_free-iter-0",
+      "last_passing_iter": null,
+      "first_seen_iter": "goal-financial_free-iter-0",
+      "last_evidence_path": "reports/qa/goal-financial_free-iter-0-evidence/api-probe-and-journey-evidence.md (§GATE)"
+    },
+    "J-10": {
+      "id": "J-10",
+      "name": "Backend is the single source of truth (button rewired, survives reload)",
+      "status": "failing",
+      "last_verified_iter": "goal-financial_free-iter-0",
+      "last_passing_iter": null,
+      "first_seen_iter": "goal-financial_free-iter-0",
+      "last_evidence_path": "reports/qa/goal-financial_free-iter-0-evidence/api-probe-and-journey-evidence.md (§GATE; in-browser Auto Run today — useBacktest.ts/IterationCard.tsx)"
+    },
+    "J-11": {
+      "id": "J-11",
+      "name": "Stop a running automated session",
+      "status": "failing",
+      "last_verified_iter": "goal-financial_free-iter-0",
+      "last_passing_iter": null,
+      "first_seen_iter": "goal-financial_free-iter-0",
+      "last_evidence_path": "reports/qa/goal-financial_free-iter-0-evidence/api-probe-and-journey-evidence.md (§GATE — POST /api/auto-sessions/{id}/stop 404)"
+    },
+    "J-12": {
+      "id": "J-12",
+      "name": "Open-universe run from only an objective + budget",
+      "status": "failing",
+      "last_verified_iter": "goal-financial_free-iter-0",
+      "last_passing_iter": null,
+      "first_seen_iter": "goal-financial_free-iter-0",
+      "last_evidence_path": "reports/qa/goal-financial_free-iter-0-evidence/api-probe-and-journey-evidence.md (§GATE)"
+    },
+    "J-13": {
+      "id": "J-13",
+      "name": "AI-token/cost budget is hard-enforced",
+      "status": "failing",
+      "last_verified_iter": "goal-financial_free-iter-0",
+      "last_passing_iter": null,
+      "first_seen_iter": "goal-financial_free-iter-0",
+      "last_evidence_path": "reports/qa/goal-financial_free-iter-0-evidence/api-probe-and-journey-evidence.md (§GATE)"
+    },
+    "J-14": {
+      "id": "J-14",
+      "name": "Staged screening — full cost only on survivors",
+      "status": "failing",
+      "last_verified_iter": "goal-financial_free-iter-0",
+      "last_passing_iter": null,
+      "first_seen_iter": "goal-financial_free-iter-0",
+      "last_evidence_path": "reports/qa/goal-financial_free-iter-0-evidence/api-probe-and-journey-evidence.md (§GATE)"
+    },
+    "J-15": {
+      "id": "J-15",
+      "name": "Learns from global history (warm start) and is opt-out-able",
+      "status": "failing",
+      "last_verified_iter": "goal-financial_free-iter-0",
+      "last_passing_iter": null,
+      "first_seen_iter": "goal-financial_free-iter-0",
+      "last_evidence_path": "reports/qa/goal-financial_free-iter-0-evidence/api-probe-and-journey-evidence.md (§GATE)"
+    },
+    "J-16": {
+      "id": "J-16",
+      "name": "Robust objective gates overfit",
+      "status": "failing",
+      "last_verified_iter": "goal-financial_free-iter-0",
+      "last_passing_iter": null,
+      "first_seen_iter": "goal-financial_free-iter-0",
+      "last_evidence_path": "reports/qa/goal-financial_free-iter-0-evidence/api-probe-and-journey-evidence.md (§GATE)"
+    }
+  },
+  "anti_goal_violations": [],
+  "observations": [
+    {
+      "iter": "goal-financial_free-iter-0",
+      "kind": "anti-goal-signal-needs-verdict",
+      "anti_goal": "GET /api/sessions/{id} (the list/open path) MUST NOT eagerly parse full per-iteration result.json/rating.json payloads; iteration detail is lazy-loaded via the existing per-iteration endpoint.",
+      "note": "List path (GET /api/sessions) is lightweight (122 tabs, no arrays) and the per-iteration detail IS lazy-loaded (J-02 verified). However the single-session OPEN payload GET /api/sessions/{id} is ~245KB and embeds equity_curve in its summary nodes. Not a full result/rating eager-parse, but worth a definitive coherence verdict. PRE-EXISTING contract (no code changed this iter; previously accepted at GOAL_ACHIEVED in the money-billions session) — recorded as a signal, NOT a violation introduced by iter-0.",
+      "evidence": "reports/qa/goal-financial_free-iter-0-evidence/api-probe-and-journey-evidence.md (§J-02); session_routes.py / session_store.py"
+    },
+    {
+      "iter": "goal-financial_free-iter-0",
+      "kind": "pre-existing-test-failure",
+      "note": "Backend unit suite: 124 passed, 1 failed. Sole failure tests/test_directions_cache.py::test_write_and_read_full_round_trip — the directions cache is goal Capability #10 (nice-to-have), not a Must-have journey nor an anti-goal invariant. Pre-existing on HEAD cd6cae7; not a regression caused by this iteration. Anti-goal invariants (test_lookahead, test_determinism, test_sandbox) all PASS.",
+      "evidence": "reports/qa/goal-financial_free-iter-0-evidence/api-probe-and-journey-evidence.md (Backend unit suite); /tmp/finovae_pytest_iter0.log"
+    }
+  ],
+  "updated_at": "2026-05-23T01:01:12Z"
+}
