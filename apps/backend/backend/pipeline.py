@@ -31,6 +31,7 @@ from shared.contracts import (
 )
 from strategy.codegen import CodeGenerator
 from strategy.compiler import StrategyCompiler
+from strategy.history_planner import HistoryPlanner
 from strategy.insights_generator import InsightsGenerator
 from strategy.script_generator import ScriptGenerator
 
@@ -96,17 +97,19 @@ class BacktestPipeline:
         self.engine = BacktestEngine(random_seed=random_seed)
         self.script_generator = ScriptGenerator(api_key=anthropic_api_key)
         self.insights_generator = InsightsGenerator(api_key=anthropic_api_key)
+        self.history_planner = HistoryPlanner(api_key=anthropic_api_key)
 
         self._run_history: list[RunRecord] = []
         self._script_store: dict[str, StoredScript] = {}
 
         # Real SDK token usage from the most recent generate_strategy /
-        # generate_insights call (None when no LLM call was made / served from
-        # cache). Surfaced from the generators' side channel so the headless cost
-        # tracker can account real token spend without touching the frozen
-        # GenerateStrategyResult contract.
+        # generate_insights / plan_warmstart call (None when no LLM call was made
+        # / served from cache). Surfaced from the generators' side channel so the
+        # headless cost tracker can account real token spend without touching the
+        # frozen GenerateStrategyResult contract.
         self.last_strategy_usage: Optional[TokenUsage] = None
         self.last_insights_usage: Optional[TokenUsage] = None
+        self.last_planner_usage: Optional[TokenUsage] = None
 
     async def run(
         self,
@@ -789,6 +792,31 @@ class BacktestPipeline:
         # Surface real token usage (None on a cache hit — no tokens spent).
         self.last_insights_usage = self.insights_generator.last_usage
         return result
+
+    async def plan_warmstart(
+        self,
+        *,
+        seed_families: list[tuple[str, str]],
+        history: list[dict[str, object]],
+        model: str = DEFAULT_MODEL,
+    ) -> tuple[list[tuple[str, str]], str]:
+        """Plan the open-universe seed-family exploration order from a read-only
+        prior-session leaderboard (J-15 warm start).
+
+        Returns ``(ordered_families, rationale)``.  Raises on any hard planner
+        failure (no key / SDK error / malformed output) so the headless loop can
+        fall back to the deterministic mined-family ordering.  Real token usage
+        is surfaced on ``last_planner_usage`` for the budget tracker (J-13).
+        """
+        self.history_planner.model = model
+        self.last_planner_usage = None
+        try:
+            return self.history_planner.plan(
+                seed_families=seed_families, history=history, model=model)
+        finally:
+            # Surface usage whether the call succeeded or raised mid-parse (None
+            # on no LLM call); the loop accounts it either way.
+            self.last_planner_usage = self.history_planner.last_usage
 
     async def execute_walk_forward(
         self,

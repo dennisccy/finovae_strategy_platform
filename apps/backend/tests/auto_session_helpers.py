@@ -150,6 +150,15 @@ class FakePipeline:
     ``fail_exec_indices`` makes the given 1-based backtest calls fail (to test
     non-fatal config failures); ``fixed_code`` makes every generated script
     identical (to exercise the code-hash backtest dedup).
+
+    J-15 warm-start planner: ``plan_warmstart`` records its calls in
+    ``plan_warmstart_calls`` and exposes ``last_planner_usage`` (the same side
+    channel the real pipeline surfaces). ``planner_order`` (a list of
+    ``(symbol, timeframe)`` tuples) is the ordering the fake planner returns;
+    omitted, it echoes the input seed families (no reorder). ``planner_raises``
+    makes the planner fail (to exercise the deterministic fallback);
+    ``planner_usage`` is the TokenUsage booked for the planner call (to test
+    budget threading).
     """
 
     def __init__(
@@ -163,6 +172,10 @@ class FakePipeline:
         usage: Optional[TokenUsage] = None,
         fail_exec_indices: Optional[set] = None,
         fixed_code: Optional[str] = None,
+        planner_order: Optional[list] = None,
+        planner_rationale: str = "prioritizing the historically-strongest family",
+        planner_raises: bool = False,
+        planner_usage: Optional[TokenUsage] = None,
     ) -> None:
         self.sequence = list(sequence)
         self.suggestions_per_round = suggestions_per_round
@@ -172,12 +185,18 @@ class FakePipeline:
         self.usage = usage
         self.fail_exec_indices = fail_exec_indices or set()
         self.fixed_code = fixed_code
+        self.planner_order = planner_order
+        self.planner_rationale = planner_rationale
+        self.planner_raises = planner_raises
+        self.planner_usage = planner_usage
         self.generate_calls: list[dict] = []
         self.execute_calls: list[dict] = []
         self.insights_calls = 0
+        self.plan_warmstart_calls: list[dict] = []
         # Side channel mirrored from the real BacktestPipeline.
         self.last_strategy_usage: Optional[TokenUsage] = None
         self.last_insights_usage: Optional[TokenUsage] = None
+        self.last_planner_usage: Optional[TokenUsage] = None
 
     async def generate_strategy(self, *, natural_language, model="gpt-5.4-mini",
                                 previous_script_code=None, **kwargs):
@@ -232,6 +251,17 @@ class FakePipeline:
             for j in range(self.suggestions_per_round)
         ]
         return "summary text", suggestions, []
+
+    async def plan_warmstart(self, *, seed_families, history, model):
+        self.plan_warmstart_calls.append(
+            {"seed_families": list(seed_families), "history": list(history), "model": model})
+        self.last_planner_usage = None
+        if self.planner_raises:
+            raise RuntimeError("forced planner failure")
+        self.last_planner_usage = self.planner_usage
+        order = (list(self.planner_order) if self.planner_order is not None
+                 else list(seed_families))
+        return order, self.planner_rationale
 
 
 def build_config(**overrides):

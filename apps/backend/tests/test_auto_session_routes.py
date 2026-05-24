@@ -197,6 +197,35 @@ def test_invalid_timeframe_rejected_4xx(client):
     assert resp.status_code == 400
 
 
+# =============================================================================
+# J-15 — history_scope request field (global / this-run / invalid)
+# =============================================================================
+
+def test_history_scope_global_accepted_200(client):
+    # J-15: opt-IN to warm-start with history_scope="global" on an open-universe run.
+    resp = client.post("/api/auto-sessions",
+                       json=_payload(symbol=None, timeframe=None, history_scope="global"))
+    assert resp.status_code == 200
+
+
+def test_history_scope_this_run_accepted_200(client):
+    resp = client.post("/api/auto-sessions",
+                       json=_payload(symbol=None, timeframe=None, history_scope="this-run"))
+    assert resp.status_code == 200
+
+
+def test_history_scope_omitted_accepted_200(client):
+    # Omitted → defaults to the opt-out value (this-run); still a valid request.
+    resp = client.post("/api/auto-sessions", json=_payload(symbol=None, timeframe=None))
+    assert resp.status_code == 200
+
+
+def test_history_scope_invalid_value_is_422(client):
+    resp = client.post("/api/auto-sessions",
+                       json=_payload(symbol=None, timeframe=None, history_scope="everything"))
+    assert resp.status_code == 422
+
+
 def test_end_before_start_is_422(client):
     resp = client.post("/api/auto-sessions",
                        json=_payload(start_date="2023-06-01", end_date="2023-01-01"))

@@ -349,6 +349,12 @@ class AutoSessionConfig:
     wfv_is_months: int = 6
     wfv_oos_months: int = 3
     session_name: Optional[str] = None
+    # J-15 warm-start scope. "global" opts IN to learning from prior sessions
+    # (open-universe only); "this-run" (the default / opt-out) keeps each run
+    # independent — today's deterministic behavior. Any unexpected/None value is
+    # treated as the opt-out by the controller (defense-in-depth). The pinned
+    # path (``_run_inner``) ignores it.
+    history_scope: str = "this-run"
 
     def backtest_params(self) -> dict:
         """The ``params`` block stored on each iteration node (UI shape)."""
@@ -408,6 +414,173 @@ def seed_universe_configs(
         idea = pinned_idea or SEED_STRATEGY_IDEAS[idx % len(SEED_STRATEGY_IDEAS)]
         configs.append(replace(base, symbol=sym, timeframe=tf, natural_language=idea))
     return configs
+
+
+# =============================================================================
+# Read-only global-history mining (J-15 warm start)
+# =============================================================================
+
+@dataclass(frozen=True)
+class FamilyHistory:
+    """The best prior-session result for one ``(symbol, timeframe)`` family.
+
+    ``score`` is the MAX of the ONE canonical :meth:`RobustScorer.score` over that
+    family's prior iterations — never a second scoring path.  Carries the prior
+    session's id/name so the warm-start Activity-Log entry can cite it."""
+
+    symbol: str
+    timeframe: str
+    score: float
+    session_id: str
+    session_name: str
+    iteration_id: str
+
+
+def mine_history_families(
+    current_session_id: str, scorer: RobustScorer
+) -> dict[tuple[str, str], FamilyHistory]:
+    """Read-only mine of the existing file store into a per-family leaderboard.
+
+    Scans prior sessions (EXCLUDING the in-flight ``current_session_id`` and any
+    still-running session), reading ONLY the lightweight per-iteration meta
+    (``read_iteration_meta`` — never the heavy ``result.json`` / ``rating.json``
+    payloads, per the iter-0 anti-eager-parse lesson) and scoring each with the
+    ONE supplied canonical ``scorer``.  Returns the strongest (max-score) result
+    per ``(symbol, timeframe)`` family.
+
+    Strictly read-only: it never writes, mutates, or deletes any prior-session
+    artifact (the ``history_scope`` opt-out is honored by the caller).  Families
+    whose best score is ineligible (``-inf`` — under the min-trades floor) carry
+    no usable history and are omitted.
+    """
+    families: dict[tuple[str, str], FamilyHistory] = {}
+    try:
+        tabs = session_store.derive_session_tabs()
+    except Exception:  # pragma: no cover - store may be uninitialized
+        return families
+    for tab in tabs:
+        sid = tab.get("id")
+        if not sid or sid == current_session_id:
+            continue
+        meta = session_store.read_session_meta(sid) or {}
+        auto_run = meta.get("autoRun")
+        # Skip a session still in flight on another worker (not a "prior" run).
+        if isinstance(auto_run, dict) and auto_run.get("status") in ACTIVE_STATUSES:
+            continue
+        session_name = meta.get("name") or sid
+        for d in session_store.list_iteration_dirs(sid):
+            parts = d.name.split("_", 1)
+            if len(parts) != 2:
+                continue
+            iteration_id = parts[1]
+            im = session_store.read_iteration_meta(sid, iteration_id)
+            if not im:
+                continue
+            params = im.get("params") or {}
+            symbol = params.get("symbol")
+            timeframe = params.get("timeframe")
+            if not symbol or not timeframe:
+                continue
+            wf = im.get("walkForwardResult") or {}
+            wfe = wf.get("wfe") if isinstance(wf, dict) else None
+            try:
+                m = IterationMetrics(
+                    iteration_id=iteration_id,
+                    total_return=float(im.get("totalReturn", 0.0)),
+                    sharpe=float(im.get("sharpe", 0.0)),
+                    num_trades=int(im.get("numTrades", 0)),
+                    max_drawdown=float(im.get("maxDrawdown", 0.0)),
+                    wfe=(float(wfe) if wfe is not None else None),
+                )
+            except (TypeError, ValueError):
+                continue
+            score = scorer.score(m)
+            if score == float("-inf"):
+                continue  # under the min-trades floor — no usable history
+            key = (symbol, timeframe)
+            existing = families.get(key)
+            if existing is None or score > existing.score:
+                families[key] = FamilyHistory(
+                    symbol=symbol, timeframe=timeframe, score=score,
+                    session_id=sid, session_name=session_name, iteration_id=iteration_id,
+                )
+    return families
+
+
+def order_families_by_history(
+    seed_families: list[tuple[str, str]],
+    families: dict[tuple[str, str], FamilyHistory],
+) -> list[tuple[str, str]]:
+    """Deterministic warm-start ordering: seed families with a prior score come
+    first (highest score first); families with no history keep their original
+    relative order, after the scored ones.  This is the planner's fallback."""
+    def key(item: tuple[int, tuple[str, str]]) -> tuple[int, float, int]:
+        idx, fam = item
+        h = families.get(fam)
+        if h is None:
+            return (1, 0.0, idx)
+        return (0, -h.score, idx)
+    return [fam for _, fam in sorted(enumerate(seed_families), key=key)]
+
+
+def coerce_family_order(
+    plan: Optional[list[object]], seed_families: list[tuple[str, str]]
+) -> Optional[list[tuple[str, str]]]:
+    """Defensively sanitize a planner ordering into a full permutation of
+    ``seed_families``: drop unknown/duplicate entries and append any omitted seed
+    family (stable).  Returns ``None`` when nothing valid was supplied so the
+    caller falls back to the deterministic mined-family order.  Reorders only —
+    it never introduces a second scoring path."""
+    if not plan:
+        return None
+    seed_set = set(seed_families)
+    ordered: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for item in plan:
+        if not isinstance(item, (list, tuple)) or len(item) < 2:
+            continue
+        fam = (item[0], item[1])
+        if fam in seed_set and fam not in seen:
+            ordered.append(fam)
+            seen.add(fam)
+    if not ordered:
+        return None
+    for fam in seed_families:
+        if fam not in seen:
+            ordered.append(fam)
+            seen.add(fam)
+    return ordered
+
+
+def reorder_configs_by_family(
+    seed_configs: list[AutoSessionConfig], ordered_families: list[tuple[str, str]]
+) -> list[AutoSessionConfig]:
+    """Reorder ``seed_configs`` to match ``ordered_families`` (each seed family
+    maps to exactly one bounded-seed config); any config whose family is not in
+    the ordering keeps its original position at the end (stable)."""
+    by_family: dict[tuple[str, str], list[AutoSessionConfig]] = {}
+    for c in seed_configs:
+        by_family.setdefault((c.symbol, c.timeframe), []).append(c)
+    out: list[AutoSessionConfig] = []
+    listed: set[tuple[str, str]] = set()
+    for fam in ordered_families:
+        out.extend(by_family.get(fam, []))
+        listed.add(fam)
+    for c in seed_configs:
+        if (c.symbol, c.timeframe) not in listed:
+            out.append(c)
+    return out
+
+
+def history_brief(
+    families: dict[tuple[str, str], FamilyHistory]
+) -> list[dict[str, object]]:
+    """A compact, secret-free leaderboard summary for the planner prompt."""
+    return [
+        {"symbol": h.symbol, "timeframe": h.timeframe,
+         "score": round(h.score, 4), "session": h.session_name}
+        for h in sorted(families.values(), key=lambda h: (-h.score, h.symbol, h.timeframe))
+    ]
 
 
 def initial_auto_run(budget: BudgetTracker, *, status: str = STATUS_RUNNING) -> dict:
@@ -867,6 +1040,32 @@ class AutoSessionController:
 
         seed_configs = seed_universe_configs(base, self.budget.max_configs)
 
+        # ---- J-15: global-history warm start (opt-IN) ------------------------
+        # When opted in, mine prior sessions (read-only) and reprioritize the
+        # bounded seed so the historically-strongest in-seed family is screened
+        # and promoted FIRST. "this-run" (default) — or any unexpected value —
+        # skips mining/planner/citation entirely (today's deterministic behavior,
+        # byte-for-byte unchanged). ``history_priority`` is empty unless warm-start
+        # actually reordered, so the PROMOTE ranking below stays identical for the
+        # opt-out path.
+        history_priority: dict[tuple[str, str], int] = {}
+        if base.history_scope == "global":
+            seed_families = [(c.symbol, c.timeframe) for c in seed_configs]
+            families = mine_history_families(self.session_id, self.scorer)
+            if any(f in families for f in seed_families):
+                # The planner is a real (token-spending) LLM unit. Honor a
+                # pre-exhausted cap BEFORE it AND before SCREEN, exactly as a
+                # pre-exhausted SCREEN would (J-13).
+                self.budget = self.budget.with_wall_clock(self._clock() - self._start_monotonic)
+                if self.budget.exceeded():
+                    await self._finish(STATUS_BUDGET_EXHAUSTED, "budget-exhausted")
+                    return
+                if await self._stop_requested():
+                    await self._finish(STATUS_STOPPED, "stopped")
+                    return
+                seed_configs, history_priority = await self._warm_start(
+                    base, seed_configs, seed_families, families)
+
         # ---- Stage 1: SCREEN (cheapest model, no walk-forward) ---------------
         self._append_activity(
             "auto-run",
@@ -919,13 +1118,28 @@ class AutoSessionController:
             await self._finish(STATUS_BUDGET_EXHAUSTED, "budget-exhausted")
             return
 
-        # ---- Rank SCREEN survivors by the canonical score; take the top-k -----
+        # ---- Rank SCREEN survivors; take the top-k ----------------------------
+        # Default / opt-out: by the canonical screen score (ties → seed order),
+        # exactly as today. Warm-start (global): by (history_priority, screen
+        # score) so the historically-strongest screened family is promoted first.
         n_screened = len(screened)
         k = min(DEFAULT_PROMOTE_K, n_screened)
-        order = sorted(
-            range(n_screened),
-            key=lambda i: (-self.scorer.score(screened[i][1]), i),   # ties → seed order
-        )
+        if history_priority:
+            order = sorted(
+                range(n_screened),
+                key=lambda i: (
+                    history_priority.get(
+                        (screened[i][2].symbol, screened[i][2].timeframe),
+                        len(history_priority)),
+                    -self.scorer.score(screened[i][1]),
+                    i,
+                ),
+            )
+        else:
+            order = sorted(
+                range(n_screened),
+                key=lambda i: (-self.scorer.score(screened[i][1]), i),   # ties → seed order
+            )
         survivors = [screened[i] for i in order[:k]]
 
         # ---- Stage 2: PROMOTE (stronger model + walk-forward), best from these -
@@ -979,6 +1193,56 @@ class AutoSessionController:
             await self._finish(STATUS_STOPPED, "stopped")
             return
         await self._finish(STATUS_BUDGET_EXHAUSTED, "budget-exhausted")
+
+    # ---- warm start (J-15) --------------------------------------------------
+
+    async def _warm_start(
+        self, base: AutoSessionConfig,
+        seed_configs: list[AutoSessionConfig],
+        seed_families: list[tuple[str, str]],
+        families: dict[tuple[str, str], FamilyHistory],
+    ) -> tuple[list[AutoSessionConfig], dict[tuple[str, str], int]]:
+        """Order the bounded seed by prior history and emit ONE warm-start
+        Activity-Log entry.
+
+        Calls the cached planner at most once (token usage threaded into the
+        budget — J-13); on ANY planner failure falls back to the deterministic
+        mined-family ordering so warm start still works without the LLM and the
+        loop never crashes.  Returns ``(reordered_seed_configs, history_priority)``
+        where ``history_priority`` ranks the families for PROMOTE selection.
+        """
+        det_order = order_families_by_history(seed_families, families)
+        ordered_families = det_order
+        rationale = ""
+        try:
+            plan, rationale = await self.pipeline.plan_warmstart(
+                seed_families=list(seed_families),
+                history=history_brief(families),
+                model=base.model,
+            )
+            self._account_usage(getattr(self.pipeline, "last_planner_usage", None))
+            coerced = coerce_family_order(plan, seed_families)
+            if coerced is not None:
+                ordered_families = coerced
+        except Exception as exc:
+            logger.warning(
+                "auto-session %s: warm-start planner failed (%s); using "
+                "deterministic mined-family order", self.session_id, exc)
+            self._account_usage(getattr(self.pipeline, "last_planner_usage", None))
+            ordered_families = det_order
+
+        history_priority = {fam: i for i, fam in enumerate(ordered_families)}
+        # ONE planner-decision entry citing the first prioritized family that has
+        # real prior history (contains NO secrets — only family/score/session).
+        cited = next((f for f in ordered_families if f in families), None)
+        if cited is not None:
+            h = families[cited]
+            content = (f"WARM-START — prioritizing {h.symbol} {h.timeframe} "
+                       f"(prior session {h.session_name}: robust score {h.score:+.4f})")
+            if rationale:
+                content += f" — {rationale}"
+            self._append_activity("auto-run", content)
+        return reorder_configs_by_family(seed_configs, ordered_families), history_priority
 
     # ---- iteration creation -------------------------------------------------
 

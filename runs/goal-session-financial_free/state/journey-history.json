@@ -4,206 +4,199 @@
       "id": "J-01",
       "name": "Run a backtest from natural language",
       "status": "already_passing",
-      "last_verified_iter": "goal-financial_free-iter-4",
-      "last_passing_iter": "goal-financial_free-iter-4",
+      "last_verified_iter": "goal-financial_free-iter-6",
+      "last_passing_iter": "goal-financial_free-iter-6",
       "first_seen_iter": "goal-financial_free-iter-0",
-      "last_evidence_path": "iter-5 no-op: git diff HEAD -- apps/ EMPTY (apps/ byte-identical to iter-4); status carried forward. iter-4 no-regression: backtest/data/codegen paths NOT in diff; evaluator full hermetic suite 209 passed / 1 known red / 2 deselected. iter-3 real-pixel render (TC-12-app-loaded.png) still valid."
+      "last_evidence_path": "iter-6 no-regression: diff is only auto_session*/pipeline/history_planner + tests; backtest/data/codegen paths NOT in diff; evaluator re-ran full hermetic suite 231 passed / 1 known red / 2 deselected. iter-3 real-pixel render (TC-12-app-loaded.png) still valid."
     },
     "J-02": {
       "id": "J-02",
       "name": "Inspect and browse run history",
       "status": "already_passing",
-      "last_verified_iter": "goal-financial_free-iter-4",
-      "last_passing_iter": "goal-financial_free-iter-4",
+      "last_verified_iter": "goal-financial_free-iter-6",
+      "last_passing_iter": "goal-financial_free-iter-6",
       "first_seen_iter": "goal-financial_free-iter-0",
-      "last_evidence_path": "iter-5 no-op: git diff HEAD -- apps/ EMPTY; carried forward. iter-4 no-regression: lazy list/open path (session_routes.py) untouched; eager-load verdict resolved (iter-1, not re-litigated)."
+      "last_evidence_path": "iter-6 no-regression: session_routes.py NOT in diff; lazy list/open path untouched; eager-load verdict resolved (iter-1, not re-litigated)."
     },
     "J-03": {
       "id": "J-03",
       "name": "Walk-forward validation",
       "status": "already_passing",
-      "last_verified_iter": "goal-financial_free-iter-4",
-      "last_passing_iter": "goal-financial_free-iter-4",
+      "last_verified_iter": "goal-financial_free-iter-6",
+      "last_passing_iter": "goal-financial_free-iter-6",
       "first_seen_iter": "goal-financial_free-iter-0",
-      "last_evidence_path": "iter-5 no-op: git diff HEAD -- apps/ EMPTY; carried forward. iter-4 no-regression: walk_forward.py untouched; WFE-gated RobustScorer drives PROMOTE best-selection; full suite green."
+      "last_evidence_path": "iter-6 no-regression: walk_forward.py NOT in diff; WFE-gated RobustScorer (one instance, auto_session.py:242) drives PROMOTE best-selection; suite green."
     },
     "J-04": {
       "id": "J-04",
       "name": "AI insights",
       "status": "already_passing",
-      "last_verified_iter": "goal-financial_free-iter-4",
-      "last_passing_iter": "goal-financial_free-iter-4",
+      "last_verified_iter": "goal-financial_free-iter-6",
+      "last_passing_iter": "goal-financial_free-iter-6",
       "first_seen_iter": "goal-financial_free-iter-0",
-      "last_evidence_path": "iter-5 no-op: git diff HEAD -- apps/ EMPTY; carried forward. iter-4 no-regression: insights path unchanged; open-universe carries insights:null (UI-handled shape); suite green."
+      "last_evidence_path": "iter-6 no-regression: insights_generator.py NOT in diff; the new history_planner.py mirrors InsightsGenerator's structure but is a separate module; suite green."
     },
     "J-05": {
       "id": "J-05",
       "name": "Reference data loads",
       "status": "already_passing",
-      "last_verified_iter": "goal-financial_free-iter-4",
-      "last_passing_iter": "goal-financial_free-iter-4",
+      "last_verified_iter": "goal-financial_free-iter-6",
+      "last_passing_iter": "goal-financial_free-iter-6",
       "first_seen_iter": "goal-financial_free-iter-0",
-      "last_evidence_path": "iter-5 no-op: git diff HEAD -- apps/ EMPTY; carried forward. iter-4 no-regression: /api/symbols + /api/timeframes routes unchanged; iter-3 REAL-PIXEL render reports/qa/goal-financial_free-iter-3-evidence/TC-12-app-loaded.png shows the populated controls (J-05 pixel debt CLEARED iter-3)."
+      "last_evidence_path": "iter-6 no-regression: /api/symbols + /api/timeframes routes NOT in diff; iter-3 REAL-PIXEL render reports/qa/goal-financial_free-iter-3-evidence/TC-12-app-loaded.png shows the populated controls (pixel debt CLEARED iter-3)."
     },
     "J-06": {
       "id": "J-06",
       "name": "Warm-cache re-run works end-to-end",
       "status": "already_passing",
-      "last_verified_iter": "goal-financial_free-iter-4",
-      "last_passing_iter": "goal-financial_free-iter-4",
+      "last_verified_iter": "goal-financial_free-iter-6",
+      "last_passing_iter": "goal-financial_free-iter-6",
       "first_seen_iter": "goal-financial_free-iter-0",
-      "last_evidence_path": "iter-5 no-op: git diff HEAD -- apps/ EMPTY; carried forward. iter-4 no-regression: Parquet loader / warm-cache path untouched; staged open-universe reuses the OHLCV cache across configs (no re-fetch when covered) + code-hash dedup; suite green."
+      "last_evidence_path": "iter-6 no-regression: Parquet loader / warm-cache path NOT in diff; staged open-universe still reuses OHLCV cache across configs; suite green."
     },
     "J-07": {
       "id": "J-07",
       "name": "Start a headless automated session via the API (pinned config)",
       "status": "passing",
-      "last_verified_iter": "goal-financial_free-iter-4",
-      "last_passing_iter": "goal-financial_free-iter-4",
+      "last_verified_iter": "goal-financial_free-iter-6",
+      "last_passing_iter": "goal-financial_free-iter-6",
       "first_seen_iter": "goal-financial_free-iter-0",
-      "last_evidence_path": "iter-5 no-op: git diff HEAD -- apps/ EMPTY (pinned path _run_inner byte-untouched); carried forward. iter-4: test_pinned_path_unchanged_runs_improvement_rounds green; POST->200+listed unchanged."
+      "last_evidence_path": "iter-6: pinned path _run_inner explicitly ignores history_scope (spec IN-SCOPE); route tests (history_scope global/this-run/omitted -> 200, invalid -> 422) + test_auto_session_routes.py green; POST->200+listed unchanged."
     },
     "J-08": {
       "id": "J-08",
       "name": "Track the automated run live in the UI",
       "status": "passing",
-      "last_verified_iter": "goal-financial_free-iter-4",
-      "last_passing_iter": "goal-financial_free-iter-4",
+      "last_verified_iter": "goal-financial_free-iter-6",
+      "last_passing_iter": "goal-financial_free-iter-6",
       "first_seen_iter": "goal-financial_free-iter-0",
-      "last_evidence_path": "iter-5 no-op: git diff HEAD -- apps/ EMPTY (zero FE change); carried forward. iter-4 endpoint-layer: reports/qa/goal-financial_free-iter-4-evidence/J08-live-counter-progression.json shows configsDone 0->3, tokens 0->9913, usd 0->$0.0061 across 12 polls WITHOUT reload. Pixel still NOT captured (4th-iter carry-forward; QA-managed FE :3692 down mid-window, NOT the throttle)."
+      "last_evidence_path": "iter-6: zero FE change (no apps/frontend/** in diff); the warm-start citation reuses the existing auto-run Activity-Log render branch served by GET /api/sessions/{id}.activityLog. iter-4 endpoint-layer J08-live-counter-progression.json (configsDone/tokens/usd progression without reload) still valid."
     },
     "J-09": {
       "id": "J-09",
       "name": "Automated chain stops on robust target or budget; best is marked",
       "status": "passing",
-      "last_verified_iter": "goal-financial_free-iter-4",
-      "last_passing_iter": "goal-financial_free-iter-4",
+      "last_verified_iter": "goal-financial_free-iter-6",
+      "last_passing_iter": "goal-financial_free-iter-6",
       "first_seen_iter": "goal-financial_free-iter-0",
-      "last_evidence_path": "iter-5 no-op: git diff HEAD -- apps/ EMPTY; carried forward. iter-4: terminal stop-reason + WFE-gated best via scorer.select_best(promoted) over PROMOTED only (auto_session.py:962); positive best-marking proven by test_open_universe_explores_distinct_configs_and_marks_best."
+      "last_evidence_path": "iter-6: best still RobustScorer.select_best(promoted) over PROMOTED only, WFE-gated (best definition UNCHANGED by warm-start, which reorders promotion only); terminal stop-reason logic untouched; suite green."
     },
     "J-10": {
       "id": "J-10",
       "name": "Backend is the single source of truth (button rewired, survives reload)",
       "status": "passing",
-      "last_verified_iter": "goal-financial_free-iter-4",
-      "last_passing_iter": "goal-financial_free-iter-4",
+      "last_verified_iter": "goal-financial_free-iter-6",
+      "last_passing_iter": "goal-financial_free-iter-6",
       "first_seen_iter": "goal-financial_free-iter-0",
-      "last_evidence_path": "iter-5 no-op: git diff HEAD -- apps/ EMPTY; carried forward. iter-4 endpoint-layer: reports/qa/goal-financial_free-iter-4-evidence/J10-reload-refetch.json returns identical persisted autoRun terminal state. In-browser iterate loop + duplicate scorer remain removed (iter-2). Pixel (reload-mid-run) still NOT captured (4th-iter carry-forward)."
+      "last_evidence_path": "iter-6: backend remains single source of truth; warm-start writes the same auto-run Activity-Log entry the UI renders (no parallel store, no schema fork). In-browser iterate loop + duplicate scorer remain removed (iter-2). iter-4 endpoint-layer J10-reload-refetch.json still valid."
     },
     "J-11": {
       "id": "J-11",
       "name": "Stop a running automated session",
       "status": "passing",
-      "last_verified_iter": "goal-financial_free-iter-4",
-      "last_passing_iter": "goal-financial_free-iter-4",
+      "last_verified_iter": "goal-financial_free-iter-6",
+      "last_passing_iter": "goal-financial_free-iter-6",
       "first_seen_iter": "goal-financial_free-iter-0",
-      "last_evidence_path": "iter-5 no-op: git diff HEAD -- apps/ EMPTY; carried forward. iter-4: stop honored at every staged checkpoint (test_open_universe_stop_request_transitions_to_stopped_mid_screen + test_open_universe_stop_during_promote_preserves_best green). B1+B2 preserved (autoRun RMW under shared per-session asyncio.Lock, store I/O off-loop)."
+      "last_evidence_path": "iter-6: stop checkpoints + staging mechanics UNCHANGED (warm-start touches ordering only). B1+B2 preserved (autoRun RMW under shared per-session asyncio.Lock, store I/O off-loop). Stop tests in test_auto_session.py green."
     },
     "J-12": {
       "id": "J-12",
       "name": "Open-universe run from only an objective + budget",
       "status": "passing",
-      "last_verified_iter": "goal-financial_free-iter-4",
-      "last_passing_iter": "goal-financial_free-iter-4",
+      "last_verified_iter": "goal-financial_free-iter-6",
+      "last_passing_iter": "goal-financial_free-iter-6",
       "first_seen_iter": "goal-financial_free-iter-0",
-      "last_evidence_path": "iter-5 no-op: git diff HEAD -- apps/ EMPTY (_run_open_universe unchanged in this tree — the J-15 edit that would touch it was lost before persisting); carried forward. iter-4 (most-at-risk): LIVE 3 distinct configs surfaced as nodes, terminal within budget; hermetic test_open_universe_explores_distinct_configs_and_marks_best preserves >=2-distinct + bounded-seed + best-by-robust-score. NOTE: J-12/J-13/J-14 were the MOST-AT-RISK journeys for the (lost) J-15 edit; when J-15 is re-landed, re-confirm these stay green."
+      "last_evidence_path": "iter-6 MOST-AT-RISK (this iter edits _run_open_universe) RE-CONFIRMED GREEN: new default history_scope='this-run' (opt-out) keeps deterministic seed ordering BYTE-EQUIVALENT to today; test_omitted_history_scope_behaves_byte_equivalent_to_today locks SCREEN/PROMOTE order; J-12 hermetic tests (set no history_scope) pass unchanged; bounded seed preserved (warm-start reorders WITHIN seed, never fans out; test asserts all nodes in SEED_SYMBOLS/SEED_TIMEFRAMES)."
     },
     "J-13": {
       "id": "J-13",
       "name": "AI-token/cost budget is hard-enforced",
       "status": "passing",
-      "last_verified_iter": "goal-financial_free-iter-4",
-      "last_passing_iter": "goal-financial_free-iter-4",
+      "last_verified_iter": "goal-financial_free-iter-6",
+      "last_passing_iter": "goal-financial_free-iter-6",
       "first_seen_iter": "goal-financial_free-iter-0",
-      "last_evidence_path": "iter-5 no-op: git diff HEAD -- apps/ EMPTY; carried forward. iter-4 (most-at-risk): BudgetTracker.exceeded() byte-unchanged; cost_exceeded() (auto_session.py:186) separate cost-caps-only predicate gates PROMOTE; LIVE halted budget-exhausted at configs 3/3, tokens 9913, usd $0.0061, all <= caps. Re-confirm when J-15 re-lands (planner tokens must thread into the one BudgetTracker)."
+      "last_evidence_path": "iter-6 MOST-AT-RISK RE-CONFIRMED GREEN: planner token usage threaded into the ONE BudgetTracker via _account_usage(pipeline.last_planner_usage) BEFORE SCREEN; test_planner_token_usage_threaded_into_budget asserts budget == exactly planner spend; test_pre_exhausted_budget_terminates_before_planner_and_screen asserts 0 planner calls + 0 iteration dirs + 0 execute calls. BudgetTracker class still single (auto_session.py:127); no new construction in diff."
     },
     "J-14": {
       "id": "J-14",
       "name": "Staged screening — full cost only on survivors",
       "status": "passing",
-      "last_verified_iter": "goal-financial_free-iter-4",
-      "last_passing_iter": "goal-financial_free-iter-4",
+      "last_verified_iter": "goal-financial_free-iter-6",
+      "last_passing_iter": "goal-financial_free-iter-6",
       "first_seen_iter": "goal-financial_free-iter-0",
-      "last_evidence_path": "iter-5 no-op: git diff HEAD -- apps/ EMPTY; carried forward. NEWLY PASSING iter-4. Code (auto_session.py:855-982): SCREEN on cheapest_model() wfv=False gated by exceeded(), ranks by the ONE RobustScorer.score(), PROMOTEs k=min(DEFAULT_PROMOTE_K=1,n_screened) on request model wfv=True gated by cost_exceeded(), best via select_best(promoted) over PROMOTED ONLY. Hermetic stage-routing execute_calls.wfv==[F,F,F,T]; LIVE gpt-5.4-mini SCREEN + claude-haiku-4-5 PROMOTE (reports/qa/goal-financial_free-iter-4-evidence/J14-*.json). Re-confirm when J-15 re-lands (warm-start changes ordering only, not staging mechanics)."
+      "last_evidence_path": "iter-6 MOST-AT-RISK RE-CONFIRMED GREEN: SCREEN/PROMOTE staging mechanics UNCHANGED (cheap-no-WF SCREEN, k<n_screened PROMOTE on stronger model + WF, best from promoted only). Warm-start changes ONLY promotion ORDERING (ranks by (history_priority, screen_score) under global); this-run/omitted ranking byte-identical to HEAD. test_auto_session.py J-14 tests pass unchanged."
     },
     "J-15": {
       "id": "J-15",
       "name": "Learns from global history (warm start) and is opt-out-able",
-      "status": "failing",
-      "last_verified_iter": "goal-financial_free-iter-5",
-      "last_passing_iter": null,
+      "status": "passing",
+      "last_verified_iter": "goal-financial_free-iter-6",
+      "last_passing_iter": "goal-financial_free-iter-6",
       "first_seen_iter": "goal-financial_free-iter-0",
-      "last_evidence_path": "iter-5 TARGET — BUILT BUT LOST BEFORE PERSISTING; NOT in this tree, NOT recoverable from git. Verified absent: grep over apps/ (excl. caches) for history_scope/mine_history_families/plan_warmstart/history_planner/WARM-START -> NO source matches (lone auto_session.py:77 'history' is a comment); apps/backend/strategy/history_planner.py missing; CreateAutoSessionRequest (auto_session_routes.py:77) has no history_scope field. Pipeline never completed in this tree: runs/goal-financial_free-iter-5/status.json current_step:'starting', changed_files:[], tests_run:false; NO dev/review/qa/audit/ui-test-results artifacts; no iter-5-evidence/. PROOF the work existed+passed: apps/backend/.pytest_cache/v/cache/nodeids lists the 8 spec'd J-15 tests, lastfailed holds ONLY the pre-existing red test_directions_cache -> J-15 tests were green in an ephemeral worktree that was removed without merging back. UNRECOVERABLE: HEAD still iter-4 9e977ab (no reset in reflog); iter-5 snapshot ccc06b2 diffs from iter-4 by ONE telemetry line; history_scope appears in dangling commits ONLY from the abandoned auto-money-printer session (2026-05-19..21, different lineage), NONE from the iter-5 window. Coherence COHERENCE-WARN (runs/goal-session-financial_free/iter-5/coherence.md §3): blueprint advanced to describe J-15 as landed while code absent. MUST be rebuilt from docs/phases/goal-financial_free-iter-5.md (spec intact) and the next dispatch MUST verify it persisted (git diff HEAD -- apps/ non-empty + dev handoff present) before proceeding."
+      "last_evidence_path": "iter-6 RE-LANDED AND PERSISTED (reverses the iter-5 lost-work failure). PERSISTENCE GATE (DoD-0) independently re-verified by evaluator: git diff --stat HEAD -- apps/backend/ = 7 files +1123/-9 incl. all four required paths (strategy/history_planner.py NEW, backend/auto_session.py + auto_session_routes.py MODIFIED, tests/test_history_warmstart.py NEW); test -f history_planner.py succeeds; grep history_scope -> both backend files; status.json changed_files (7) + tests_run:true + current_step:closure_passed; handoff Files-Changed == git diff --name-only. ACCEPTANCE: test_global_warm_start_cites_prior_and_promotes_top_family asserts ONE auto-run warm-start entry citing prior session ('Run One') + family ('ETH/USDT 1h') + 'robust score', planner called exactly once, first PROMOTEd family == prior top performer, bounded seed; test_this_run_opt_out_no_cross_run_citation + test_omitted_history_scope_behaves_byte_equivalent_to_today honor opt-out. Read-only meta-only mining (test_read_only_mining_leaves_prior_artifacts_byte_identical + test_mining_is_meta_only_does_not_parse_full_iteration monkeypatches read_iteration_full to raise). Prompt-cache marker history_planner.py:180; planner <=once. 18 J-15 + 4 route tests = 42 passed (evaluator re-run). Endpoint-layer proof accepted per spec (zero new FE render path); live key-gated run not executed (no API key in env) — explicitly non-blocking. Coherence COHERENCE-PASS."
     },
     "J-16": {
       "id": "J-16",
       "name": "Robust objective gates overfit",
       "status": "failing",
-      "last_verified_iter": "goal-financial_free-iter-4",
+      "last_verified_iter": "goal-financial_free-iter-6",
       "last_passing_iter": null,
       "first_seen_iter": "goal-financial_free-iter-0",
-      "last_evidence_path": "OUT OF SCOPE through iter-5 (deferred): the WFE-gated RobustScorer is the canonical best definition and drives cross-config PROMOTE best-selection (best from promoted-only, never screened-only), but the multi-candidate overfit-gating LEADERBOARD visualization is J-16. Single best badge exists; ranked leaderboard not built. Final journey after J-15 lands."
+      "last_evidence_path": "iter-6 OUT OF SCOPE (next + FINAL journey before GOAL_ACHIEVED). The WFE-gated RobustScorer is the canonical best definition and drives cross-config PROMOTE best-selection (best from promoted-only, never screened-only); a single best badge exists, but the multi-candidate overfit-gating LEADERBOARD visualization is not built. J-16 is the ONE remaining journey that genuinely requires NEW frontend work (a new render path), so browser-QA/pixel proof becomes load-bearing — endpoint-layer substitute will NOT suffice; fix the browser-qa-phase.sh offset-port health-probe OR run a real foreground browser-QA window."
     }
   },
   "anti_goal_violations": [],
   "observations": [
     {
-      "iter": "goal-financial_free-iter-5",
-      "kind": "lost-work-incomplete-pipeline",
-      "note": "ITERATION 5 PRODUCED NO PERSISTED PRODUCT CODE. J-15 (global-history warm start) was built and validated in an ephemeral copy — apps/backend/.pytest_cache/v/cache/nodeids lists all 8 spec'd J-15 tests and lastfailed holds ONLY the pre-existing red (test_directions_cache), proving the J-15 tests ran GREEN — but the implementation was NEVER merged into this working tree and is NOT recoverable from git. This is the framework's `isolation: worktree` failure mode: work built in a worktree, tested, then the worktree removed without committing/merging back. Independent verification: grep over apps/ finds zero history_scope/mine_history_families/history_planner.py; status.json frozen at current_step:'starting' changed_files:[] tests_run:false; NO dev/review/qa/audit/ui-test-results artifacts exist; git diff HEAD -- apps/ is EMPTY (so J-01..J-14 cannot have regressed); HEAD still iter-4 9e977ab; iter-5 snapshot ccc06b2 = iter-4 + one telemetry line; the only history_scope in dangling commits is the abandoned auto-money-printer session (different lineage). VERDICT CONTINUE (not REGRESSION: nothing passing broke; not STALLED: first no-progress iter + crystal-clear next step). REQUIRED FIX next dispatch: rebuild J-15 from the intact iter-5 spec AND verify it persisted (git diff HEAD -- apps/ shows apps/backend/** changes + dev handoff present + status.json.changed_files non-empty) BEFORE declaring done. A green pytest cache is NOT evidence the code landed in the tree. STALL RISK: if the harness loses the next iteration's work the same way, that WOULD trip a stall — the persistence check is load-bearing.",
-      "evidence": "runs/goal-financial_free-iter-5/status.json (current_step:'starting'); runs/goal-session-financial_free/iter-5/coherence.md (COHERENCE-WARN §3 — contract advanced past absent code); apps/backend/.pytest_cache/v/cache/{nodeids (8 J-15 tests),lastfailed (only test_directions_cache)}; git diff HEAD -- apps/ (empty); git fsck dangling-commit scan (history_scope only in auto-money-printer commits e561ff1/eb2317c/13c5366/fee5ff0/cad3628, none in iter-5 window)",
-      "resolved": false
+      "iter": "goal-financial_free-iter-6",
+      "kind": "lost-work-recovered",
+      "note": "ITER-5 LOST-WORK RESOLVED in iter-6. J-15 was successfully re-landed from the intact iter-5 spec AND persisted in the real working tree — the decisive contrast with iter-5 (which left git diff HEAD -- apps/ EMPTY). The DoD-0 persistence gate proved load-bearing: this iteration's dev/review/qa/audit each ran it AND the evaluator independently re-verified it against the live tree (7 files +1123/-9, all four required paths, history_planner.py present, status.json populated, handoff==diff). The fix that worked: 'a green pytest cache is NOT evidence the work landed — assert git diff HEAD -- apps/ non-empty + status.json.changed_files + dev handoff present before declaring done.' This gate MUST be re-applied for J-16 (which adds new FE code).",
+      "evidence": "git diff --stat HEAD -- apps/backend/ (7 files, +1123/-9); runs/goal-financial_free-iter-6/status.json (changed_files 7 + tests_run:true + current_step:closure_passed); docs/handoffs/goal-financial_free-iter-6-dev.md (Files Changed == git diff --name-only); evaluator full-suite re-run 231 passed / 1 known red / 2 deselected; runs/goal-session-financial_free/iter-6/coherence.md (COHERENCE-PASS — iter-5 contract-ahead-of-code WARN resolved)",
+      "resolved": true
     },
     {
       "iter": "goal-financial_free-iter-4",
       "kind": "verification-gap-carry-forward",
-      "note": "PIXEL DEBT NOW 4 ITERATIONS UNRESOLVED (moot in iter-5 — no UI work, no QA ran). The dedicated browser-qa-agent SKIPPED all 13 tests and QA's own managed frontend on :3692 went DOWN mid-window (FE 200 at start -> 000 from poll 3, ss -ltnp shows NO LISTENER — genuinely down, NOT the Chrome-MCP hidden-tab throttle). J-08 (live chips), J-10 (reload-mid-run), J-14 (SCREEN/PROMOTE activity entries) verified via the spec-sanctioned backend-endpoint substitute + zero-FE-change code confirmation. ROOT CAUSE is the harness frontend lifecycle (browser-qa-phase.sh health-probes :3000 while ./scripts/dev.sh binds a deterministic offset port e.g. :3692), NOT agent effort. The iter-5 spec FORMALLY ACCEPTED endpoint-layer proof for J-15's display aspect (J-15 adds zero new FE render path) and declared the harness port-detection fix a separable non-blocking improvement — do not carry a 5th pixel-debt instruction.",
-      "evidence": "reports/phase-goal-financial_free-iter-4-ui-test-results.md (SKIPPED 0/13); reports/qa/goal-financial_free-iter-4-qa.md (Step 4 FE :3692 200->000 no listener); docs/phases/goal-financial_free-iter-5.md (TESTING REQUIREMENTS: endpoint-layer accepted, pixel non-blocking)",
+      "note": "PIXEL DEBT — N/A for iter-6 (J-15 adds ZERO new FE render path: it reuses the existing auto-run Activity-Log branch, so endpoint-layer proof is the spec-mandated DoD for its display aspect — not a shortcut). BUT J-16 (next + final) DOES add a genuinely NEW render path (multi-candidate leaderboard component), so the browser-QA/pixel aspect becomes LOAD-BEARING for the first time since the auto-session UI — endpoint-layer proof will NOT close J-16. ROOT CAUSE remains a harness frontend-lifecycle bug (browser-qa-phase.sh health-probes :3000 while ./scripts/dev.sh binds a deterministic offset port e.g. :3692), NOT agent effort. For J-16: fix the harness port detection OR run a real uncontended foreground browser-QA window with health re-probing.",
+      "evidence": "reports/phase-goal-financial_free-iter-6-ui-test-results.md (SKIPPED — backend-only, no new render path); reports/qa/goal-financial_free-iter-6-qa.md (Step 4 — endpoint-layer substitute, zero new FE code); docs/phases/goal-financial_free-iter-6.md (NOTES — pixel non-blocking for J-15 only)",
       "resolved": false
     },
     {
       "iter": "goal-financial_free-iter-4",
       "kind": "live-qa-recipe-pitfall",
-      "note": "iter-4 live open-universe QA used 2024-01-01->2024-03-01 (2 months) with the default 6mo-IS+3mo-OOS walk-forward, so the PROMOTE node's WF produced 0 windows -> wfe 0.0 -> bestIterationId=None (a CORRECT gated outcome, but it left the live promote->best-marking path VACUOUS). LESSON: future LIVE QA of any walk-forward-dependent journey MUST use a date range >= IS_months + OOS_months (>=9mo at defaults) so the WF — and any best-marking that depends on it — is not silently vacuous. APPLIES DIRECTLY to the J-15 re-land: run #2's promote->best path depends on WF, so its live QA MUST use a >=9-month range.",
-      "evidence": "reports/qa/goal-financial_free-iter-4-evidence/J14-final-session-snapshot.json (node 4de659e2: num_windows=0, wfe=0.0, errors=['Not enough data to form any IS+OOS windows']); reports/qa/goal-financial_free-iter-4-qa.md (Step 3.5 TC-04)",
+      "note": "Future LIVE QA of any walk-forward-dependent journey MUST use a date range >= IS_months + OOS_months (>=9mo at the 6/3 defaults), or the PROMOTE walk-forward forms 0 windows -> wfe 0.0 -> best=None (a correct gated outcome, but the promote->best path is silently vacuous). iter-6 did NOT run the optional live key-gated pair (no API key in env), so J-15's promote->best live path was not exercised live — it is proven hermetically (test_global_warm_start_cites_prior_and_promotes_top_family uses wfe=0.6 on the promoted node). APPLIES to J-16 if any live run is exercised.",
+      "evidence": "reports/qa/goal-financial_free-iter-4-evidence/J14-final-session-snapshot.json (num_windows=0, wfe=0.0); reports/qa/goal-financial_free-iter-6-qa.md (TC-16 SKIPPED, non-blocking)",
       "resolved": false
     },
     {
       "iter": "goal-financial_free-iter-4",
       "kind": "scope-and-doc-note",
-      "note": "An out-of-scope GET /health static liveness probe was added to api.py:163-171 (mirrors /api/health). NOT an anti-goal violation (no Data-Contract value, not a UI/nav route; coherence advisory-only) but absent from the iter-4 dev handoff 'Files Changed' and status.json.changed_files. Still present in the tree (api.py is part of HEAD iter-4). Release-manager should reconcile the handoff/changed_files when the branch is next committed and decide whether /health and /api/health consolidate. (iter-5 changed no source so this is unchanged.)",
-      "evidence": "git diff at iter-4 -- apps/backend/backend/api.py; runs/goal-session-financial_free/iter-4/coherence.md (Part C advisory); reports/reviews/goal-financial_free-iter-4-review.md (NOTE: demo*.sh)",
-      "resolved": false
-    },
-    {
-      "iter": "goal-financial_free-iter-3",
-      "kind": "verification-gap-carry-forward",
-      "note": "SUPERSEDED by the iter-4 pixel-debt observation. RECURRING live-pixel miss for the auto-session status-strip chips. iter-3 IMPROVED on iter-2 — a real-pixel app render (TC-12-app-loaded.png) proved the frontend serves and renders (J-05 cleared). The narrower strip-chip + reload-mid-run pixel debt was carried forward and is now formally addressed by the iter-5 endpoint-layer acceptance policy.",
-      "evidence": "reports/phase-goal-financial_free-iter-3-ui-test-results.md (SKIPPED 0/12); reports/qa/goal-financial_free-iter-3-evidence/TC-12-app-loaded.png",
+      "note": "An out-of-scope GET /health static liveness probe added to api.py (mirrors /api/health) at iter-4 is STILL present in the tree (api.py not in the iter-6 diff). NOT an anti-goal violation (no Data-Contract value, not a UI/nav route; coherence advisory-only) but absent from the iter-4 dev handoff Files-Changed and status.json.changed_files. Release-manager should reconcile the handoff/changed_files when the branch is next committed and decide whether /health and /api/health consolidate.",
+      "evidence": "git diff at iter-4 -- apps/backend/backend/api.py; runs/goal-session-financial_free/iter-4/coherence.md (Part C advisory)",
       "resolved": false
     },
     {
       "iter": "goal-financial_free-iter-1",
       "kind": "anti-goal-signal-resolved",
       "anti_goal": "GET /api/sessions/{id} (the list/open path) MUST NOT eagerly parse full per-iteration result.json/rating.json payloads; iteration detail is lazy-loaded via the existing per-iteration endpoint.",
-      "note": "RESOLVED — verdict delivered by the iter-1 coherence-auditor and confirmed by the evaluator. get_session builds its iteration list from read_iteration_meta (lightweight) and lazy-loads heavy result/rating/equity/trades ONLY via GET /{session_id}/iterations/{iteration_id} (session_routes.py:144-184). iter-2/iter-3/iter-4 re-confirm CONFORMS. iter-5 changed no code -> still conforms. Do not re-litigate. (J-15's history miner MUST use read_iteration_meta, never the eager full payload — iter-0 lesson.)",
-      "evidence": "runs/goal-session-financial_free/iter-1/coherence.md (Part C.2); apps/backend/backend/session_routes.py:144-184",
+      "note": "RESOLVED iter-1 (coherence-auditor + evaluator). get_session builds its iteration list from read_iteration_meta (lightweight) and lazy-loads heavy result/rating/equity/trades ONLY via GET /{session_id}/iterations/{iteration_id}. Re-confirmed CONFORMS iter-2/3/4. iter-6 honors it directly: the J-15 history miner reads meta only (read_iteration_meta), never read_iteration_full (test_mining_is_meta_only_does_not_parse_full_iteration). Do not re-litigate.",
+      "evidence": "runs/goal-session-financial_free/iter-1/coherence.md (Part C.2); apps/backend/backend/session_routes.py:144-184; iter-6 test_mining_is_meta_only_does_not_parse_full_iteration",
       "resolved": true
     },
     {
       "iter": "goal-financial_free-iter-0",
       "kind": "pre-existing-test-failure",
-      "note": "Backend unit suite: sole failure tests/test_directions_cache.py::test_write_and_read_full_round_trip — the directions cache is goal Capability #10 (nice-to-have), not a Must-have journey nor an anti-goal invariant. Pre-existing on an untouched module; re-confirmed red through iter-4 (209 passed, 1 failed = this test, 2 deselected). In iter-5 it is STILL the only entry in the pytest cache lastfailed (proving the J-15 tests that ran alongside it were green). Not a regression. Anti-goal invariants (test_lookahead, test_determinism, test_sandbox) all PASS.",
-      "evidence": "apps/backend/.pytest_cache/v/cache/lastfailed (iter-5: {test_directions_cache.py::test_write_and_read_full_round_trip: true} only); reports/qa/goal-financial_free-iter-4-qa.md (Step 2)",
+      "note": "Backend unit suite: sole failure tests/test_directions_cache.py::test_write_and_read_full_round_trip — the directions cache is goal Capability #10 (nice-to-have), not a Must-have journey nor an anti-goal invariant. Pre-existing on an untouched module; re-confirmed red through iter-6 (evaluator full-suite re-run: 231 passed, 1 failed = this test, 2 deselected). Not in the iter-6 diff. Not a regression. Anti-goal invariants (test_lookahead, test_determinism, test_sandbox) all PASS.",
+      "evidence": "evaluator iter-6 full-suite re-run (1 failed, 231 passed, 2 deselected); reports/qa/goal-financial_free-iter-6-qa.md (Step 2)",
       "resolved": false
     },
     {
       "iter": "goal-financial_free-iter-3",
       "kind": "flaky-test-note",
-      "note": "tests/test_auto_session_routes.py::test_post_returns_before_loop_completes_and_get_stays_responsive is flaky under full-suite load (test-scaffolding timing race). Passed in the iter-4 evaluator full-suite re-run (209 passed). NOT a product regression. De-flake the scaffold (await the gate-park signal before asserting) in a future iteration. Out-of-scope.",
-      "evidence": "reports/qa/goal-financial_free-iter-4-qa.md (Step 2); evaluator iter-4 full-suite re-run (209 passed, this test green)",
+      "note": "tests/test_auto_session_routes.py::test_post_returns_before_loop_completes_and_get_stays_responsive is flaky under load (test-scaffolding timing race on the PINNED path — no history_scope, so iter-6 warm-start cannot affect it). Passed in the iter-6 evaluator full-suite re-run (231 passed) and the dev/QA full-suite runs; dev handoff notes it fails ~1/3 in isolation. NOT a product regression. De-flake the scaffold (await the gate-park signal before asserting) opportunistically. Out-of-scope.",
+      "evidence": "docs/handoffs/goal-financial_free-iter-6-dev.md (Known Issues); evaluator iter-6 full-suite re-run (231 passed, this test green)",
       "resolved": false
     }
   ],
-  "updated_at": "2026-05-23T23:41:14Z"
+  "updated_at": "2026-05-24T01:03:13Z"
 }

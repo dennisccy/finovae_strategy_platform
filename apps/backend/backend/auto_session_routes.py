@@ -94,6 +94,10 @@ class CreateAutoSessionRequest(BaseModel):
     allow_short: bool = False
     model: str = Field(default=DEFAULT_MODEL, pattern=r"^(claude-|gpt-)")
     objective: str = "robust"
+    # J-15: opt-IN to global-history warm start with "global"; "this-run" (the
+    # default / opt-out) ignores prior sessions. Open-universe only — the pinned
+    # path ignores it. Any other value is rejected 422 by the validator below.
+    history_scope: Optional[str] = "this-run"
     targets: Optional[AutoSessionTargets] = None
     walk_forward: Optional[AutoSessionWalkForward] = None
     budget: AutoSessionBudget
@@ -105,6 +109,13 @@ class CreateAutoSessionRequest(BaseModel):
             datetime.strptime(v, "%Y-%m-%d")
         except ValueError:
             raise ValueError("date must be YYYY-MM-DD")
+        return v
+
+    @field_validator("history_scope")
+    @classmethod
+    def _valid_history_scope(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in {"global", "this-run"}:
+            raise ValueError('history_scope must be "global" or "this-run"')
         return v
 
     @model_validator(mode="after")
@@ -200,6 +211,9 @@ def _build_config(req: CreateAutoSessionRequest, *, open_universe: bool) -> Auto
         wfv_is_months=(wf.is_months if wf and wf.is_months else 6),
         wfv_oos_months=(wf.oos_months if wf and wf.oos_months else 3),
         session_name=session_name,
+        # Coerce an omitted/None value to the opt-out default (defense-in-depth;
+        # the controller also treats any non-"global" value as opt-out).
+        history_scope=(req.history_scope or "this-run"),
     )
 
 
