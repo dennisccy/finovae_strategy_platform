@@ -355,6 +355,12 @@ class AutoSessionConfig:
     # treated as the opt-out by the controller (defense-in-depth). The pinned
     # path (``_run_inner``) ignores it.
     history_scope: str = "this-run"
+    # J-16 bounded optional knob (validated to 1–3 at the API layer). How many
+    # top SCREEN survivors the open-universe loop PROMOTEs to walk-forward
+    # validation. ``None`` ⇒ DEFAULT_PROMOTE_K (1), keeping J-12/J-13/J-14
+    # byte-identical; ≥2 lets a real WFE-failing-but-higher-return candidate sit
+    # in the leaderboard (not best). The pinned path (``_run_inner``) ignores it.
+    promote_k: Optional[int] = None
 
     def backtest_params(self) -> dict:
         """The ``params`` block stored on each iteration node (UI shape)."""
@@ -387,6 +393,16 @@ def _to_datetime(date_str: str, *, end_of_day: bool) -> datetime:
     base = datetime.strptime(date_str, "%Y-%m-%d")
     t = datetime.max.time() if end_of_day else datetime.min.time()
     return datetime.combine(base.date(), t).replace(tzinfo=timezone.utc)
+
+
+def _json_safe_score(score: float) -> Optional[float]:
+    """Map the scorer's ``-inf`` (a candidate under the min-trades floor) to
+    JSON ``null`` and round otherwise.  JSON has no ``-Infinity`` and the
+    leaderboard must round-trip losslessly through ``session.json``; an
+    ineligible/no-trades row carries ``robustScore: null`` plus a gating reason."""
+    if score == float("-inf"):
+        return None
+    return round(score, 6)
 
 
 def seed_universe_configs(
@@ -591,6 +607,9 @@ def initial_auto_run(budget: BudgetTracker, *, status: str = STATUS_RUNNING) -> 
         "stopRequested": False,
         "bestIterationId": None,
         "budget": budget.to_dict(),
+        # J-16 per-candidate leaderboard (open-universe only); empty until the
+        # search scores its first candidate. The FE renders it only when non-empty.
+        "leaderboard": [],
         "startedAt": _now_iso(),
         "endedAt": None,
     }
@@ -664,6 +683,15 @@ class AutoSessionController:
         # dates, leverage, allow_short, wfv); the OHLCV Parquet cache is reused
         # automatically by the shared pipeline loader (no re-fetch when covered).
         self._backtest_cache: dict[str, tuple] = {}
+        # J-16 leaderboard (open-universe). Per-candidate canonical robust score +
+        # eligibility + gating reason, keyed by ``(symbol, timeframe)`` family so a
+        # PROMOTEd family REPLACES its SCREEN entry (one row per family — dedup).
+        # Built from in-memory metrics during the run and persisted on the autoRun
+        # block by :meth:`_save_auto_run`; it is NEVER an eager re-parse of
+        # ``result.json``. ``_leaderboard_metrics`` retains each row's metrics so
+        # gating reasons can be refreshed when the marked best shifts.
+        self._leaderboard: dict[tuple[str, str], dict] = {}
+        self._leaderboard_metrics: dict[tuple[str, str], tuple[IterationMetrics, str]] = {}
 
     # ---- persistence helpers ------------------------------------------------
 
@@ -691,6 +719,12 @@ class AutoSessionController:
                 "stopRequested": bool(persisted.get("stopRequested", False)),
                 "bestIterationId": self.best_id,
                 "budget": self.budget.to_dict(),
+                # J-16: per-candidate robust-score leaderboard (open-universe only;
+                # empty on the pinned path). Built in-memory during the run and
+                # persisted here so it survives a reload/worker restart (J-08/J-10)
+                # and rides the existing GET /api/sessions/{id} poll — no new
+                # endpoint, no eager result.json parse.
+                "leaderboard": self._leaderboard_list(),
                 "startedAt": self.started_at,
                 "endedAt": self.ended_at,
             }
@@ -730,6 +764,58 @@ class AutoSessionController:
             tokens=usage.total_tokens,
             usd=cost_usd(usage.model, usage.input_tokens, usage.output_tokens),
         )
+
+    # ---- leaderboard (J-16) -------------------------------------------------
+
+    def _leaderboard_list(self) -> list[dict]:
+        """The per-family leaderboard entries as a fresh list (insertion order;
+        the FE ranks by ``robustScore``).  Copied so the persisted autoRun block
+        never aliases the controller's mutable state."""
+        return [dict(e) for e in self._leaderboard.values()]
+
+    def _gating_reason(self, m: IterationMetrics, *, stage: str, iteration_id: str) -> str:
+        """A short human reason why a candidate is / isn't the marked best,
+        derived ENTIRELY from the ONE :class:`RobustScorer` eligibility outcome
+        (the FE reads this verbatim and never re-derives it).  Priority mirrors
+        :meth:`RobustScorer.is_eligible` (trades floor → margin → WFE), then the
+        screened-only / lower-score cases.  Carries no secrets — only metrics."""
+        if iteration_id == self.best_id:
+            return "best"
+        if m.num_trades < self.scorer.min_trades_floor:
+            return "0 trades" if m.num_trades == 0 else f"{m.num_trades} trades (below floor)"
+        if m.margin_called:
+            return "over-leveraged (margin called)"
+        if m.wfe is not None and m.wfe < self.scorer.wf_accept_threshold:
+            return f"WFE {m.wfe:.2f} < {self.scorer.wf_accept_threshold:.2f}"
+        if stage == "screen":
+            return "screened — not walk-forward validated"
+        return "lower robust score"
+
+    def _record_leaderboard(self, family: tuple[str, str], iteration_id: str,
+                            m: IterationMetrics, *, stage: str) -> None:
+        """Upsert this family's leaderboard row from the ONE canonical scorer.
+
+        A PROMOTE row replaces the family's SCREEN row (dedup: one row per
+        family — its validated evaluation).  Stores ONLY the genuinely-new values
+        (score / eligibility / gating reason); display metrics
+        (return / WFE / trades / …) are joined by the FE from ``iterationHistory``
+        by ``iterationId`` — never duplicated here."""
+        self._leaderboard_metrics[family] = (m, stage)
+        self._leaderboard[family] = {
+            "iterationId": iteration_id,
+            "stage": stage,
+            "robustScore": _json_safe_score(self.scorer.score(m)),
+            "eligible": self.scorer.is_eligible(m),
+            "gatingReason": self._gating_reason(m, stage=stage, iteration_id=iteration_id),
+        }
+
+    def _refresh_gating_reasons(self) -> None:
+        """Recompute every row's gating reason against the current ``best_id`` —
+        the marked best can shift as more candidates are promoted, so the prior
+        ``"best"`` row may become ``"lower robust score"`` and vice-versa."""
+        for family, (m, stage) in self._leaderboard_metrics.items():
+            self._leaderboard[family]["gatingReason"] = self._gating_reason(
+                m, stage=stage, iteration_id=self._leaderboard[family]["iterationId"])
 
     # ---- node construction --------------------------------------------------
 
@@ -1105,6 +1191,10 @@ class AutoSessionController:
                     f"score {self.scorer.score(m):+.4f}",
                     iteration_id=node["id"],
                 )
+                # Leaderboard: a screened candidate (no WFE yet). Promoted families
+                # overwrite this row with their PROMOTE node below.
+                self._record_leaderboard(
+                    (screen_cfg.symbol, screen_cfg.timeframe), node["id"], m, stage="screen")
 
             self.budget = self.budget.with_wall_clock(self._clock() - self._start_monotonic)
             await self._save_auto_run()
@@ -1123,7 +1213,11 @@ class AutoSessionController:
         # exactly as today. Warm-start (global): by (history_priority, screen
         # score) so the historically-strongest screened family is promoted first.
         n_screened = len(screened)
-        k = min(DEFAULT_PROMOTE_K, n_screened)
+        # Bounded optional promote_k (validated 1–3 at the API layer); omitted ⇒
+        # DEFAULT_PROMOTE_K (1), keeping J-12/J-13/J-14 byte-identical. k is still
+        # capped at n_screened, and the cost-tiering / per-promote budget gate
+        # below is unchanged.
+        k = min(base.promote_k or DEFAULT_PROMOTE_K, n_screened)
         if history_priority:
             order = sorted(
                 range(n_screened),
@@ -1171,7 +1265,8 @@ class AutoSessionController:
             if created is not None:
                 node, wf = created
                 self._persist_new(node)
-                promoted.append(self._metrics_from(node, wf))
+                pm = self._metrics_from(node, wf)
+                promoted.append(pm)
                 # Best is selected from PROMOTED candidates ONLY (WFE-gated).
                 best = self.scorer.select_best(promoted)
                 if best is not None and best.iteration_id != self.best_id:
@@ -1184,6 +1279,13 @@ class AutoSessionController:
                         f"{self.scorer.score(best):+.4f}).",
                         iteration_id=best.iteration_id,
                     )
+                # Leaderboard: this family now appears as its PROMOTE node
+                # (replacing its SCREEN row — dedup), with the canonical WFE-bearing
+                # metrics. Refresh all rows' gating reasons against the (possibly
+                # new) best so exactly one row reads "best".
+                self._record_leaderboard(
+                    (promote_cfg.symbol, promote_cfg.timeframe), node["id"], pm, stage="promote")
+                self._refresh_gating_reasons()
 
             self.budget = self.budget.with_wall_clock(self._clock() - self._start_monotonic)
             await self._save_auto_run()

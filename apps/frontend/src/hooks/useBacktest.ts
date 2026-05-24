@@ -395,7 +395,7 @@ export interface IterationNode {
 }
 
 // Re-exported so components/strip can import the autoRun contract from the hook.
-export type { AutoRunStatus } from '../lib/sessionApi'
+export type { AutoRunStatus, LeaderboardEntry } from '../lib/sessionApi'
 
 /**
  * Normalize a node from the LIGHTWEIGHT list/open (and poll) path back to the

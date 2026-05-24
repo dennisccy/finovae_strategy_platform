@@ -1,0 +1,24 @@
+{
+  "phase": "goal-financial_free-iter-7",
+  "status": "complete",
+  "current_step": "qa_complete",
+  "qa_verdict": "PASS_WITH_NOTES",
+  "qa_note": "All functional/unit/endpoint/persistence tests pass (13/14 + binding J-16 overfit-gating TC-03 + live served-leaderboard TC-14). LOAD-BEARING leaderboard pixel (TC-13) NOT captured in-env due to documented Chrome-MCP hidden-tab render throttle (visibilityState=hidden); app renders (frame 034). Downstream browser-qa-agent must close TC-13 in a foreground/uncontended window on FE offset port :3691.",
+  "updated_at": "2026-05-24T02:41:00.000000Z",
+  "started_at": "2026-05-24T01:24:28.636360Z",
+  "cli": "claude",
+  "blockers": [],
+  "changed_files": [
+    "apps/backend/backend/auto_session.py",
+    "apps/backend/backend/auto_session_routes.py",
+    "apps/backend/tests/test_auto_session_leaderboard.py",
+    "apps/backend/tests/test_auto_session_routes.py",
+    "apps/frontend/src/components/AutoSessionLeaderboard.tsx",
+    "apps/frontend/src/components/IterationPanel.tsx",
+    "apps/frontend/src/hooks/useBacktest.ts",
+    "apps/frontend/src/lib/sessionApi.ts"
+  ],
+  "tests_run": true,
+  "browser_checks_run": "partial",
+  "next_action": "browser_qa_pixel_capture"
+}

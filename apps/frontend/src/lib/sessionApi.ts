@@ -36,12 +36,33 @@ export interface AutoRunBudget {
   maxUsd: number | null
 }
 
+/**
+ * One row of the open-universe overfit-gating leaderboard (J-16). Carries ONLY
+ * the genuinely-new canonical values — the per-candidate robust score (the ONE
+ * `RobustScorer` output, read verbatim; never recomputed in the UI), its
+ * eligibility, and a backend-narrated gating reason. Display metrics
+ * (symbol/timeframe, return, WFE, trades, drawdown) are NOT duplicated here; the
+ * UI joins them from the canonical `iterationHistory` node by `iterationId`.
+ * `robustScore` is `null` for an ineligible/no-trades candidate (JSON-safe -inf).
+ */
+export interface LeaderboardEntry {
+  iterationId: string
+  stage: 'screen' | 'promote'
+  robustScore: number | null
+  eligible: boolean
+  gatingReason: string
+}
+
 export interface AutoRunStatus {
   status: AutoRunStatusValue
   stopReason: string | null
   stopRequested?: boolean
   bestIterationId: string | null
   budget: AutoRunBudget
+  // J-16: per-candidate leaderboard, served on the autoRun block by the existing
+  // GET /api/sessions/{id} (open-universe only; absent/empty on a pinned run).
+  // The marked best is identified solely by `bestIterationId` — no second flag.
+  leaderboard?: LeaderboardEntry[]
   startedAt: string | null
   endedAt: string | null
 }

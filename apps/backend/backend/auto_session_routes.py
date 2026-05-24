@@ -98,6 +98,11 @@ class CreateAutoSessionRequest(BaseModel):
     # default / opt-out) ignores prior sessions. Open-universe only — the pinned
     # path ignores it. Any other value is rejected 422 by the validator below.
     history_scope: Optional[str] = "this-run"
+    # J-16: bounded optional knob — how many top SCREEN survivors are PROMOTEd to
+    # walk-forward validation (open-universe only; the pinned path ignores it).
+    # Validated to the inclusive range 1–3; omitted ⇒ DEFAULT_PROMOTE_K (1), which
+    # keeps J-12/J-13/J-14 byte-identical.
+    promote_k: Optional[int] = None
     targets: Optional[AutoSessionTargets] = None
     walk_forward: Optional[AutoSessionWalkForward] = None
     budget: AutoSessionBudget
@@ -116,6 +121,13 @@ class CreateAutoSessionRequest(BaseModel):
     def _valid_history_scope(cls, v: Optional[str]) -> Optional[str]:
         if v is not None and v not in {"global", "this-run"}:
             raise ValueError('history_scope must be "global" or "this-run"')
+        return v
+
+    @field_validator("promote_k")
+    @classmethod
+    def _valid_promote_k(cls, v: Optional[int]) -> Optional[int]:
+        if v is not None and not (1 <= v <= 3):
+            raise ValueError("promote_k must be between 1 and 3 (inclusive)")
         return v
 
     @model_validator(mode="after")
@@ -214,6 +226,8 @@ def _build_config(req: CreateAutoSessionRequest, *, open_universe: bool) -> Auto
         # Coerce an omitted/None value to the opt-out default (defense-in-depth;
         # the controller also treats any non-"global" value as opt-out).
         history_scope=(req.history_scope or "this-run"),
+        # Validated 1–3 above; None ⇒ the loop falls back to DEFAULT_PROMOTE_K.
+        promote_k=req.promote_k,
     )
 
 

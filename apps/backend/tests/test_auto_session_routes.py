@@ -270,3 +270,33 @@ def test_stop_on_manual_session_404(client):
     ss.write_iteration("manual-y", 1, {"id": "it-1", "status": "complete"})
     resp = client.post("/api/auto-sessions/manual-y/stop")
     assert resp.status_code == 404
+
+
+# =============================================================================
+# J-16 — bounded optional promote_k (1–3) on the request
+# =============================================================================
+
+def test_promote_k_in_range_accepted_200(client):
+    # An open-universe run with a valid promote_k (1–3) is accepted.
+    for k in (1, 2, 3):
+        resp = client.post("/api/auto-sessions",
+                           json=_payload(symbol=None, timeframe=None, promote_k=k))
+        assert resp.status_code == 200, k
+
+
+def test_promote_k_omitted_accepted_200(client):
+    # Omitted → defaults to DEFAULT_PROMOTE_K in the loop; still a valid request.
+    resp = client.post("/api/auto-sessions", json=_payload(symbol=None, timeframe=None))
+    assert resp.status_code == 200
+
+
+def test_promote_k_zero_is_422(client):
+    resp = client.post("/api/auto-sessions",
+                       json=_payload(symbol=None, timeframe=None, promote_k=0))
+    assert resp.status_code == 422
+
+
+def test_promote_k_above_three_is_422(client):
+    resp = client.post("/api/auto-sessions",
+                       json=_payload(symbol=None, timeframe=None, promote_k=4))
+    assert resp.status_code == 422

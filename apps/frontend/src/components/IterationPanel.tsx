@@ -4,6 +4,7 @@ import type { IterationNode, WalkForwardConfig, AutoRunStatus } from '../hooks/u
 import { IterationCard } from './IterationCard'
 import { IterationDetailView } from './IterationDetailView'
 import { AutoSessionStatusStrip } from './AutoSessionStatusStrip'
+import { AutoSessionLeaderboard } from './AutoSessionLeaderboard'
 
 interface IterationPanelProps {
   iterations: IterationNode[]
@@ -257,6 +258,7 @@ export function IterationPanel({ iterations, selectedId, onSelect, onDelete, onR
     return (
       <div className="flex-1 flex flex-col bg-slate-50 p-4 lg:p-6">
         {autoRun && <AutoSessionStatusStrip autoRun={autoRun} />}
+        {autoRun && <AutoSessionLeaderboard autoRun={autoRun} iterations={sortedIterations} />}
         <div className="flex-1 flex items-center justify-center">
           <div className="text-center">
             <div className="w-12 h-12 lg:w-16 lg:h-16 bg-slate-200 rounded-full flex items-center justify-center mx-auto">
@@ -279,6 +281,7 @@ export function IterationPanel({ iterations, selectedId, onSelect, onDelete, onR
   return (
     <div ref={scrollRef} className="flex-1 overflow-y-auto bg-slate-50 p-4 lg:p-6">
       {autoRun && <AutoSessionStatusStrip autoRun={autoRun} />}
+      {autoRun && <AutoSessionLeaderboard autoRun={autoRun} iterations={sortedIterations} />}
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-sm font-semibold text-slate-700">
           Iterations ({sortedIterations.length})
