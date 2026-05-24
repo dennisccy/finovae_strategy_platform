@@ -479,7 +479,15 @@ export function useBacktest(sessionId: string, opts?: UseBacktestOptions) {
   // (no local flag) still shows an active session as running and resumes polling.
   const [autoRun, setAutoRun] = useState<AutoRunStatus | null>(null)
   const isAutoRunning = autoRun != null && isAutoRunActive(autoRun.status)
-  const autoRunProgress = autoRun
+  // Guard `budget`: legacy/partial autoRun records still in the durable store
+  // (pre-`budget`-schema sessions carry `currentIteration`/`spend`, not a `budget`
+  // block) have an autoRun with no `budget`. Dereferencing it unguarded threw
+  // "Cannot read properties of undefined (reading 'iterationsDone')" — and because
+  // App.tsx mounts a SessionContainer (hence a useBacktest) for EVERY session, one
+  // such record crashed the whole app before the leaderboard could paint. A
+  // missing budget simply yields no progress readout. (Render-derivation guard
+  // only — not poll/visibility logic.)
+  const autoRunProgress = autoRun?.budget
     ? { current: autoRun.budget.iterationsDone, max: autoRun.budget.maxIterations }
     : null
   // A session with an autoRun block is backend-owned: the server-side loop is

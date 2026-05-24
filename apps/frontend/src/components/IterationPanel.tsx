@@ -257,7 +257,7 @@ export function IterationPanel({ iterations, selectedId, onSelect, onDelete, onR
   if (sortedIterations.length === 0) {
     return (
       <div className="flex-1 flex flex-col bg-slate-50 p-4 lg:p-6">
-        {autoRun && <AutoSessionStatusStrip autoRun={autoRun} />}
+        {autoRun?.budget && <AutoSessionStatusStrip autoRun={autoRun} />}
         {autoRun && <AutoSessionLeaderboard autoRun={autoRun} iterations={sortedIterations} />}
         <div className="flex-1 flex items-center justify-center">
           <div className="text-center">
@@ -280,7 +280,7 @@ export function IterationPanel({ iterations, selectedId, onSelect, onDelete, onR
 
   return (
     <div ref={scrollRef} className="flex-1 overflow-y-auto bg-slate-50 p-4 lg:p-6">
-      {autoRun && <AutoSessionStatusStrip autoRun={autoRun} />}
+      {autoRun?.budget && <AutoSessionStatusStrip autoRun={autoRun} />}
       {autoRun && <AutoSessionLeaderboard autoRun={autoRun} iterations={sortedIterations} />}
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-sm font-semibold text-slate-700">
